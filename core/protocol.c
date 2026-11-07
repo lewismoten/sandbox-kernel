@@ -41,7 +41,8 @@ static bool path_token(const char **p,char out[32]) {
 static bool in_os(const char *path) {while(*path)if(*path++=='/')return false;return true;}
 static void reply_path(const char *path) {if(in_os(path)||!memcmp(path,"APPS/",5))usb_reply("/OS");usb_reply("/");usb_reply(path);}
 /* PUTF <PATH> <size> <crc32> <sha256>: a development file for /OS/<NAME>, or
-   for /GAMES/<DIR>/<NAME> when PATH is GAMES/<DIR>/<NAME>, sent
+   for /GAMES/<DIR>/<NAME> when PATH is GAMES/<DIR>/<NAME> (or a packed game,
+   GAMES/<NAME>.GMP or POCKET/<NAME>.GMP; core/fatput.c lists them), sent
    like PUT2 in 1024-byte blocks, checked by CRC and SHA-256, then written by
    core/fatput.c. RUN <NAME> starts /OS/<NAME> as the OS program. */
 static void file_command(const char *p) {

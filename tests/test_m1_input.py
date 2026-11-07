@@ -207,13 +207,27 @@ class Synthetic(u.ProtocolBase):
         self.assertEqual(self.free(),free-4-(3+2+1+1))                             # GAMES, DICE, KITSHOP and OS, then 512-byte data clusters
         self.untouched()
         r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
+    def test_putf_packed_games(self):
+        # One file a game: /GAMES/<NAME>.GMP, /POCKET/<NAME>.GMP (the Pocket Player's folder, made when missing),
+        # a further volume, and the library index beside them.
+        root=self.listing('/');gmp=b'GMS1'+bytes(4)+bytes(range(256))*5
+        self.assertIn('OK file /GAMES/DICE.GMP 1288',self.put_path('GAMES/DICE.GMP',gmp))
+        self.assertIn('OK file /GAMES/DICE.G01 3',self.put_path('GAMES/DICE.G01',b'abc'))
+        self.assertIn('OK file /POCKET/KITSHOP.GMP 1288',self.put_path('POCKET/KITSHOP.GMP',gmp))
+        self.assertIn('OK file /GAMES/LIBRARY.JSL 2',self.put_path('GAMES/LIBRARY.JSL',b'{}'))
+        self.assertEqual(self.read('/GAMES/DICE.GMP'),gmp);self.assertEqual(self.read('/POCKET/KITSHOP.GMP'),gmp)
+        self.assertEqual(self.read('/GAMES/DICE.G01'),b'abc');self.assertEqual(self.read('/GAMES/LIBRARY.JSL'),b'{}')
+        self.assertEqual(self.listing('/')-root,{'GAMES','POCKET'})
+        self.untouched()
+        r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
     def listing(self,path):
         h=self.c.asset_open(path.encode(),len(path),0);out=set();d=(C.c_uint8*20)()
         while self.c.asset_readdir(h,d)>0: out.add(bytes(d[:13]).split(b'\0')[0].decode())
         self.c.asset_close(h);return out
     def test_putf_path_refusals(self):
         for path in ('GAMES/DICE.X/A.GAM','OTHER/DICE/A.GAM','GAMES/A.GAM','GAMES/A/B/C.GAM','games/dice/a.gam','GAMES//A.GAM',
-                     'GAMES/DICE/','/GAMES/DICE/A.GAM','GAMES/TOOLONGDIR/A.GAM','GAMES/DICE/A.GAMS','OS/A.ELF','GAMES/../A.GAM'):
+                     'GAMES/DICE/','/GAMES/DICE/A.GAM','GAMES/TOOLONGDIR/A.GAM','GAMES/DICE/A.GAMS','OS/A.ELF','GAMES/../A.GAM',
+                     'GAMES/A.G00','GAMES/A.GM','GAMES/.GMP','OTHER/A.GMP','POCKET/LIBRARY.JSL','POCKET/A/B.GMP','APPS/A.GMP','GAMES/A.GMPX'):
             with self.subTest(path): self.assertIn('ERR command',self.put_path(path,b'x'))
         self.untouched()
     def test_directory_grows(self):
