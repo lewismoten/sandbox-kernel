@@ -216,6 +216,16 @@ class Synthetic(u.ProtocolBase):
                      'GAMES/DICE/','/GAMES/DICE/A.GAM','GAMES/TOOLONGDIR/A.GAM','GAMES/DICE/A.GAMS','OS/A.ELF','GAMES/../A.GAM'):
             with self.subTest(path): self.assertIn('ERR command',self.put_path(path,b'x'))
         self.untouched()
+    def test_directory_grows(self):
+        # A game folder holds more files than one directory cluster has entries:
+        # the folder gains clusters (the root never does).
+        free=self.free();files={f'F{i:02d}.DAT':bytes([i])*(100+i) for i in range(40)}
+        for n,d in files.items(): self.assertEqual(self.c.fatput(f'GAMES/BIG/{n}'.encode(),d,len(d)),0,text(self.c,'fatput_fail'))
+        for n,d in files.items(): self.assertEqual(self.read(f'/GAMES/BIG/{n}'),d)
+        self.assertEqual(self.listing('/GAMES/BIG')-{'.','..'},set(files))
+        self.assertEqual(self.free(),free-1-3-40)                                   # GAMES, BIG's three clusters, the files
+        self.untouched()
+        r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
     def test_games_name_taken_by_a_file(self):
         self.c.close_disk();self.disk,self.folder=u.boot_card(self.work,{'GAMES':b'not a directory'})
         self.c.open_disk(os.fsencode(self.disk));self.c.asset_mount()

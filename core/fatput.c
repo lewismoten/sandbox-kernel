@@ -63,11 +63,13 @@ static int walk(uint32_t first,uint32_t bytes,uint32_t *out,uint32_t max,uint32_
  return 0;
 }
 struct slot {uint32_t lba,off; bool found;};
+static uint32_t scan_last,scan_hops; /* the last cluster scan() saw, and how many */
 /* Look for name in a directory chain; also remember the first usable free slot. */
 static int scan(uint32_t dir,const uint8_t name[11],struct slot *hit,struct slot *free_slot,uint8_t entry[32]) {
  hit->found=free_slot->found=false; uint32_t c=dir;
  for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
   if(!cluster_ok(c)) return fail("PUT DIR CLUSTER",5);
+  scan_last=c;scan_hops=hop+1;
   for(uint32_t i=0;i<v.spc;i++) {
    int r=rd(lba_of(c,i),s); if(r) return r;
    for(uint32_t o=0;o<512;o+=32) {
@@ -98,6 +100,17 @@ static int link(uint32_t n) {
  for(uint32_t i=0;i<n;i++) {int r=fat_set(chain[i],i+1<n?chain[i+1]:0x0fffffffu); if(r) return r;}
  return 0;
 }
+/* A full directory (not the root) gains one zeroed cluster at the end of its
+   chain: zeroed first, marked end-of-chain, and only then linked, so a power
+   cut leaks it at worst. Its first slot is the new end marker. */
+static int grow(struct slot *free_slot) {
+ if((scan_hops+1)*v.spc*16>65536) return fail("PUT DIR FULL",28);
+ int r=alloc(1); if(r) return r;
+ uint32_t c=chain[0]; uint8_t z[512]; memset(z,0,512);
+ for(uint32_t i=0;i<v.spc;i++) if((r=wr(lba_of(c,i),z,0))) return r;
+ if((r=fat_set(c,0x0fffffffu))||(r=fat_set(scan_last,c))) return r;
+ *free_slot=(struct slot){lba_of(c,0),0,true}; return 0;
+}
 static int write_entry(struct slot at,const uint8_t name[11],uint8_t attr,uint32_t first,uint32_t bytes) {
  int r=rd(at.lba,s); if(r) return r;
  uint8_t *e=s+at.off; memset(e,0,32); memcpy(e,name,11); e[11]=attr;
@@ -126,7 +139,7 @@ static int ensure_dir(uint32_t parent,bool top,const uint8_t name[11],uint32_t *
   if((e[11]&0x1e)!=0x10) return fail("PUT NOT DIR",20); /* a plain directory: not hidden, system or a label */
   *dir=((uint32_t)u16(e+20)<<16)|u16(e+26); return cluster_ok(*dir)?0:fail("PUT DIR CLUSTER",5);
  }
- if(!free_slot.found) return fail(top?"PUT ROOT FULL":"PUT DIR FULL",28);
+ if(!free_slot.found&&(top||(r=grow(&free_slot)))) return top?fail("PUT ROOT FULL",28):r;
  if((r=alloc(1))) return r;
  uint32_t d0=chain[0],up=top?0:parent; /* ".." of a top-level directory is cluster 0 */
  memset(s,0,512);
@@ -169,7 +182,7 @@ int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
   if(e[11]&0x1f) return fail("PUT NOT FILE",21); /* read-only, hidden, system, label or directory */
   uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26);
   if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) return r;
- } else if(!free_slot.found) return fail("PUT DIR FULL",28);
+ } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;
  if((r=alloc(n))) return r;
  for(uint32_t i=0;i<n;i++) for(uint32_t j=0;j<v.spc;j++) {
