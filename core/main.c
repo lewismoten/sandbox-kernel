@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "fb.h"
 #include "os.h"
+#include "autostart.h"
 #include "clock.h"
 #include "input.h"
 void asset_probe(void);
@@ -45,9 +46,10 @@ void kernel_main(void) {
  watchdog_feed();
  /* M1: the OS program starts 10 s after boot, so a program that could take
     the kernel down can still be replaced over USB (PUTF) before it runs.
-    A missing or rejected file keeps the recovery console. */
+    GMOS.ELF if present (or AUTORUN.TXT's choice), else DIAG.ELF; a rejected
+    file falls back to DIAG.ELF, and a missing DIAG keeps the recovery console. */
  bool autostart=storage_ready;
- if(autostart)log_line("OS autostart in 10 s: /OS/DIAG.ELF");
+ if(autostart) {char t[48]="OS autostart in 10 s: ";const char *a=autostart_pick();memcpy(t+22,a,strlen(a)+1);log_line(t);}
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
@@ -56,7 +58,7 @@ void kernel_main(void) {
   clock_us();usb_task();protocol_task();os_task();
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
-   if(!os_running()&&os_start("/OS/DIAG.ELF"))log_line("OS none; recovery console (USB PUTF and RUN available)");
+   if(!os_running()&&autostart_run(autostart_pick()))log_line("OS none; recovery console (USB PUTF and RUN available)");
   }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
   panel_task(usb_state(),seconds);
