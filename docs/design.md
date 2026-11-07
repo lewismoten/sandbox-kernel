@@ -426,6 +426,65 @@ the selector. Corruption of firmware, FAT boot files or selector still needs
 external repair. This replaces the prototype's manual backup-rename recovery;
 the Raspberry Pi firmware itself does not manage these A/B trials.
 
+## Profiles, gates and latches (reserved in ABI 1.0)
+
+Nothing here is required by the first milestones, but the interface reserves it now so sharing, parental
+controls and age rules never need an incompatible change later. This is preparation, not legal advice: laws
+that ask operating systems for age signals (California's AB 1043, effective January 1, 2027, and its AB 1856
+amendment) are still moving, and a review by someone who knows the law belongs before any public release
+that shares data.
+
+### Profiles
+
+- Accounts are optional. With none configured, the kernel runs one implicit owner profile (id 0): the first
+  person to use the device is assumed to be the only person. Nothing asks for a name or age.
+- An OS may create more profiles (hot-seat play, family devices). Each has an id, a display name chosen by
+  the person, and optional attributes. Saves and settings under `/state` belong to a profile.
+- Profile data stays on the device. The kernel never transmits it.
+
+### Age range attribute
+
+- Two bytes per profile: `min_age` and `max_age`, each 1–255, where 0 means open (no bound).
+  - `min=0, max=0`: unknown. Programs must treat unknown as the most restrictive case.
+  - `min=13, max=0`: 13 or older. `min=0, max=12`: under 13. `min=13, max=15`: 13 through 15.
+  - `min=13, max=13`: exactly 13. When both are set, `min <= max`; the kernel rejects anything else.
+- Only a range is stored, never a birth date. Programs read it through `query` (selector `profile`);
+  only the gate provider (below) may change it, normally from a setup or parental screen in the OS.
+- A bracket view (under 13, 13–15, 16–17, 18+, unknown) is derived on request for software that expects the
+  four statutory brackets.
+
+### Gates
+
+A gate is a named checkpoint the kernel places in front of a capability. The kernel guarantees the check
+happens and cannot be skipped; a policy provider decides the answer.
+
+- Kernel-owned gates (initial set): `net.send` (any outbound network traffic), `export.removable` (writing
+  to removable media or a host over USB), `share.file` (a program offering a file to another program or
+  device), `profile.change`, `update.install`. Programs may register their own gate names in their own
+  namespace (`app.<id>.<name>`) for checks they want the policy provider to answer.
+- The policy provider is one privileged program chosen in the boot configuration (normally the OS). It
+  answers a check with `allow`, `deny` or `ask` (the provider shows its own prompt, then answers). Each check
+  carries the gate name, the requesting program, the active profile id and a small context record (for
+  example destination class: local network, internet, removable media).
+- With no provider installed, kernel-owned gates for data leaving the device answer `deny`; everything else
+  answers `allow`. A provider that faults or times out answers `deny`.
+- Decisions may be cached per (gate, program, profile) for a time the provider sets; the cache clears when a
+  profile attribute or latch changes.
+
+### Latches
+
+A latch is a one-way lock the policy provider can close on a gate or a profile (for example "network sharing
+off for this profile" or "settings locked"). Once closed, only the provider can open it again, and only after
+its own unlock check (such as a parental PIN it keeps in its private state). Programs can see whether a latch
+is closed, never open one. Latches persist across reboots in `/state` with the same atomic-replace safety as
+saves.
+
+### ABI reservations
+
+Call numbers and record layouts for `gate_check`, `gate_register`, `profile_get`, `profile_set`,
+`latch_get` and `latch_set` are reserved in the 1.0 table (implementations may return `ENOSYS` until a
+milestone needs them). `query` selector `profile` returns the active profile id and its age range.
+
 ## Board support layering
 
 Keep public VFS/device classes independent of CPU and board definitions:
