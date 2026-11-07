@@ -20,6 +20,7 @@ void kernel_main(void) {
  number(num,boot_slot);log_line("Selected slot:");log_line(num);
  number(num,boot_generation);log_line("Generation:");log_line(num);
  watchdog_feed();
+ {static uint32_t sdb[8];memcpy(sdb,(const void *)0x7040,32);sd_handoff_block=sdb;}
  storage_ready=store_init();
  if(!storage_ready) {log_line("SD/FAT unavailable, step:");error(store_fail);if(strcmp(property_fail,"none"))log_line(property_fail);}
  else {

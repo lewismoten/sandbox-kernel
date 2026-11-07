@@ -2,6 +2,7 @@
  * No allocation, renaming, truncation, FAT or directory writes. */
 #include "kernel.h"
 const char *store_fail="none";
+const uint32_t *sd_handoff_block;
 struct file_extent slots[2],controls[2];
 uint32_t control[128];
 static unsigned current_copy;
@@ -39,7 +40,7 @@ static bool record_valid(const uint32_t *c) {
 }
 bool store_init(void) {
  store_fail="none"; memset(slots,0,sizeof(slots)); memset(controls,0,sizeof(controls)); memset(control,0,sizeof(control));
- if(!sd_init()) {store_fail=sd_fail;return false;}
+ if(!(sd_handoff_block?sd_init_after_handoff(sd_handoff_block):sd_init())) {store_fail=sd_fail;return false;}
  if(!sd_read(0,sector)) {store_fail="SD READ0";return false;}
  if(u16(sector+510)!=0xaa55) {store_fail="MBR SIG";return false;}
  if(sector[450]!=0x0c && sector[450]!=0x0b) {store_fail="MBR TYPE";return false;}

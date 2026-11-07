@@ -37,9 +37,10 @@ void tud_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr) {
  (void)rhport;(void)in_isr; if(eventid==DCD_EVENT_BUS_RESET) {extern volatile bool usb_reset_seen;usb_reset_seen=true;}
 }
 static const char *init_fail="unavailable";
+static char fail_text[32];
 const char *usb_state(void) {if(!initialized)return init_fail;if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
 void usb_init(void) {
- uint32_t p[2]={3,3};if(!property(0x28001,p,2)) {init_fail="USB POWER";error("USB POWER");log_line(property_fail);return;}
+ uint32_t p[2]={3,3};if(!property(0x28001,p,2)) {{const char *a="USB POWER ",*b=property_fail;unsigned k=0;while(*a&&k<30)fail_text[k++]=*a++;while(*b&&k<30)fail_text[k++]=*b++;fail_text[k]=0;} init_fail=fail_text;error("USB POWER");log_line(property_fail);return;}
  /* Force device role; internal UTMI+ PHY selected by TinyUSB. */
  REG(0x2098000c)=(REG(0x2098000c)&~(1u<<29))|(1u<<30);
  initialized=true;if(!tusb_init()) {initialized=false;init_fail="TUSB INIT";error("TUSB INIT");}

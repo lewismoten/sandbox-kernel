@@ -27,9 +27,14 @@ const char *sd_fail="none";
 #define FAIL(code) do { sd_fail=(code); return false; } while(0)
 /* One attempt from whatever state the previous owner (the selector) left the
  * controller and card in: card selected, 25 MHz, SD clock running. */
-static bool sd_init_once(void) {
+static bool sd_init_once(bool cycle) {
  capacity=0; rca=0;
+ if(cycle) { /* real power cycle: card back to its power-on state */
+  uint32_t off[2]={0,0}; if(!property(0x28001,off,2)) FAIL("SD POWER OFF");
+  delay_us(100000);
+ }
  uint32_t power[2]={0,3}; if(!property(0x28001,power,2)) FAIL("SD POWER");
+ if(cycle) delay_us(50000);
  for(unsigned i=48;i<=53;i++) gpio_mode(i,7); /* ALT3 SD1 */
  REG(PERIPH+0x200094)=2; delay_us(5); REG(PERIPH+0x20009c)=0x3f0000; delay_us(5); REG(PERIPH+0x200094)=0; REG(PERIPH+0x20009c)=0;
  /* Stop the clock first so the card sees a clean restart, then reset the host. */
@@ -51,7 +56,7 @@ static bool sd_init_once(void) {
  do {
   if(!command(55,0,0x1a0000)) FAIL("SD CMD55");
   if(!command(41,0x40ff8000,0x20000)) FAIL("SD ACMD41");
-  ocr=R(0x10); if(expired(t,1500000)) FAIL("SD ACMD41 BUSY"); delay_us(1000);
+  ocr=R(0x10); if(expired(t,2000000)) FAIL("SD ACMD41 BUSY"); delay_us(1000);
  } while(!(ocr&0x80000000u));
  high_capacity=(ocr&(1u<<30))!=0; if(!high_capacity) FAIL("SD NOT SDHC");
  if(!command(2,0,0x90000)) FAIL("SD CMD2");
@@ -70,14 +75,35 @@ static bool sd_init_once(void) {
  if(!clock_set(25000000,clk[1])) FAIL("SD CLOCK25");
  return true; /* 1-bit bus, 512-byte blocks */
 }
+#define HANDOFF_SD 0x31445353u /* "SSD1" */
+void sd_export(uint32_t out[8]) {
+ out[0]=HANDOFF_SD; out[1]=rca; out[2]=capacity; out[3]=high_capacity; out[4]=R(0x2c); out[5]=out[6]=0;
+ out[7]=crc32(out,28);
+}
+bool sd_adopt(const uint32_t in[8]) {
+ if(in[0]!=HANDOFF_SD||in[7]!=crc32(in,28)||!in[1]||!in[2]||!in[3]) { sd_fail="SD NOHAND"; return false; }
+ /* Host registers and the card persist across the jump; only check that the
+    card still answers in transfer state (CMD13: state 4) with the clock running. */
+ rca=in[1]; capacity=in[2]; high_capacity=true;
+ if(!(R(0x2c)&4)) { sd_fail="SD HOSTCLK"; return false; }
+ if(!command(13,rca,0x1a0000)) { sd_fail="SD CMD13"; return false; }
+ if(((R(0x10)>>9)&15)!=4) { sd_fail="SD NOTRAN"; return false; }
+ return true;
+}
 bool sd_init(void) {
  sd_fail="none";
- /* A card the previous stage left selected or mid-state can need a second try. */
+ /* Cold start: plain init. Later attempts power-cycle the card. */
  for(unsigned attempt=0;attempt<3;attempt++) {
-  if(sd_init_once()) return true;
+  if(sd_init_once(attempt>0)) return true;
   delay_us(20000);
  }
  return false; /* sd_fail names the step of the last attempt */
+}
+bool sd_init_after_handoff(const uint32_t in[8]) {
+ if(sd_adopt(in)) return true;
+ /* Fall back: power-cycle first, then the full init. */
+ for(unsigned attempt=0;attempt<3;attempt++) { if(sd_init_once(true)) return true; delay_us(20000); }
+ return false;
 }
 uint32_t sd_sectors(void) { return capacity; }
 static bool transfer(uint32_t lba,void *p,bool write) {

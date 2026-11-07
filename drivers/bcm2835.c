@@ -10,7 +10,7 @@ const char *property_fail="none";
 /* The message page (0x80000) is strongly ordered, so no cache maintenance is
  * needed. The GPU gets the 0xC0000000 alias (uncached, bypasses its L2), so a
  * response can never sit in a GPU cache line the ARM does not see. */
-static bool property_once(uint32_t tag,uint32_t *v,unsigned n) {
+static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) {
  volatile uint32_t *b=(volatile uint32_t *)0x80000;
  b[0]=(n+6)*4; b[1]=0; b[2]=tag; b[3]=n*4; b[4]=n*4;
  for(unsigned i=0;i<n;i++) b[5+i]=v[i]; b[5+n]=0;
@@ -19,7 +19,7 @@ static bool property_once(uint32_t tag,uint32_t *v,unsigned n) {
  while(REG(PERIPH+0xb898)&0x80000000u) if(expired(s,100000)) {property_fail="MBOX FULL";return false;}
  while(!(REG(PERIPH+0xb898)&0x40000000u)) (void)REG(PERIPH+0xb880); /* drop stale replies */
  REG(PERIPH+0xb8a0)=0xc0080008u; barrier();
- while(!expired(s,100000)) {
+ while(!expired(s,timeout)) {
   if(!(REG(PERIPH+0xb898)&0x40000000u)) {
    uint32_t r=REG(PERIPH+0xb880); barrier();
    if(r!=0xc0080008u) continue; /* some other reply; keep waiting */
@@ -35,7 +35,7 @@ bool property(uint32_t tag,uint32_t *v,unsigned n) {
  uint32_t copy[8]; for(unsigned i=0;i<n;i++) copy[i]=v[i];
  for(unsigned attempt=0;attempt<3;attempt++) {
   for(unsigned i=0;i<n;i++) v[i]=copy[i];
-  if(property_once(tag,v,n)) return true;
+  if(property_once(tag,v,n,tag==0x28001?1000000:100000)) return true; /* power waits for stable */
  }
  return false;
 }

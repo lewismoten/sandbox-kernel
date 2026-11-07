@@ -16,6 +16,7 @@ void inject_failure(uint32_t after) {fail_after=after;}
 void open_disk(const char *path) {disk=fopen(path,"r+b");if(!disk)abort();}
 void close_disk(void) {fclose(disk);}
 bool sd_init(void) {return disk!=NULL;}
+bool sd_init_after_handoff(const uint32_t in[8]) {(void)in;return disk!=NULL;}
 uint32_t sd_sectors(void) {return 264192;}
 bool sd_read(uint32_t lba,void *p) {return fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}

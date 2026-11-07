@@ -21,6 +21,7 @@ void selector_main(void) {
   if(!slot_load(0,target,&bytes)) {slot=1;if(!slot_load(1,target,&bytes)) {uart_puts("Both slots invalid; card-reader rescue\r\n");for(;;){}}}
   uart_puts("Metadata lost: unconfirmed recovery, updates locked\r\n");
  }
+ {uint32_t sdb[8]; sd_export(sdb); memcpy((void *)0x7040,sdb,32);} /* card state for the runtime */
  volatile uint32_t *h=(volatile uint32_t *)0x7000;
  h[0]=HANDOFF_MAGIC;h[1]=1;h[2]=slot;h[3]=trial;h[4]=generation;h[5]=REG(PERIPH+0x100020);h[6]=ram[1];h[7]=crc32((const void *)h,28);
  uart_puts(trial?"Launch trial\r\n":"Launch confirmed/recovery\r\n");
