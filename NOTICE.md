@@ -100,6 +100,11 @@ Primary technical references used:
 - Standard SD CMD0/2/3/7/8/9/13/17/24/55/ACMD41 command semantics. The public
   manual errata page at elinux.org was inaccessible (access denied) during this
   implementation; EMMC errata and physical behavior remain qualification work.
+- The Game-Maker: Sandbox Edition logo (sandbox, sand castle, pail and shovel):
+  the same author and MIT license as this project. `scripts/make_logo.py` redraws
+  its subject as 1-bit art (`core/logo_data.c`); the panel font in `core/render.c`
+  is original artwork. The drawing script was written with Claude Sonnet 5.5
+  (Anthropic).
 
 Build results and limitations are recorded in [docs/m0.md](docs/m0.md).
 M0 acceptance requires real-board and power-interruption testing.

@@ -10,7 +10,7 @@ rot = int(sys.argv[sys.argv.index('--rotate') + 1]) if '--rotate' in sys.argv el
 lib = pathlib.Path(tempfile.mkdtemp()) / 'r.dylib'
 subprocess.run(['cc', '-shared', '-fPIC', '-O1', '-fno-builtin', '-DHOST_TEST', f'-DPANEL_ROTATE_180={rot}',
                 '-D_FORTIFY_SOURCE=0', '-I' + str(ROOT / 'include'), '-I' + str(ROOT / 'tests/stubs'),
-                str(ROOT / 'core/render.c'), str(ROOT / 'core/util.c'), str(ROOT / 'core/divide.c'), '-o', str(lib)], check=True)
+                str(ROOT / 'core/render.c'), str(ROOT / 'core/logo_data.c'), str(ROOT / 'core/util.c'), str(ROOT / 'core/divide.c'), '-o', str(lib)], check=True)
 L = ctypes.CDLL(str(lib))
 
 def png(path, rows, scale=3):

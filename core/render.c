@@ -2,6 +2,7 @@
  * Pure functions: the host build renders the same screen to a PNG for review. */
 #include "kernel.h"
 #include "render.h"
+#include "logo.h"
 #ifndef PANEL_ROTATE_180
 #define PANEL_ROTATE_180 1
 #endif
@@ -75,11 +76,21 @@ static unsigned field(uint8_t *p,unsigned y,const char *label,const char *value)
  return y+LINE;
 }
 static void plain(uint8_t *p,unsigned x,unsigned y,const char *s) { for(;*s;s++) { draw_char(p,x,y,*s); x+=*s==' '?SPACE_ADV:ADV; } }
-void render_starting(uint8_t *p) { memset(p,255,4000); plain(p,16,48,"STARTING..."); }
+static void blit(uint8_t *p,unsigned x,unsigned y,const struct logo *l) {
+ for(unsigned r=0;r<l->h;r++) for(unsigned c=0;c<l->w;c++) if(l->bits[r*l->stride+c/8]&(0x80>>(c%8))) dot(p,x+c,y+r);
+}
+static unsigned text_width(const char *s) { unsigned w=0; for(;*s;s++) w+=*s==' '?SPACE_ADV:ADV; return w-(w?2:0); }
+static void centered(uint8_t *p,unsigned y,const char *s) { plain(p,(250-text_width(s))/2,y,s); }
+void render_starting(uint8_t *p) {
+ memset(p,255,4000);
+ blit(p,(250-logo_large.w)/2,2,&logo_large);
+ centered(p,80,"GAME-MAKER OS"); centered(p,98,"STARTING...");
+}
 void render_status(uint8_t *p,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  memset(p,255,4000);
- plain(p,4,2,"SANDBOX-KERNEL"); plain(p,4,2+LINE,build_id);
+ blit(p,4,2,&logo_small);
+ plain(p,logo_small.w+10,4,"GAME-MAKER"); plain(p,logo_small.w+10,4+LINE,build_id);
  char up[32]; uptime(up,seconds);
- unsigned y=2+2*LINE+2;
+ unsigned y=36;
  y=field(p,y,"UP:",up); y=field(p,y,"USB:",usb); field(p,y,"ERR:",error);
 }
