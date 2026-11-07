@@ -40,3 +40,18 @@ class SenderTests(unittest.TestCase):
             self.assertEqual(p.sent[2:],[data[:1024],data[1024:]])
             for bad in ('diag.elf','../X','TOOLONGNAME.ELF'):
                 with self.assertRaises(ValueError): usb_kernel.send_file(FakePort([]),f,bad)
+    def test_put_game_path(self):
+        info='INFO 2 test confirmed=1'
+        p=FakePort([info,'READY 1024','VERIFY','OK file /GAMES/DICE/DICE.GAM 3'])
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/'dice.gam';f.write_bytes(b'GM!')
+            self.assertEqual(usb_kernel.send_file(p,f,'GAMES/DICE/DICE.GAM'),0)
+            self.assertTrue(p.sent[1].startswith(b'PUTF GAMES/DICE/DICE.GAM 3 '))
+            for bad in ('GAMES/DICE.X/A.GAM','OTHER/DICE/A.GAM','GAMES/A.GAM','games/dice/a.gam','GAMES/DICE/A/B.GAM'):
+                with self.assertRaises(ValueError): usb_kernel.send_file(FakePort([]),f,bad)
+    def test_keys_press_and_release(self):
+        p=FakePort(['INFO 2 test','OK key 108 down','OK key 108 up','OK key 28 down',TimeoutError()])
+        self.assertEqual(usb_kernel.send_keys(p,['down','enter:down'],0,0),0)
+        self.assertEqual(p.sent[1:],[b'KEY 108 down\n',b'KEY 108 up\n',b'KEY 28 down\n'])
+        p=FakePort(['INFO 2 test','ERR input no-device'])
+        self.assertEqual(usb_kernel.send_keys(p,['q'],0,0),1)
