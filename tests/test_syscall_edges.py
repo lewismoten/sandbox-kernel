@@ -125,7 +125,8 @@ class SyscallEdges(m1.Work):
 
     def test_unknown_dispatch_does_not_consume_handles_or_records(self):
         records = self.records()
-        for n in (0, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 0xffffffff):
+        # Calls 11, 13, 14, 16 and 17 became real in slice 3 and ABI 1.1; these are still unassigned.
+        for n in (0, 7, 8, 9, 10, 12, 15, 18, 0xffffffff):
             with self.subTest(call=n):
                 self.reject(n, records[4], m1.ENOSYS)
         # A valid handle remains usable after all dispatch/header failures.
