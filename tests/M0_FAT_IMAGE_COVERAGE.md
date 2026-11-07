@@ -1,13 +1,12 @@
 # M0 FAT32 and image property coverage
 
-Scope: FAT32 and image/manifest portion of the host-fuzz request, recovered in
-full before implementation. Control-record properties belong to a separate
-worker. USB framing, shared integration, NOTICE attribution and publication are
-not covered by these two test modules. No production behavior is changed here.
+Scope: FAT32 and image/manifest portion of the host-fuzz request. Companion
+control-record and USB framing coverage is summarized in [M0_HOST_FUZZ.md](M0_HOST_FUZZ.md).
+No production behavior is changed by these tests.
 
-Baseline inspected: `c12402e32eca82dcd284772ab04f0440ff54b1d8` (fresh `main`).
-The repository-specific direction supersedes the unrelated develop/feature
-rule: the integration/publication branch is `test/m0-host-fuzz`.
+Original component baseline: `c12402e32eca82dcd284772ab04f0440ff54b1d8`.
+Combined integration baseline: `a17854357950eec18f7f25c8b19a778c5a41b1f5`.
+The topic branch is `test/m0-host-fuzz`.
 
 ## Producer, consumers and oracle
 
@@ -87,7 +86,22 @@ Byte-alignment/ARM instruction validity is not asserted: existing consumers and
 The prose's reference to aligned ARM code is not an implemented byte-length rule.
 Build ID changes that remain grammatical are explicitly accepted.
 
-## Reproduction and measured results
+## Combined integration verification
+
+The combined fresh-main suite passes raw `make test`: 197 tests, 196 passed,
+one existing Arm GNU toolchain skip, no failures/errors, no adapters. Earlier
+Linux compiler/linker and FAT-label findings below are historical component
+results: fixes and regression tests are already on the integration baseline.
+
+`test_large_sparse_geometry_cluster_ceiling_and_card_bounds` extends the fake
+card's reported capacity using `set_media_sectors`, restoring its default in
+`finally`. It sparsely relocates the generated FAT copies/root/control records,
+accepts exactly `0x0fffffed` data clusters, rejects `0x0fffffee`, rejects a card
+one sector shorter than the partition, and tests UINT32_MAX subtraction bounds.
+Mounts still require zero writes and bounded reads. This is restricted mount
+validation, not full-volume fsck or physical-media qualification.
+
+## Original component reproduction and measured results
 
 No external devices, network or third-party Python packages are needed. Standard
 harness discovery registers these new files; no shared registration is edited.
@@ -143,22 +157,18 @@ injected faults.
 
 ## Explicit remaining scope
 
-* Fake `sd_sectors()` is fixed: maximum cluster-count `0x0fffffed`, huge-card
-  arithmetic and alternate card capacities need a coordinated harness extension.
-  Exact 65524/65525 lower boundaries are covered with relocated sparse media.
-  The existing BPB geometry sum guard is
+* Upper/lower cluster and card bounds are now covered by the combined sparse
+  integration test above. The existing BPB geometry sum guard is
   unreachable under the accepted count/reserved/FAT bounds: reserved <=65535,
   FAT <=count/4 and count >=262144 imply reserved+2*FAT < count. No fake claim of
   branch coverage for that guard is made.
 * SD-init failures, every FAT/directory I/O fault location, every possible
   directory alias/LFN and image-builder full-directory/full-volume failure are
   not exhaustively covered. Metadata generation ordering/CRC/sequence checks
-  remain the control-record worker's responsibility.
+  are covered by the companion control-record suite.
 * JSON is producer inventory only; arbitrary JSON validation is not invented.
-  CLI file I/O and USB framing/handshake/update sequencing require integration
-  coverage outside these FAT/image files.
-* Linux harness portability and the FAT volume-label checker finding need
-  explicit integration ownership. No production fix is silently bundled here.
-* NOTICE model attribution, final combined suite and trigger-safe authenticated
-  push of the combined branch remain integration work. No push is attempted
-  from this test-only component checkout.
+  CLI operating-system failures and physical USB behavior remain outside these
+  host tests. Sender/receiver framing is covered in `test_m0_usb_properties.py`.
+* Combined verification and NOTICE attribution are recorded in
+  [M0_HOST_FUZZ.md](M0_HOST_FUZZ.md). Publication status belongs in the external
+  delivery report, not a claim inferred from these local tests.

@@ -140,5 +140,6 @@ not compile/import errors. No deliberate fault is committed:
 
 Mutation substitutions and their actual assertion outputs are retained in the
 component's external evidence archive, not in production or shared test files.
-Final combined integration, NOTICE attribution, USB framing scope and safe
-publication belong to the integration task.
+Combined integration, NOTICE attribution and USB framing results are recorded in
+[M0_HOST_FUZZ.md](M0_HOST_FUZZ.md). Safe publication is tracked separately from
+these local host results.
