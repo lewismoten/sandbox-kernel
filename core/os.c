@@ -7,6 +7,7 @@
 #include "clock.h"
 #include "fb.h"
 #include "os.h"
+#include "autostart.h"
 #include "sys.h"
 #include "uspace.h"
 struct uframe os_frame;
@@ -80,6 +81,7 @@ static void stop(bool fault,const char *why,int64_t status) {
   char again[32]; memcpy(again,os_path,sizeof again);
   if(!os_start(again)) return;
  }
+ if(autostart_fallback()) return; /* an autostarted program that keeps faulting gives way to DIAG.ELF */
  log_line("OS stopped; kernel recovery console kept");
 }
 static void fault(const char *kind,uint32_t fsr,uint32_t far) {

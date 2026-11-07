@@ -3,6 +3,7 @@
 #include "tusb.h"
 #include "fatput.h"
 #include "os.h"
+#include "autostart.h"
 #include "input.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
@@ -57,6 +58,7 @@ static void run_command(const char *p) {
  if(!session||!storage_ready||os_running()) {fail("not-ready");return;}
  memcpy(path+4,name,strlen(name)+1);
  os_policy_state.faults=0; /* a fresh request starts a fresh restart budget */
+ autostart_cancel(); /* a program started over USB never falls back to DIAG.ELF */
  if(os_start(path)) {usb_reply("ERR run ");usb_reply(os_fail);usb_reply("\n");return;}
  usb_reply("OK run ");usb_reply(path);usb_reply("\n");
 }
