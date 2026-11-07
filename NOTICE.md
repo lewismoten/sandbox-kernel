@@ -10,6 +10,7 @@ AI models used on this repository:
 | GPT-6.1 Sol (OpenAI) | Codex CLI | Researched license options; wrote the first design, milestones and contribution rules (2026-11-06) |
 | GPT-6 (OpenAI) | Codex | Implemented original M0 code, integration, tools, host checks and documentation (2026-11-06) |
 | Claude Opus 5.5 (Anthropic) | Claude Code | Directed the work; reviewed and edited the design; added profiles, gates and latches; edited docs (2026-11-06) |
+| Claude Sonnet 5.5 (Anthropic) | Claude Code | First-board fixes: mailbox and SD handoff, failure codes, panel rotation, 5×7 font, logo badge and its generator, host screen renderer (2026-11-07) |
 
 The initial design was documentation only. M0 now fetches the pinned dependencies
 listed below into gitignored third_party/ and generates boot artifacts. The dependency
