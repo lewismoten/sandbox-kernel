@@ -34,8 +34,14 @@ void watchdog_feed(void);
 void reboot(void) __attribute__((noreturn));
 void panic(unsigned kind) __attribute__((noreturn));
 bool property(uint32_t tag,uint32_t *values,unsigned words);
+extern const char *property_fail; /* why the last property call failed */
 void service_io(void);
 bool sd_init(void);
+bool sd_init_after_handoff(const uint32_t in[8]);
+void sd_export(uint32_t out[8]); /* selector: card state for the runtime */
+bool sd_adopt(const uint32_t in[8]); /* runtime: take it over if the card is still in transfer state */
+extern const char *sd_fail; /* short code of the failing init step */
+extern const char *store_fail; /* short code of the failing store_init step */
 bool sd_read(uint32_t lba,void *data);
 bool sd_write(uint32_t lba,const void *data);
 uint32_t sd_sectors(void);
@@ -70,6 +76,7 @@ extern uint32_t control[128];
 /* control words: magic,version,sequence,confirmed,pending,consumed,
  * confirmed generation,pending generation,no-OS, then zero to word126; CRC127. */
 bool store_init(void);
+extern const uint32_t *sd_handoff_block; /* runtime: selector card state (8 words), else NULL */
 bool file_read(const struct file_extent *f,uint32_t sector,void *data);
 bool file_write(const struct file_extent *f,uint32_t sector,const void *data);
 bool control_commit(const uint32_t next[128]);

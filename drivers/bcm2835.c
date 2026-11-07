@@ -6,19 +6,36 @@ void gpio_set(unsigned p,bool v) { REG(GPIO+(v?0x1c:0x28)+(p/32)*4)=1u<<(p%32); 
 bool gpio_get(unsigned p) { return (REG(GPIO+0x34+(p/32)*4)>>(p%32))&1; }
 void delay_us(uint32_t us) { uint32_t s=micros(); while(!expired(s,us)) service_io(); }
 /* Noncached mailbox page lies outside cacheable sections (see mmu_init). */
-bool property(uint32_t tag,uint32_t *v,unsigned n) {
+const char *property_fail="none";
+/* The message page (0x80000) is strongly ordered, so no cache maintenance is
+ * needed. The GPU gets the 0xC0000000 alias (uncached, bypasses its L2), so a
+ * response can never sit in a GPU cache line the ARM does not see. */
+static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) {
  volatile uint32_t *b=(volatile uint32_t *)0x80000;
- if(n>8) return false;
  b[0]=(n+6)*4; b[1]=0; b[2]=tag; b[3]=n*4; b[4]=n*4;
- for(unsigned i=0;i<n;i++) b[5+i]=v[i]; b[5+n]=0; barrier();
+ for(unsigned i=0;i<n;i++) b[5+i]=v[i]; b[5+n]=0;
+ uint32_t z=0; __asm__ volatile("mcr p15,0,%0,c7,c10,4":: "r"(z):"memory"); /* drain write buffer */
  uint32_t s=micros();
- while(REG(PERIPH+0xb898)&0x80000000u) if(expired(s,100000)) return false;
- REG(PERIPH+0xb8a0)=0x40080008; barrier();
- while(!expired(s,100000)) {
-  if(!(REG(PERIPH+0xb898)&0x40000000u) && REG(PERIPH+0xb880)==0x40080008) {
-   barrier(); if(b[1]!=0x80000000u || !(b[4]&0x80000000u)) return false;
+ while(REG(PERIPH+0xb898)&0x80000000u) if(expired(s,100000)) {property_fail="MBOX FULL";return false;}
+ while(!(REG(PERIPH+0xb898)&0x40000000u)) (void)REG(PERIPH+0xb880); /* drop stale replies */
+ REG(PERIPH+0xb8a0)=0xc0080008u; barrier();
+ while(!expired(s,timeout)) {
+  if(!(REG(PERIPH+0xb898)&0x40000000u)) {
+   uint32_t r=REG(PERIPH+0xb880); barrier();
+   if(r!=0xc0080008u) continue; /* some other reply; keep waiting */
+   if(b[1]!=0x80000000u) {property_fail="MBOX RESP";return false;}
+   if(!(b[4]&0x80000000u)) {property_fail="MBOX TAG";return false;}
    for(unsigned i=0;i<n;i++) v[i]=b[5+i]; return true;
   }
+ }
+ property_fail="MBOX TIMEOUT"; return false;
+}
+bool property(uint32_t tag,uint32_t *v,unsigned n) {
+ if(n>8) {property_fail="MBOX ARGS";return false;}
+ uint32_t copy[8]; for(unsigned i=0;i<n;i++) copy[i]=v[i];
+ for(unsigned attempt=0;attempt<3;attempt++) {
+  for(unsigned i=0;i<n;i++) v[i]=copy[i];
+  if(property_once(tag,v,n,tag==0x28001?1000000:100000)) return true; /* power waits for stable */
  }
  return false;
 }

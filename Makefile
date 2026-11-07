@@ -6,11 +6,12 @@ SIZE := $(TOOLCHAIN)size
 PYTHON ?= python3
 BUILD_ID ?= $(shell $(PYTHON) scripts/build_id.py --hash)
 TUSB := third_party/tinyusb/src
-CFLAGS := -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
+PANEL_ROTATE_180 ?= 1
+CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c $(TUSB)/device/usbd_control.c $(TUSB)/class/cdc/cdc_device.c $(TUSB)/portable/synopsys/dwc2/dcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
-KERNEL := $(COMMON) drivers/panel.c drivers/usb.c core/protocol.c core/main.c $(USB)
+KERNEL := $(COMMON) drivers/panel.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
 .PHONY: all clean deps boot test FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski
