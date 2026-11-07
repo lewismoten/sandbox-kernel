@@ -3,7 +3,13 @@
 Copyright (c) 2026 Lewis Moten. Original material in this repository is licensed
 under the [MIT license](LICENSE).
 
-OpenAI Codex and Claude (Anthropic) assisted with research and writing this design on November 6, 2026.
+AI models used on this repository:
+
+| Model | Tool | What it did |
+| --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Codex CLI | Researched license options; wrote the first design, milestones and contribution rules (2026-11-06) |
+| Claude Opus 5.5 (Anthropic) | Claude Code | Directed the work; reviewed and edited the design; added profiles, gates and latches; edited docs (2026-11-06) |
+
 This repository currently contains documentation only. No third-party source, firmware, or binaries are included. The dependency
 table in [docs/design.md](docs/design.md#dependencies-and-primary-references)
 identifies planned sources; it is not a claim that they have been imported,
