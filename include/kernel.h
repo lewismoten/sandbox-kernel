@@ -37,6 +37,7 @@ bool property(uint32_t tag,uint32_t *values,unsigned words);
 extern const char *property_fail; /* why the last property call failed */
 bool property_message(uint32_t *message,unsigned words,uint32_t timeout_us);
 bool mmu_map_uncached(uint32_t phys,uint32_t bytes);
+const uint32_t *mmu_table(void); /* the privileged L1 table */
 void service_io(void);
 bool sd_init(void);
 bool sd_init_after_handoff(const uint32_t in[8]);
