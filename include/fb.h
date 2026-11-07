@@ -11,6 +11,14 @@ struct fb_info {
  uint32_t width,height,depth,pitch,bytes,pixel_order;
  uint32_t bus,phys; /* GPU bus address as returned, ARM physical (bus & 0x3fffffff) */
 };
+/* Pixel order as the firmware reports it describes bytes in memory, low address
+ * first: 0 ("BGR") stores B,G,R,X, which is the little-endian word 0x00RRGGBB
+ * that programs and the test pattern write; 1 ("RGB") stores R,G,B,X, so the
+ * same word shows red and blue swapped (seen on HDMI, 2026-11-07). */
+#define FB_ORDER_BGR 0u
+static inline uint32_t fb_native(const struct fb_info *f,uint32_t c) {
+ c&=0xffffffu; return f->pixel_order==FB_ORDER_BGR?c:((c&0xff)<<16)|(c&0xff00)|((c>>16)&0xff);
+}
 void fb_request(uint32_t m[FB_MESSAGE_WORDS],uint32_t width,uint32_t height,uint32_t depth);
 /* NULL when the reply is a usable buffer, else a short failure code. */
 const char *fb_parse(const uint32_t m[FB_MESSAGE_WORDS],uint32_t depth,struct fb_info *out);

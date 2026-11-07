@@ -194,7 +194,7 @@ class Space(Work):
 class CallsBase(Work):
     """Records in user memory, dispatched as svc #0 would be (helpers only)."""
     REC=IMAGE+0x1000;BUF=IMAGE+0x2000
-    def card(self,extra=None,order=1,fb=True):
+    def card(self,extra=None,order=0,fb=True):
         t={'MIT.TXT':(ROOT/'LICENSE').read_bytes(),'OS':{'DIAG.ELF':program(),**(extra or {})},'S512.BIN':bytes(range(256))*2}
         self.disk=self.work/f'card{id(self)}.img';fatgen.build(self.disk,t)
         self.c.open_disk(os.fsencode(self.disk));self.assertEqual(self.c.asset_mount(),0)
@@ -299,9 +299,9 @@ class Calls(CallsBase):
             poke(self.c,q,self.hdr(48)+struct.pack('<4Q',*rect))
             with self.subTest(rect): self.assertEqual(self.ioctl(fb,0x10001,q,48),-EINVAL)
         poke(self.c,q,self.hdr(48)+struct.pack('<4Q',10,10,0,0));self.assertEqual(self.ioctl(fb,0x10001,q,48),0)
-    def test_bgr_and_no_display(self):
+    def test_rgb_and_no_display(self):
         self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # end the program from setUp
-        self.c.close_disk();self.card(order=0)
+        self.c.close_disk();self.card(order=1)   # firmware kept RGB bytes: present swaps
         r,fb=self.open('/dev/fb0',2);self.mmap(fb,640*480*4);poke(self.c,FB_VA,struct.pack('<I',0x112233))
         q=self.BUF;poke(self.c,q,self.hdr(48)+struct.pack('<4Q',0,0,1,1));self.assertEqual(self.ioctl(fb,0x10001,q,48),0)
         self.assertEqual(C.string_at(self.hw,4),struct.pack('<I',0x332211))

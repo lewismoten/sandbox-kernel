@@ -134,7 +134,7 @@ static int ioctl_fb(const struct k_ioctl *r) {
   for(uint32_t y=(uint32_t)q.y;y<q.y+q.height;y++) {
    const uint32_t *s=(const uint32_t *)(const void *)(src+(size_t)y*fb0.width*4u);
    volatile uint32_t *d=(volatile uint32_t *)(void *)(fb_pixels+(size_t)y*fb0.pitch);
-   for(uint32_t x=(uint32_t)q.x;x<q.x+q.width;x++) {uint32_t c=s[x]&0xffffffu; d[x]=fb0.pixel_order?c:((c&0xff)<<16)|(c&0xff00)|((c>>16)&0xff);}
+   for(uint32_t x=(uint32_t)q.x;x<q.x+q.width;x++) d[x]=fb_native(&fb0,s[x]);
   }
   sys_presents++; return 0;
  }
