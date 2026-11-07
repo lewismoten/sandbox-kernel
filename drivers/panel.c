@@ -1,45 +1,12 @@
 /* SPDX-License-Identifier: MIT. Original async SPI/renderer; SSD1680 V4
  * register sequence adapted from Waveshare team, permission in licenses/. */
 #include "kernel.h"
+#include "render.h"
 #define SPI (PERIPH+0x204000)
-/* The text is laid out as 250x122 landscape and mapped to the 122x250 native
- * panel. PANEL_ROTATE_180=1 (default) is the orientation the first board test
- * showed correct after the original mapping came out upside down; build with
- * PANEL_ROTATE_180=0 (make PANEL_ROTATE_180=0) for the previous mapping.
- * Both refresh paths draw from the same plane, so both rotate. */
-#ifndef PANEL_ROTATE_180
-#define PANEL_ROTATE_180 1
-#endif
-#if PANEL_ROTATE_180
-#define NATIVE_X(lx,ly) (121u-(ly))
-#define NATIVE_Y(lx,ly) (lx)
-#else
-#define NATIVE_X(lx,ly) (ly)
-#define NATIVE_Y(lx,ly) (249u-(lx))
-#endif
 static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos;
 static uint32_t since,delay;
 static bool full=true,disabled;
-static const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-:./ ";
-/* Original 3x5 glyphs, rows encoded as octal digits; no imported font. */
-static const uint16_t glyphs[]={075757,065656,074447,065556,074647,074644,074557,055755,072227,011156,055655,044447,057555,075555,075557,075644,075573,075655,074217,072222,055557,055552,055575,055255,055222,071247,075557,026227,071747,071717,055711,074717,074757,071111,075757,075717,000700,002020,000024,001240,000020,000000};
-static void text(unsigned x,unsigned y,const char *s) {
- while(*s&&x<244) {
-  unsigned ch=(uint8_t)*s++; if(ch==0xe2 && (uint8_t)s[0]==0x80 && (uint8_t)s[1]==0xa6) {
-   s+=2; for(unsigned dot=0;dot<3;dot++) {unsigned px=NATIVE_X(x+dot*2,y+8),py=NATIVE_Y(x+dot*2,y+8);if(px<122&&py<250)desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));} x+=8;continue;
-  }
-  if(ch>='a'&&ch<='z') ch-=32;
-  unsigned index=39; for(unsigned i=0;i<sizeof(alphabet)-1;i++) if(ch==(unsigned)alphabet[i]) {index=i;break;}
-  uint16_t bits=glyphs[index];
-  for(unsigned row=0;row<5;row++) for(unsigned col=0;col<3;col++) if(bits&(1u<<((4-row)*3+2-col)))
-   for(unsigned dy=0;dy<2;dy++) for(unsigned dx=0;dx<2;dx++) {
-    unsigned lx=x+col*2+dx,ly=y+row*2+dy;
-    if(lx<250&&ly<122) {unsigned px=NATIVE_X(lx,ly),py=NATIVE_Y(lx,ly);desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));}
-   }
-  x+=8;
- }
-}
 static bool byte(uint8_t b) {
  REG(SPI)=0xb0; REG(SPI+4)=b; uint32_t t=micros();
  while(!(REG(SPI)&0x10000)) if(expired(t,1000)) {disabled=true;error("SPI timeout");REG(SPI)=0;return false;}
@@ -56,7 +23,7 @@ static void wait_phase(unsigned next,uint32_t us) {phase=next;since=micros();del
 void panel_start(void) {
  gpio_mode(8,4);gpio_mode(10,4);gpio_mode(11,4);gpio_mode(25,1);gpio_mode(17,1);gpio_mode(24,0);
  REG(SPI+8)=64; /* 250MHz core /64 = 3.90625 MHz; fixed in config.txt */
- memset(desired,255,sizeof(desired)); text(16,48,"Starting\xe2\x80\xa6");memcpy(frame,desired,4000);
+ render_starting(desired);memcpy(frame,desired,4000);
  gpio_set(17,true);wait_phase(1,20000);
 }
 bool panel_boot_done(void) {return disabled||!full;}
@@ -86,9 +53,7 @@ void panel_task(const char *state,uint32_t seconds) {
  default:break;
  }
  if(phase)return;
- memset(desired,255,4000);text(8,6,"sandbox-kernel");text(8,26,BUILD_ID);
- char up[32];uptime(up,seconds);text(8,46,"Up:");text(40,46,up);text(8,66,"USB:");text(48,66,state);
- text(8,86,"Error:");text(8,102,last_error);
+ render_status(desired,BUILD_ID,state,last_error,seconds);
  if(!memcmp(desired,shown,4000))return;
  memcpy(frame,desired,4000);gpio_set(17,false);wait_phase(12,1000);
 }
