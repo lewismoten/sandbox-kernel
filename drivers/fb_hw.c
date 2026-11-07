@@ -17,8 +17,8 @@ bool fb_start(void) {
  boot_note(line);
  uint32_t m[FB_MESSAGE_WORDS]; const char *why=NULL;
  for(unsigned attempt=0;attempt<2&&(!attempt||why);attempt++) {
-  fb_request(m,FB_WIDTH,FB_HEIGHT,FB_DEPTH);
-  why=property_message(m,FB_MESSAGE_WORDS,500000)?fb_parse(m,FB_DEPTH,&fb0):"FB MBOX";
+  fb_request(m,FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH);
+  why=property_message(m,FB_MESSAGE_WORDS,500000)?fb_parse(m,FB_HOME_DEPTH,&fb0):"FB MBOX";
  }
  if(!why&&!mmu_map_uncached(fb0.phys,fb0.bytes)) why="FB MAP";
  p=line;

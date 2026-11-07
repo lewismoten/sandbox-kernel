@@ -60,6 +60,7 @@ int os_start(const char *path) {
  sync_caches();
  memset(&os_frame,0,sizeof os_frame);
  os_frame.r[0]=U_START_VA;os_frame.sp=U_STACK_TOP;os_frame.lr=U_EXIT_VA;os_frame.pc=plan.entry;os_frame.cpsr=0x10; /* User, ARM, IRQ on */
+ fb_program_mode(); /* every program starts in 640x480x32, whatever the screen showed */
  start_us=health_us=now();healths=0;ready=false;running=true;os_starts++;
  char line[80],*p=line; append(&p,"OS start ");append(&p,os_path);append(&p," entry ");append_hex(&p,plan.entry);append(&p," pages ");append_n(&p,plan.bytes/4096);log_line(line);
  return 0;
@@ -72,8 +73,7 @@ static void stop(bool fault,const char *why,int64_t status) {
   char t[48],*q=t; append(&q,"OS screen crc ");append_n(&q,~c);log_line(t);
  }
  sys_reset();
- fb_restore(); /* a program's mode ends with it */
- if(fault&&fb_pixels) fb_pattern(&fb0,fb_pixels); /* a fault puts the kernel's own screen back; a clean exit leaves the last frame */
+ if(fault) fb_home(); /* a fault puts the kernel's own screen back; a clean exit leaves the last frame in the program's mode */
  char line[80],*p=line;
  if(!fault) {append(&p,"OS exit 0 ");append(&p,os_path);append(&p,"; recovery console");log_line(line);return;}
  if(!why) {append(&p,"OS exit ");if(status<0){append(&p,"-");status=-status;}append_n(&p,(uint32_t)status);append(&p," counts as a fault");log_line(line);}
