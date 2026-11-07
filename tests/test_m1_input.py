@@ -101,7 +101,7 @@ class Input(u.CallsBase):
         self.ev();self.c.sys_reset();self.ev()
 
 class Dirents(u.CallsBase):
-    def card(self,extra=None,order=1,fb=True):
+    def card(self,extra=None,order=0,fb=True):
         games={'DICE':{'DICE.GAM':b'GM'+bytes(300),'DICE.PAL':bytes(768)},'KITSHOP':{'KITSHOP.GAM':b'G'*5},'EMPTY':{},
                **{f'G{i:02d}':{'X.GAM':b'x'} for i in range(30)}}
         self.disk=self.work/f'games{id(self)}.img'

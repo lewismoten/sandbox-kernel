@@ -203,10 +203,11 @@ class Framebuffer(unittest.TestCase):
         cls.c.fb_parse.restype=C.c_char_p;cls.c.fb_pattern_pixel.restype=C.c_uint32
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
-    def reply(self,w=640,h=480,depth=32,pitch=2560,bus=0xde800000,size=None,order=1):
+    def reply(self,w=640,h=480,depth=32,pitch=2560,bus=0xde800000,size=None,order=0):
         m=(C.c_uint32*36)();self.c.fb_request(m,640,480,32)
         self.assertEqual(list(m[:7]),[144,0,0x48003,8,8,640,480]);self.assertEqual(m[34],0)
         self.assertEqual([m[i] for i in (17,21,25,30)],[0x48005,0x48006,0x40001,0x40008])
+        self.assertEqual(m[24],0)   # BGR bytes: the word 0x00RRGGBB shows as written (HDMI, 2026-11-07)
         m[1]=0x80000000
         for t in (2,7,12,17,21,25,30): m[t+2]=0x80000000|m[t+1]
         m[5],m[6],m[10],m[11]=w,h,w,h;m[20]=depth;m[24]=order;m[28]=bus;m[29]=pitch*h if size is None else size;m[33]=pitch
@@ -229,10 +230,10 @@ class Framebuffer(unittest.TestCase):
         m=self.reply();m[30]=0x48008;self.assertEqual(self.parse(m)[0],'FB TAG')
         m=self.reply();m[0]=140;self.assertEqual(self.parse(m)[0],'FB RESP')
     def test_pattern(self):
-        f=FbInfo(64,48,32,64*4+32,0,1,0,0);buf=(C.c_uint8*(f.pitch*48))(*([0xaa]*(f.pitch*48)))
+        f=FbInfo(64,48,32,64*4+32,0,0,0,0);buf=(C.c_uint8*(f.pitch*48))(*([0xaa]*(f.pitch*48)))
         self.c.fb_pattern(C.byref(f),buf);px=lambda x,y:struct.unpack_from('<I',bytes(buf),y*f.pitch+x*4)[0]
         self.assertEqual(px(0,0),0xffffff);self.assertEqual(px(63,47),0xffffff)
         self.assertEqual([px(x*8+3,10) for x in range(8)],[0xffffff,0xffff00,0x00ffff,0x00ff00,0xff00ff,0xff0000,0x0000ff,0])
         self.assertEqual(px(4,40),0x111111);self.assertEqual(px(58,40),0xffffff-0x111111)
         self.assertTrue(all(b==0xaa for b in bytes(buf)[256:288]),'pitch padding was written')
-        f.pixel_order=0;self.assertEqual(self.c.fb_pattern_pixel(C.byref(f),44,10),0x0000ff)
+        f.pixel_order=1;self.assertEqual(self.c.fb_pattern_pixel(C.byref(f),44,10),0x0000ff)   # RGB kept: red bar swapped

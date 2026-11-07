@@ -11,7 +11,7 @@ void fb_request(uint32_t m[FB_MESSAGE_WORDS],uint32_t w,uint32_t h,uint32_t d) {
  m[0]=FB_MESSAGE_WORDS*4;
  for(unsigned t=0;t<7;t++) {uint32_t o=tags[t][2]; m[o-3]=tags[t][0]; m[o-2]=tags[t][1]*4; m[o-1]=tags[t][1]*4;}
  m[5]=w;m[6]=h; /* physical */ m[10]=w;m[11]=h; /* virtual */ /* offset 0,0 */
- m[20]=d; m[24]=1; /* RGB order */ m[28]=16; /* allocate, 16-byte alignment */
+ m[20]=d; m[24]=FB_ORDER_BGR; /* bytes B,G,R: word 0x00RRGGBB */ m[28]=16; /* allocate, 16-byte alignment */
 }
 const char *fb_parse(const uint32_t m[FB_MESSAGE_WORDS],uint32_t d,struct fb_info *f) {
  if(m[0]!=FB_MESSAGE_WORDS*4||m[1]!=0x80000000u) return "FB RESP";
@@ -39,9 +39,8 @@ uint32_t fb_pattern_pixel(const struct fb_info *f,uint32_t x,uint32_t y) {
  uint32_t c;
  if(y<h*2/3) c=bars[x*8/w];
  else {uint32_t g=(x*16/w)*17; c=(g<<16)|(g<<8)|g;}
- /* Pixel order 0 is BGR: swap so bars appear in the same order either way. */
- if(!f->pixel_order) c=((c&0xff)<<16)|(c&0xff00)|((c>>16)&0xff);
- return c;
+ /* Swapped only if the firmware kept RGB, so the bars read the same either way. */
+ return fb_native(f,c);
 }
 void fb_pattern(const struct fb_info *f,uint8_t *pixels) {
  for(uint32_t y=0;y<f->height;y++) {
