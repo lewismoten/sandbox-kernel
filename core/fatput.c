@@ -131,7 +131,8 @@ int fatput(const char *name,const uint8_t *data,uint32_t bytes) {
   dir=((uint32_t)u16(e+20)<<16)|u16(e+26); if(!cluster_ok(dir)) return fail("PUT OS CLUSTER",5);
  } else { /* create /OS: one zeroed cluster with "." and "..", then its root entry */
   if(!free_slot.found) return fail("PUT ROOT FULL",28);
-  if((r=alloc(1))) return r; dir=chain[0];
+  if((r=alloc(1))) return r;
+  dir=chain[0];
   memset(s,0,512);
   for(uint32_t i=1;i<v.spc;i++) if((r=wr(lba_of(dir,i),s,0))) return r;
   uint8_t d[512]; memset(d,0,512); memset(d,' ',11); d[0]='.'; d[11]=0x10; put16(d+20,dir>>16); put16(d+26,dir&0xffffu);

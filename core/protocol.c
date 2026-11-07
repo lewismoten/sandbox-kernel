@@ -103,7 +103,8 @@ static void work(void) {
    uint8_t b[512];uint32_t n=expected-sector_index*512;if(n>512)n=512;
    if(!file_read(&slots[inactive],sector_index,b)||memcmp(b,staging+sector_index*512,n)) {updates_ready=false;fail("readback");return;}
    for(unsigned i=n;i<512;i++)if(b[i]) {updates_ready=false;fail("padding");return;}
-   if(++sector_index==(expected+511)/512)phase=6;return;
+   if(++sector_index==(expected+511)/512)phase=6;
+   return;
   }
   if(phase==6) {
    uint32_t c[128];memcpy(c,control,512);c[4]=inactive;c[5]=0;
