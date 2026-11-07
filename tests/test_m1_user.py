@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""M1 slice 2 host tests: the user address space and its page descriptors,
+"""M1 slice 2 host tests (slice 3 adds tests/test_m1_input.py): the user address space and its page descriptors,
 strict ELF32 checks with fuzzing (acceptance test 3), the system-call
 dispatcher (acceptance test 4), the OS supervisor's fault and restart policy
 (tests 2 and 5, first form), and the /OS file installer behind USB PUTF.
@@ -191,8 +191,8 @@ class Space(Work):
         self.assertEqual(c.us_check(0x00100000,4,R),-EFAULT);self.assertEqual(c.us_check(IMAGE,1<<32,R),-EFAULT)
         self.assertEqual(c.us_check(IMAGE+4096,0,W),0)
 
-class Calls(Work):
-    """Records in user memory, dispatched as svc #0 would be."""
+class CallsBase(Work):
+    """Records in user memory, dispatched as svc #0 would be (helpers only)."""
     REC=IMAGE+0x1000;BUF=IMAGE+0x2000
     def card(self,extra=None,order=1,fb=True):
         t={'MIT.TXT':(ROOT/'LICENSE').read_bytes(),'OS':{'DIAG.ELF':program(),**(extra or {})},'S512.BIN':bytes(range(256))*2}
@@ -218,6 +218,8 @@ class Calls(Work):
     def close(self,fd): return self.call(4,self.hdr(24)+struct.pack('<Q',fd))
     def ioctl(self,fd,req,buf,n): return self.call(5,self.hdr(48)+struct.pack('<4Q',fd,req,buf,n))
     def mmap(self,fd,length,prot=3,flags=1,offset=0): r=self.call(6,self.hdr(64)+struct.pack('<6Q',fd,offset,length,prot,flags,0));return r,struct.unpack_from('<Q',peek(self.c,self.REC,64),56)[0]
+
+class Calls(CallsBase):
     def test_log_and_sd(self):
         r,log=self.open('/dev/log',1);self.assertEqual(r,0)
         poke(self.c,self.BUF,b'hello\x07 world\n');self.assertEqual(self.io(3,log,self.BUF,13),(0,13))
@@ -256,7 +258,7 @@ class Calls(Work):
         self.assertEqual(self.call(2,None,size=48,va=0x00100000),-EFAULT)          # kernel record
         poke(self.c,IMAGE+0x100,good);self.assertEqual(self.call(2,None,size=48,va=IMAGE+0x100),-EFAULT)   # read-only record with outputs
         poke(self.c,IMAGE+0x100,self.hdr(24)+bytes(8));self.assertEqual(self.call(4,None,size=24,va=IMAGE+0x100),-EBADF)          # close reads only: text is fine to read
-        for n in (0,7,8,15,17,99,0xffffffff): self.assertEqual(self.call(n,good),-ENOSYS)
+        for n in (0,7,8,15,18,99,0xffffffff): self.assertEqual(self.call(n,good),-ENOSYS)
         self.assertEqual(self.call(2,good,size=8),-EINVAL);self.assertEqual(self.call(2,good,size=8192),-EINVAL)
     def test_open_rules(self):
         self.assertEqual(self.open('/sd/NOPE.TXT')[0],-ENOENT);self.assertEqual(self.open('/x')[0],-ENOENT)
@@ -308,12 +310,17 @@ class Calls(Work):
     def test_exit(self):
         self.assertEqual(self.call(16,self.hdr(24)+struct.pack('<q',-3)),1);self.assertEqual(C.c_int64.in_dll(self.c,'sys_exit_status').value,-3)
 
-class Supervisor(Calls):
+class SupervisorBase(CallsBase):
     def frame(self): return Frame.in_dll(self.c,'os_frame')
     def svc(self,pc_after,n,rec):
         f=self.frame();poke(self.c,self.REC,rec);f.r[0]=self.REC;f.r[1]=len(rec);f.r[2]=1;f.r[7]=n
         for i in (3,4,5,6): f.r[i]=0
         f.pc=pc_after;self.c.os_handle(1,0,0);return C.c_int32(self.frame().r[0]).value
+    def stop_kinds(self,reason,fsr,far,kind):
+        self.c.take_log();self.c.os_handle(reason,fsr,far);log=self.c.take_log().decode()
+        self.assertIn('OS fault '+kind,log);return log
+
+class Supervisor(SupervisorBase,Calls):
     def test_entry_state(self):
         f=self.frame();self.assertEqual((f.pc,f.sp,f.lr,f.r[0],f.cpsr),(IMAGE,STACK_TOP,EXIT_VA,START_VA,0x10))
         size,major,minor,gen,trial,img,stack,handles=struct.unpack('<IHHIIQQQ',peek(self.c,START_VA,40))
@@ -325,9 +332,6 @@ class Supervisor(Calls):
         self.assertEqual(self.svc(IMAGE+4,1,rec),0)                     # svc #0 at IMAGE
         self.assertEqual(self.svc(IMAGE+8,1,rec),-ENOSYS)               # svc #1
         self.frame().cpsr=0x30;self.svc(IMAGE+4,1,rec);self.assertIn(b'OS fault thumb',self.c.take_log())
-    def stop_kinds(self,reason,fsr,far,kind):
-        self.c.take_log();self.c.os_handle(reason,fsr,far);log=self.c.take_log().decode()
-        self.assertIn('OS fault '+kind,log);return log
     def test_fault_restart_then_recovery(self):
         log=self.stop_kinds(5,0x80d,IMAGE,'data abort pc 0x08000000 fsr 0x0000080d addr 0x08000000')
         self.assertIn('OS restart',log);self.assertTrue(self.c.os_running());self.assertEqual(C.c_uint32.in_dll(self.c,'os_starts').value,2)
@@ -340,11 +344,6 @@ class Supervisor(Calls):
     def test_restart_window(self):
         self.stop_kinds(4,5,0x20200000,'prefetch abort');self.assertTrue(self.c.os_running())
         self.c.advance(61_000_000);self.stop_kinds(5,0,0,'data abort');self.assertTrue(self.c.os_running())   # outside 60 s: restarted again
-    def test_stall(self):
-        self.c.advance(1_500_000);self.c.os_handle(2,0,0);self.assertTrue(self.c.os_running())   # preempted, still within 2 s
-        rec=self.hdr(56)+struct.pack('<5Q',self.BUF+0x800,8,1,0,0);poke(self.c,self.BUF+0x800,b'/dev/log');self.svc(IMAGE+4,1,rec)
-        self.c.advance(1_900_000);self.c.os_handle(2,0,0);self.assertTrue(self.c.os_running())     # a call counts as progress
-        self.c.advance(200_000);log=self.stop_kinds(2,0,0,'stalled 2 s without a call');self.assertIn('OS restart',log)
     def test_exits(self):
         f=self.frame();f.pc=EXIT_VA;f.r[0]=0;self.c.take_log();self.c.os_handle(4,0,EXIT_VA)
         self.assertIn(b'OS exit 0 /OS/DIAG.ELF; recovery console',self.c.take_log());self.assertFalse(self.c.os_running())
@@ -386,7 +385,7 @@ def fsck(disk,work):
             if b.strip(b'\0'): dst.seek(i);dst.write(b)
     r=subprocess.run(['fsck_msdos','-n',str(part)],capture_output=True,text=True);part.unlink();return r
 
-class Install(Work):
+class InstallBase(Work):
     def setUp(self):
         super().setUp();self.disk,self.folder=boot_card(self.work)
         self.c.open_disk(os.fsencode(self.disk));self.addCleanup(self.c.close_disk);self.assertEqual(self.c.asset_mount(),0)
@@ -404,6 +403,8 @@ class Install(Work):
         for name,data in self.before.items():
             with self.subTest(name): self.assertEqual(self.read('/'+name),data)
         a,b=self.fats();self.assertEqual(a,b)
+
+class Install(InstallBase):
     def test_create_replace_and_checks(self):
         free=self.free();one=bytes(random.Random(2).getrandbits(8) for _ in range(5000))
         self.assertEqual(self.c.fatput(b'DIAG.ELF',one,len(one)),0,text(self.c,'fatput_fail'))
@@ -427,7 +428,7 @@ class Install(Work):
     def test_os_name_taken_by_a_file(self):
         self.c.close_disk();self.disk,self.folder=boot_card(self.work,{'OS':b'not a directory'})
         self.c.open_disk(os.fsencode(self.disk));self.c.asset_mount()
-        self.assertEqual(self.c.fatput(b'DIAG.ELF',b'x',1),-20);self.assertEqual(text(self.c,'fatput_fail'),'PUT OS NOT DIR')
+        self.assertEqual(self.c.fatput(b'DIAG.ELF',b'x',1),-20);self.assertEqual(text(self.c,'fatput_fail'),'PUT NOT DIR')
     def test_full_card(self):
         with open(self.disk,'r+b') as f:   # mark every free cluster bad
             for copy in (0,1):
@@ -438,7 +439,7 @@ class Install(Work):
         self.assertEqual(self.c.fatput(b'DIAG.ELF',b'x',1),-28);self.assertEqual(text(self.c,'fatput_fail'),'PUT FULL')
         self.untouched()
 
-class Protocol(Install):
+class ProtocolBase(InstallBase):
     def run_protocol(self,limit=200000):
         out=b''
         for _ in range(limit):
@@ -453,6 +454,8 @@ class Protocol(Install):
         self.c.feed(data,len(data));return out+self.run_protocol()
     def setUp(self):
         super().setUp();self.assertTrue(self.c.initialize());self.c.asset_mount()
+
+class Protocol(ProtocolBase,Install):
     def test_put_and_run(self):
         out=self.put(program());self.assertIn('OK file /OS/DIAG.ELF',out);self.assertIn('ACK 1024',out)
         self.assertEqual(self.read('/OS/DIAG.ELF'),program())
