@@ -8,7 +8,11 @@ it may still change before 1.0 is frozen.
   fixed records, with size and offset asserts. Portable C11; no OS headers.
 - `include/sandbox/syscall.h`: ARM-state ARM32 `svc #0` wrappers that return 0 or a
   negative `SBX_E*` value: `sbx_open`, `sbx_read`, `sbx_write`, `sbx_close`,
-  `sbx_ioctl`, `sbx_log`, `sbx_fb_query`, `sbx_fb_present`, `sbx_exit`.
+  `sbx_ioctl`, `sbx_log`, `sbx_fb_query`, `sbx_fb_present`, `sbx_exit`, and from slice 3
+  `sbx_getdents` (directory entries of an open `/sd` folder), `sbx_health` (the
+  heartbeat: within 10 s of the start, then at least every 2 s), `sbx_input_query`
+  and `sbx_input_state_get` for `/dev/input/event0` (16-byte `sbx_input_event`
+  records, Linux event codes; open it read-only with `SBX_O_NONBLOCK`).
 
 - `sbx_fb_map` maps the `/dev/fb0` surface (`mmap`, call 6); `sbx_startup` is the
   read-only record whose address is in r0 at entry.

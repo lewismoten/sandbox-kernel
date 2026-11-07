@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT; the first OS program for sandbox-kernel,
- * built only against sdk/. It logs, checks a few ABI rules from the user
+ * built only against sdk/. It logs, reports readiness, checks a few ABI rules from the user
  * side, draws a tile pattern through /dev/fb0, reads /sd/MIT.TXT and exits. */
 #include <sandbox/syscall.h>
 static uint64_t log_fd;
@@ -49,6 +49,7 @@ int main(const sbx_startup *start) {
   if (sbx_open("/dev/log", 8, SBX_O_WRONLY, &log_fd)) return 3;
   p = put(line, "DIAG hello, ABI "); p = num(p, start->major); p = put(p, "."); p = num(p, start->minor);
   p = put(p, ", generation "); p = num(p, start->generation); p = put(p, start->trial ? ", trial" : ""); say(line);
+  say(sbx_health(start->generation, 1) ? "DIAG health refused" : "DIAG ready (health 1)");
   p = put(line, "DIAG checks "); p = num(p, (uint32_t)checks()); p = put(p, "/"); p = num(p, CHECKS); say(line);
   uint64_t fb; sbx_fb_mode mode; uint32_t *px;
   if (sbx_open("/dev/fb0", 8, SBX_O_RDWR, &fb) || sbx_fb_query(fb, &mode) || sbx_fb_map(fb, mode.buffer_bytes, (void **)&px)) say("DIAG no framebuffer");
