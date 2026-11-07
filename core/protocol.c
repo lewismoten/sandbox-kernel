@@ -3,6 +3,7 @@
 #include "tusb.h"
 #include "fatput.h"
 #include "os.h"
+#include "input.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
 extern uint32_t boot_slot,boot_generation;
@@ -13,7 +14,7 @@ static uint32_t expected,received,transport_crc,activity,block_end,sector_index,
 static unsigned inactive;
 static uint8_t image_hash[32];
 static bool executing,overflow,session,putf;
-static char put_name[13];static uint8_t put_hash[32];
+static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
 bool protocol_busy(void) {return phase!=0;}
@@ -32,12 +33,19 @@ static bool name_token(const char **p,char out[13]) {
  unsigned n=0;while(**p&&**p!=' ') {if(n==12)return false;out[n++]=*(*p)++;}out[n]=0;
  uint8_t short_name[11];return n&&!fatput_name(out,short_name);
 }
-/* PUTF <NAME> <size> <crc32> <sha256>: a development file for /OS, sent
+static bool path_token(const char **p,char out[32]) {
+ unsigned n=0;while(**p&&**p!=' ') {if(n==31)return false;out[n++]=*(*p)++;}out[n]=0;
+ return n&&!fatput_check(out);
+}
+static bool in_os(const char *path) {while(*path)if(*path++=='/')return false;return true;}
+static void reply_path(const char *path) {if(in_os(path))usb_reply("/OS");usb_reply("/");usb_reply(path);}
+/* PUTF <PATH> <size> <crc32> <sha256>: a development file for /OS/<NAME>, or
+   for /GAMES/<DIR>/<NAME> when PATH is GAMES/<DIR>/<NAME>, sent
    like PUT2 in 1024-byte blocks, checked by CRC and SHA-256, then written by
    core/fatput.c. RUN <NAME> starts /OS/<NAME> as the OS program. */
 static void file_command(const char *p) {
  uint32_t size;uint8_t crc[4]={0};
- if(!name_token(&p,put_name)||*p++!=' '||!decimal(&p,&size)||*p++!=' '||!hex(&p,crc,4)||*p++!=' '||!hex(&p,put_hash,32)||*p) {fail("command");return;}
+ if(!path_token(&p,put_name)||*p++!=' '||!decimal(&p,&size)||*p++!=' '||!hex(&p,crc,4)||*p++!=' '||!hex(&p,put_hash,32)||*p) {fail("command");return;}
  if(!size||size>FATPUT_MAX) {fail("size");return;}
  if(!session||!storage_ready||control[4]!=NO_SLOT||os_running()) {fail("not-ready");return;}
  expected=size;transport_crc=((uint32_t)crc[0]<<24)|((uint32_t)crc[1]<<16)|((uint32_t)crc[2]<<8)|crc[3];received=0;block_end=size<1024?size:1024;activity=micros();
@@ -52,10 +60,39 @@ static void run_command(const char *p) {
  if(os_start(path)) {usb_reply("ERR run ");usb_reply(os_fail);usb_reply("\n");return;}
  usb_reply("OK run ");usb_reply(path);usb_reply("\n");
 }
+/* Synthetic input (slice 3): KEY <code> <down|up|repeat>, AXIS <code> <value>,
+   INPUT <add|remove>. Each KEY or AXIS is one frame (the change, then
+   SYN_REPORT) for /dev/input/event0. */
+static void input_command(const char *p,bool axis) {
+ uint32_t code,mag=0;bool neg=false;struct input_change c;
+ if(!session) {usb_reply("ERR not-ready\n");return;}
+ if(!decimal(&p,&code)||*p++!=' '||code>0xffff) {usb_reply("ERR input command\n");return;}
+ c.type=(uint16_t)(axis?EV_ABS:EV_KEY);c.code=(uint16_t)code;
+ if(axis) {
+  if(*p=='-') {neg=true;p++;}
+  if(!decimal(&p,&mag)||*p||mag>32768) {usb_reply("ERR input value\n");return;}
+  c.value=neg?-(int32_t)mag:(int32_t)mag;
+ }
+ else if(!strcmp(p,"down"))c.value=1; else if(!strcmp(p,"up"))c.value=0; else if(!strcmp(p,"repeat"))c.value=2;
+ else {usb_reply("ERR input value\n");return;}
+ int r=input_frame(&c,1);
+ if(r) {usb_reply(r==-19?"ERR input no-device\n":"ERR input range\n");return;}
+ usb_reply(axis?"OK axis ":"OK key ");field(code);usb_reply(" ");
+ if(axis) {if(neg)usb_reply("-");field(mag);} else usb_reply(p);
+ usb_reply("\n");
+}
 static void command_line(void) {
  line[used]=0;
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
+ if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
+ if(used>5&&!memcmp(line,"AXIS ",5)) {input_command(line+5,true);return;}
+ if(!strcmp(line,"INPUT add")||!strcmp(line,"INPUT remove")) {
+  if(!session) {usb_reply("ERR not-ready\n");return;}
+  if(line[6]=='a') input_add(); else input_remove();
+  log_line(line[6]=='a'?"INPUT event0 added (synthetic)":"INPUT event0 removed");
+  usb_reply(line[6]=='a'?"OK input add\n":"OK input remove\n");return;
+ }
  if(!strcmp(line,"INFO")) {
   session=true;
   usb_reply("INFO 2 zero-w armv6 ABI=1.0 profile=zero-w-armv6 capacity=2097152 active=");field(boot_slot);
@@ -87,8 +124,8 @@ static void work(void) {
     if(memcmp(h,put_hash,32)) {fail("sha256");return;}
     int r=fatput(put_name,staging,expected);
     if(r) {fail(fatput_fail);return;}
-    putf=false;phase=0;usb_reply("OK file /OS/");usb_reply(put_name);usb_reply(" ");field(expected);usb_reply("\n");
-    char t[48]="File installed /OS/";memcpy(t+19,put_name,strlen(put_name)+1);log_line(t);return;
+    putf=false;phase=0;usb_reply("OK file ");reply_path(put_name);usb_reply(" ");field(expected);usb_reply("\n");
+    char t[64]="File installed ";unsigned k=15;if(in_os(put_name)){memcpy(t+k,"/OS",3);k+=3;}t[k++]='/';memcpy(t+k,put_name,strlen(put_name)+1);log_line(t);return;
    }
    if(!image_valid(staging,expected)) {fail("manifest");return;}
    sha256(staging,expected,image_hash);sector_index=0;phase=4;install_since=micros();return;
