@@ -17,6 +17,16 @@ and updater still require raw storage and durable boot-control records.
 Vendor firmware stays separate. No Circle source, headers, libraries or binaries
 may enter the build. UART is the early boot fallback.
 
+Status display behavior (from testing the Circle prototype on the Zero W, 2026-11-06):
+
+- The panel shows "Starting…" as the kernel's first visible act, before USB, SD and timers are up; the full
+  status replaces it once initialization finishes (the prototype's first status took about 4 seconds).
+- One full refresh at boot only; every later update is a partial refresh, and an unchanged image is not redrawn.
+- Uptime is compact: seconds below 100 (`42s`), then the two largest units (`49m`, `1h 5m`, `2d 4h`, `7w 1d`,
+  `1y 45w`), so the panel redraws at most once a minute after the first 100 seconds.
+- The update sender retries the first handshake: the prototype's first send timed out twice before the device
+  answered. The kernel answers the handshake before any slow work (panel waveform, storage).
+
 Acceptance tests:
 
 1. Boot Lewis's Zero W v1.1 from an MBR/FAT32 image on ten cold starts. Capture
