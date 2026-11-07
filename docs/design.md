@@ -479,6 +479,11 @@ its own unlock check (such as a parental PIN it keeps in its private state). Pro
 is closed, never open one. Latches persist across reboots in `/state` with the same atomic-replace safety as
 saves.
 
+Recovery always exists: a latch with no way back is a bug. Besides the provider's own unlock (a PIN, a timer
+that opens the latch by itself), a file named `LOCKSMITH.TXT` placed on the FAT boot partition from any computer
+opens every latch at the next boot. The kernel then deletes the file and logs that it was used. Latches keep
+honest people honest; they are not security against someone with the SD card in hand.
+
 ### ABI reservations
 
 Call numbers and record layouts for `gate_check`, `gate_register`, `profile_get`, `profile_set`,
