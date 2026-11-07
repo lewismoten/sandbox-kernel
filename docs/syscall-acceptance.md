@@ -1,5 +1,9 @@
 # Host syscall acceptance matrix
 
+Final branch results and shared portability fixes are recorded in
+[M1 host acceptance integration](m1-host-acceptance.md). Baseline results below
+are retained as evidence of the standalone test contribution.
+
 Scope: M1 slice 2, baseline `aac205c699c26a98641894dadd4ba97e6964115b`.
 The implemented calls are open (1), read (2), write (3), close (4), ioctl (5),
 mmap (6), and exit (16). These tests exercise the actual dispatcher, ABI

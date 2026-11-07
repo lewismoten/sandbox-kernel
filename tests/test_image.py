@@ -2,7 +2,7 @@
 """Boot image metadata must be internally consistent on every checker platform."""
 import json
 import pathlib
-import struct
+
 import sys
 import tempfile
 import unittest

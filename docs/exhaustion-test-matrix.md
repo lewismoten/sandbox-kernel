@@ -1,5 +1,9 @@
 # M1 bounded host resource-exhaustion matrix
 
+Final branch results and shared portability fixes are recorded in
+[M1 host acceptance integration](m1-host-acceptance.md). Baseline results below
+are retained as evidence of the standalone test contribution.
+
 Scope: M1 acceptance tests 3–5 in `docs/milestones.md`, the slice-2 limits
 in `docs/m1.md`, and the original request's handles, user pool and log-flood
 requirements. These are host checks of real implementations, **not** physical

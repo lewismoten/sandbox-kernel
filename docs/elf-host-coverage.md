@@ -1,5 +1,9 @@
 # ELF host acceptance coverage
 
+Final branch results and shared portability fixes are recorded in
+[M1 host acceptance integration](m1-host-acceptance.md). Baseline results below
+are retained as evidence of the standalone test contribution.
+
 ## Scope and provenance
 
 - Baseline: fresh `origin/main` at `aac205c699c26a98641894dadd4ba97e6964115b`.
