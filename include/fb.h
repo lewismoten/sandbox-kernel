@@ -7,6 +7,10 @@
 #define FB_HEIGHT 480u
 #define FB_DEPTH 32u
 #define FB_MESSAGE_WORDS 36u
+/* The program's surface is this size in every mode (640x480 at 32 bpp); a
+   mode set with SBX_IOC_FB_SET_MODE must fit in it (960x540 at 16 bpp does). */
+#define FB_SURFACE_MAX (640u*480u*4u)
+#define FB_PALETTE_WORDS (8u+256u)
 struct fb_info {
  uint32_t width,height,depth,pitch,bytes,pixel_order;
  uint32_t bus,phys; /* GPU bus address as returned, ARM physical (bus & 0x3fffffff) */
@@ -25,6 +29,16 @@ const char *fb_parse(const uint32_t m[FB_MESSAGE_WORDS],uint32_t depth,struct fb
 /* Eight color bars over a 16-step gray ramp, with a white border. */
 void fb_pattern(const struct fb_info *fb,uint8_t *pixels);
 uint32_t fb_pattern_pixel(const struct fb_info *fb,uint32_t x,uint32_t y);
+/* The firmware's set-palette message (tag 0x4800b) for count entries from
+   first, each 0x00RRGGBB, sent as R,G,B,A bytes; returns the message words. */
+uint32_t fb_palette_request(uint32_t m[FB_PALETTE_WORDS],uint32_t first,uint32_t count,const uint32_t *rgb);
+/* Another mode from the firmware (depth 8, 16 or 32; it scales the buffer to
+   the HDMI mode), mapped and cleared: 0 or a negative errno. fb_restore puts
+   640x480x32 back when the mode differs (a program's end). */
+int fb_set_mode(uint32_t width,uint32_t height,uint32_t depth);
+int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb);
+void fb_restore(void);
+extern uint32_t fb_mode_us; /* how long the last mode set took */
 extern const char *fb_fail;
 extern struct fb_info fb0;
 extern uint8_t *fb_pixels; /* kernel pointer to the mapped buffer, or NULL */

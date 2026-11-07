@@ -39,7 +39,7 @@ static bool path_token(const char **p,char out[32]) {
  return n&&!fatput_check(out);
 }
 static bool in_os(const char *path) {while(*path)if(*path++=='/')return false;return true;}
-static void reply_path(const char *path) {if(in_os(path))usb_reply("/OS");usb_reply("/");usb_reply(path);}
+static void reply_path(const char *path) {if(in_os(path)||!strncmp(path,"APPS/",5))usb_reply("/OS");usb_reply("/");usb_reply(path);}
 /* PUTF <PATH> <size> <crc32> <sha256>: a development file for /OS/<NAME>, or
    for /GAMES/<DIR>/<NAME> when PATH is GAMES/<DIR>/<NAME>, sent
    like PUT2 in 1024-byte blocks, checked by CRC and SHA-256, then written by

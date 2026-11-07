@@ -47,7 +47,8 @@ static int lookup(uint64_t fd) {
  if(i>=SYS_HANDLES||fds[i].kind==K_FREE||fds[i].gen!=(uint16_t)(fd>>8)) return -EBADF;
  return (int)i;
 }
-static uint32_t fb_surface_bytes(void) {return fb0.width*4u*fb0.height;}
+static uint32_t fb_surface_bytes(void) {return FB_SURFACE_MAX;} /* the same in every mode */
+static uint32_t fb_bpp(void) {return fb0.depth/8u;}
 static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
  unsigned i=0; while(i<SYS_HANDLES&&fds[i].kind!=K_FREE) i++;
  if(i==SYS_HANDLES) return -EMFILE;
@@ -123,7 +124,8 @@ static int ioctl_fb(const struct k_ioctl *r) {
   struct k_fb_mode m; int e=class_in(r->buffer,r->bytes,&m,sizeof m); if(e) return e;
   if(m.width|m.height|m.pitch|m.format|m.buffer_bytes) return -EINVAL;
   if(us_check(r->buffer,sizeof m,U_W)) return -EFAULT;
-  m.width=fb0.width;m.height=fb0.height;m.pitch=fb0.width*4u;m.format=1;m.buffer_bytes=fb_surface_bytes();
+  m.width=fb0.width;m.height=fb0.height;m.pitch=fb0.width*fb_bpp();m.format=fb0.depth==32?1:fb0.depth==16?2:3;
+  m.buffer_bytes=fb0.depth==32?fb_surface_bytes():m.pitch*fb0.height;
   return us_copy_out(r->buffer,&m,sizeof m);
  }
  if(r->request==0x10001u) {
@@ -131,12 +133,31 @@ static int ioctl_fb(const struct k_ioctl *r) {
   if(q.x>fb0.width||q.width>fb0.width-q.x||q.y>fb0.height||q.height>fb0.height-q.y) return -EINVAL;
   if(!surface_mapped) return -EINVAL; /* nothing drawn yet */
   uint8_t *src; if(us_span(U_FB_BASE,surface_bytes,U_R,&src)!=(int64_t)surface_bytes) return -EFAULT;
+  uint32_t bpp=fb_bpp(),x0=(uint32_t)q.x*bpp,x1=(uint32_t)(q.x+q.width)*bpp; /* bytes of a row */
   for(uint32_t y=(uint32_t)q.y;y<q.y+q.height;y++) {
-   const uint32_t *s=(const uint32_t *)(const void *)(src+(size_t)y*fb0.width*4u);
-   volatile uint32_t *d=(volatile uint32_t *)(void *)(fb_pixels+(size_t)y*fb0.pitch);
-   for(uint32_t x=(uint32_t)q.x;x<q.x+q.width;x++) d[x]=fb_native(&fb0,s[x]);
+   const uint8_t *s=src+(size_t)y*fb0.width*bpp; uint8_t *d=fb_pixels+(size_t)y*fb0.pitch;
+   if(bpp==4) {
+    const uint32_t *s4=(const uint32_t *)(const void *)s; volatile uint32_t *d4=(volatile uint32_t *)(void *)d;
+    for(uint32_t x=(uint32_t)q.x;x<q.x+q.width;x++) d4[x]=fb_native(&fb0,s4[x]);
+    continue;
+   }
+   uint32_t b=x0; /* 16 and 8 bpp: the bytes as they are, a word at a time where aligned */
+   for(;b<x1&&(b&3);b++) ((volatile uint8_t *)d)[b]=s[b];
+   for(;b+4<=x1;b+=4) *(volatile uint32_t *)(void *)(d+b)=*(const uint32_t *)(const void *)(s+b);
+   for(;b<x1;b++) ((volatile uint8_t *)d)[b]=s[b];
   }
   sys_presents++; return 0;
+ }
+ if(r->request==0x10002u) { /* ABI 1.2: another mode (the firmware scales it to the HDMI mode) */
+  struct k_fb_set m; int e=class_in(r->buffer,r->bytes,&m,sizeof m); if(e) return e;
+  uint32_t d=m.format==1?32u:m.format==2?16u:m.format==3?8u:0u;
+  if(!d||m.width<16||m.height<16||m.width>1920||m.height>1200||m.width*m.height*(d/8u)>FB_SURFACE_MAX||m.width%4) return -EINVAL;
+  return fb_set_mode((uint32_t)m.width,(uint32_t)m.height,d);
+ }
+ if(r->request==0x10003u) { /* ABI 1.2: palette entries for 8-bit indices */
+  struct k_fb_palette m; int e=class_in(r->buffer,r->bytes,&m,sizeof m); if(e) return e;
+  if(!m.count||m.first>255||m.count>256-m.first) return -EINVAL;
+  return fb_set_palette((uint32_t)m.first,(uint32_t)m.count,m.rgb);
  }
  return -ENOTTY;
 }

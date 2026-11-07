@@ -11,6 +11,7 @@ SIZE(k_close,sbx_close_rec); SAME(k_close,sbx_close_rec,fd);
 SIZE(k_ioctl,sbx_ioctl_rec); SAME(k_ioctl,sbx_ioctl_rec,fd); SAME(k_ioctl,sbx_ioctl_rec,request); SAME(k_ioctl,sbx_ioctl_rec,buffer); SAME(k_ioctl,sbx_ioctl_rec,bytes);
 SIZE(k_exit,sbx_exit_rec); SAME(k_exit,sbx_exit_rec,status);
 SIZE(k_fb_mode,sbx_fb_mode); SAME(k_fb_mode,sbx_fb_mode,width); SAME(k_fb_mode,sbx_fb_mode,height); SAME(k_fb_mode,sbx_fb_mode,pitch); SAME(k_fb_mode,sbx_fb_mode,format); SAME(k_fb_mode,sbx_fb_mode,buffer_bytes);
+SIZE(k_fb_set,sbx_fb_set_rec); SAME(k_fb_set,sbx_fb_set_rec,format); SIZE(k_fb_palette,sbx_fb_palette_rec); SAME(k_fb_palette,sbx_fb_palette_rec,rgb);
 SIZE(k_fb_present,sbx_fb_present_rec); SAME(k_fb_present,sbx_fb_present_rec,x); SAME(k_fb_present,sbx_fb_present_rec,y); SAME(k_fb_present,sbx_fb_present_rec,width); SAME(k_fb_present,sbx_fb_present_rec,height);
 SIZE(k_mmap,sbx_mmap_rec); SAME(k_mmap,sbx_mmap_rec,fd); SAME(k_mmap,sbx_mmap_rec,offset); SAME(k_mmap,sbx_mmap_rec,length); SAME(k_mmap,sbx_mmap_rec,protection); SAME(k_mmap,sbx_mmap_rec,flags); SAME(k_mmap,sbx_mmap_rec,address);
 SIZE(k_startup,sbx_startup); SAME(k_startup,sbx_startup,size); SAME(k_startup,sbx_startup,major); SAME(k_startup,sbx_startup,minor); SAME(k_startup,sbx_startup,generation); SAME(k_startup,sbx_startup,trial); SAME(k_startup,sbx_startup,image_bytes); SAME(k_startup,sbx_startup,stack_bytes); SAME(k_startup,sbx_startup,handles);

@@ -68,10 +68,11 @@ static void stop(bool fault,const char *why,int64_t status) {
  running=false;os_stops++;
  if(sys_presents&&fb_pixels) { /* what reached the screen, for comparison with the program's own CRC */
   uint32_t c=~0u;
-  for(uint32_t y=0;y<fb0.height;y++) {const uint8_t *row=fb_pixels+(size_t)y*fb0.pitch; for(uint32_t i=0;i<fb0.width*4u;i++) {c^=row[i];for(unsigned j=0;j<8;j++)c=(c>>1)^((0u-(c&1))&0xedb88320u);}}
+  for(uint32_t y=0;y<fb0.height;y++) {const uint8_t *row=fb_pixels+(size_t)y*fb0.pitch; for(uint32_t i=0;i<fb0.width*(fb0.depth/8u);i++) {c^=row[i];for(unsigned j=0;j<8;j++)c=(c>>1)^((0u-(c&1))&0xedb88320u);}}
   char t[48],*q=t; append(&q,"OS screen crc ");append_n(&q,~c);log_line(t);
  }
  sys_reset();
+ fb_restore(); /* a program's mode ends with it */
  if(fault&&fb_pixels) fb_pattern(&fb0,fb_pixels); /* a fault puts the kernel's own screen back; a clean exit leaves the last frame */
  char line[80],*p=line;
  if(!fault) {append(&p,"OS exit 0 ");append(&p,os_path);append(&p,"; recovery console");log_line(line);return;}

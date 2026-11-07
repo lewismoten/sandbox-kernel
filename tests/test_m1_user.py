@@ -299,6 +299,30 @@ class Calls(CallsBase):
             poke(self.c,q,self.hdr(48)+struct.pack('<4Q',*rect))
             with self.subTest(rect): self.assertEqual(self.ioctl(fb,0x10001,q,48),-EINVAL)
         poke(self.c,q,self.hdr(48)+struct.pack('<4Q',10,10,0,0));self.assertEqual(self.ioctl(fb,0x10001,q,48),0)
+    def test_modes_and_palette(self):   # ABI 1.2
+        r,fb=self.open('/dev/fb0',2);self.mmap(fb,640*480*4);q=self.BUF
+        for m in ((960,540,4),(960,540,0),(1920,1080,2),(962,540,2),(8,8,3),(640,480,1)[:2]+(9,)):
+            poke(self.c,q,self.hdr(40)+struct.pack('<3Q',*m))
+            with self.subTest(m): self.assertEqual(self.ioctl(fb,0x10002,q,40),-EINVAL)
+        poke(self.c,q,self.hdr(40)+struct.pack('<3Q',960,540,2));self.assertEqual(self.ioctl(fb,0x10002,q,40),0)
+        poke(self.c,q,self.hdr(56)+bytes(40));self.assertEqual(self.ioctl(fb,0x10000,q,56),0)
+        self.assertEqual(struct.unpack_from('<5Q',peek(self.c,q,56),16),(960,540,1920,2,960*540*2))
+        px=bytes(random.Random(4).getrandbits(8) for _ in range(960*540*2));poke(self.c,FB_VA,px)
+        poke(self.c,q,self.hdr(48)+struct.pack('<4Q',3,2,7,5));self.assertEqual(self.ioctl(fb,0x10001,q,48),0)   # odd x and width: byte edges
+        hw=C.string_at(self.hw,1980*540)
+        for y in range(2,7): self.assertEqual(hw[y*1980+6:y*1980+20],px[y*1920+6:y*1920+20])
+        self.assertEqual(hw[2*1980+4:2*1980+6],b'\0\0');self.assertEqual(hw[2*1980+20:2*1980+22],b'\0\0')   # outside the rectangle
+        poke(self.c,q,self.hdr(40)+struct.pack('<3Q',320,200,3));self.assertEqual(self.ioctl(fb,0x10002,q,40),0)
+        poke(self.c,q,self.hdr(56)+bytes(40));self.ioctl(fb,0x10000,q,56)
+        self.assertEqual(struct.unpack_from('<5Q',peek(self.c,q,56),16),(320,200,320,3,64000))
+        poke(self.c,q,self.hdr(1056)+struct.pack('<2Q',254,2)+struct.pack('<2I',0x112233,0x445566)+bytes(1016))
+        self.assertEqual(self.ioctl(fb,0x10003,q,1056),0)
+        pal=(C.c_uint32*256).in_dll(self.c,'fb_palette');self.assertEqual((pal[254],pal[255]),(0x112233,0x445566))
+        for first,count in ((0,0),(255,2),(256,1)):
+            poke(self.c,q,self.hdr(1056)+struct.pack('<2Q',first,count)+bytes(1024))
+            with self.subTest((first,count)): self.assertEqual(self.ioctl(fb,0x10003,q,1056),-EINVAL)
+        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # the program ends: 640x480x32 again
+        f=C.c_uint32*3;self.assertEqual(tuple(f.from_address(C.addressof(C.c_uint32.in_dll(self.c,'fb0')))),(640,480,32))
     def test_rgb_and_no_display(self):
         self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # end the program from setUp
         self.c.close_disk();self.card(order=1)   # firmware kept RGB bytes: present swaps
@@ -324,7 +348,7 @@ class Supervisor(SupervisorBase,Calls):
     def test_entry_state(self):
         f=self.frame();self.assertEqual((f.pc,f.sp,f.lr,f.r[0],f.cpsr),(IMAGE,STACK_TOP,EXIT_VA,START_VA,0x10))
         size,major,minor,gen,trial,img,stack,handles=struct.unpack('<IHHIIQQQ',peek(self.c,START_VA,40))
-        self.assertEqual((size,major,minor,img,stack,handles),(40,1,1,8<<20,1<<20,16))
+        self.assertEqual((size,major,minor,img,stack,handles),(40,1,2,8<<20,1<<20,16))
         self.assertEqual(self.c.us_check(START_VA,40,W),-EFAULT)       # startup record is read-only
         self.assertIn(b'OS start /OS/DIAG.ELF entry 0x08000000 pages 3',self.c.take_log())
     def test_svc_paths(self):
@@ -419,6 +443,14 @@ class Install(InstallBase):
         self.assertEqual(self.c.fatput(b'LOOP.ELF',b'x',1),0);self.assertEqual(self.read('/OS/LOOP.ELF'),b'x')
         self.untouched()
         r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
+    def test_app_folder_and_1_mib(self):
+        js=b'console.log(1)\n';self.assertEqual(self.c.fatput(b'APPS/HELLO/MAIN.JS',js,len(js)),0,text(self.c,'fatput_fail'))
+        self.assertEqual(self.read('/OS/APPS/HELLO/MAIN.JS'),js)
+        self.assertEqual(self.c.fatput(b'APPS/HELLO/INDEX.HTM',b'<div>',5),0);self.assertEqual(self.read('/OS/APPS/HELLO/INDEX.HTM'),b'<div>')
+        big=bytes(random.Random(3).getrandbits(8) for _ in range(1024*1024))
+        self.assertEqual(self.c.fatput(b'JS.ELF',big,len(big)),0,text(self.c,'fatput_fail'));self.assertEqual(self.read('/OS/JS.ELF'),big)
+        self.untouched()
+        r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
     def test_bounded_reads(self):
         # The card's first 8,000+ clusters are in use (slots, firmware): the free
         # scan must read each FAT sector once, or the board's 8 s watchdog fires.
@@ -427,7 +459,9 @@ class Install(InstallBase):
     def test_refusals(self):
         for name in (b'diag.elf',b'../X',b'/OS/X',b'A.B.C',b'TOOLONGNAME.ELF',b'X.ELFS',b'.ELF',b'',b'K RN.BIN'):
             with self.subTest(name): self.assertEqual(self.c.fatput(name,b'x',1),-EINVAL)
-        self.assertEqual(self.c.fatput(b'BIG.ELF',bytes(1),512*1024+1),-27)
+        self.assertEqual(self.c.fatput(b'BIG.ELF',bytes(1),1024*1024+1),-27)
+        for name in (b'APPS/X',b'APPS/A.B/MAIN.JS',b'APPS/HELLO/X/Y',b'OS/APPS/HELLO/MAIN.JS'):
+            with self.subTest(name): self.assertEqual(self.c.fatput(name,b'x',1),-EINVAL)
         self.assertEqual(self.c.fatput(b'KERNA.BIN',b'x',1),0)            # a same-named file lands in /OS, never the root
         self.untouched()
     def test_os_name_taken_by_a_file(self):
@@ -474,7 +508,7 @@ class Protocol(ProtocolBase,Install):
         self.assertIn('ERR crc',self.put(b'hello',crc=1))
         self.assertIn('ERR command',self.put(b'hello',name='diag.elf'))
         self.assertIn('ERR command',self.put(b'hello',name='../BOOT'))
-        self.assertIn('ERR size',self.put(bytes(512*1024+1)))
+        self.assertIn('ERR size',self.put(bytes(1024*1024+1)))
         self.c.feed(b'RUN NOPE.ELF\n',13);self.assertIn('ERR run ASSET NOT FOUND',self.run_protocol())
         self.untouched()
 

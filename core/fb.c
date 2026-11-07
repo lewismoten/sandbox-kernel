@@ -21,9 +21,9 @@ const char *fb_parse(const uint32_t m[FB_MESSAGE_WORDS],uint32_t d,struct fb_inf
  }
  uint32_t w=m[5],h=m[6];
  if(w<16||h<16||w>4096||h>4096||m[10]!=w||m[11]!=h||m[15]||m[16]) return "FB SIZE";
- if(m[20]!=d||d!=32) return "FB DEPTH";
- uint32_t pitch=m[33];
- if(pitch<w*4||pitch>w*4+4096||pitch%4) return "FB PITCH";
+ if(m[20]!=d||(d!=8&&d!=16&&d!=32)) return "FB DEPTH";
+ uint32_t pitch=m[33],row=w*(d/8);
+ if(pitch<row||pitch>row+4096||pitch%4) return "FB PITCH";
  uint32_t bus=m[28],bytes=m[29];
  if(!bus||!bytes) return "FB ALLOC";
  if((uint64_t)bytes<(uint64_t)pitch*h) return "FB BYTES";
@@ -31,6 +31,13 @@ const char *fb_parse(const uint32_t m[FB_MESSAGE_WORDS],uint32_t d,struct fb_inf
  if(phys%16||phys<0x08000000u||phys>=0x20000000u||bytes>0x20000000u-phys) return "FB RANGE";
  f->width=w;f->height=h;f->depth=d;f->pitch=pitch;f->bytes=bytes;f->pixel_order=m[24];f->bus=bus;f->phys=phys;
  return NULL;
+}
+uint32_t fb_palette_request(uint32_t m[FB_PALETTE_WORDS],uint32_t first,uint32_t count,const uint32_t *rgb) {
+ uint32_t words=8u+count;
+ m[0]=words*4u;m[1]=0;m[2]=0x4800bu;m[3]=(2u+count)*4u;m[4]=(2u+count)*4u;m[5]=first;m[6]=count;
+ for(uint32_t i=0;i<count;i++) {uint32_t c=rgb[i]&0xffffffu; m[7+i]=0xff000000u|((c&0xffu)<<16)|(c&0xff00u)|(c>>16);}
+ m[7+count]=0;
+ return words;
 }
 static const uint32_t bars[8]={0xffffff,0xffff00,0x00ffff,0x00ff00,0xff00ff,0xff0000,0x0000ff,0x000000};
 uint32_t fb_pattern_pixel(const struct fb_info *f,uint32_t x,uint32_t y) {
@@ -48,3 +55,6 @@ void fb_pattern(const struct fb_info *f,uint8_t *pixels) {
   for(uint32_t x=0;x<f->width;x++) row[x]=fb_pattern_pixel(f,x,y);
  }
 }
+/* Mode sets: the defaults the kernel starts in, kept for fb_restore. */
+uint32_t fb_mode_us;
+void fb_restore(void) {if(fb0.width!=FB_WIDTH||fb0.height!=FB_HEIGHT||fb0.depth!=FB_DEPTH) fb_set_mode(FB_WIDTH,FB_HEIGHT,FB_DEPTH);}

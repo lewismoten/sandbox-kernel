@@ -31,3 +31,24 @@ bool fb_start(void) {
  boot_note(line);
  return true;
 }
+/* ABI 1.2 mode sets and palettes, between a program's slices (no user code
+   runs during the mailbox call). The old buffer is left to the firmware. */
+int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
+ uint32_t t=micros(),m[FB_MESSAGE_WORDS]; struct fb_info f;
+ fb_request(m,w,h,d);
+ if(!property_message(m,FB_MESSAGE_WORDS,500000)) {fb_fail="FB MBOX";return -5;}
+ const char *why=fb_parse(m,d,&f);
+ if(why) {fb_fail=why;return -5;}
+ if(!mmu_map_uncached(f.phys,f.bytes)) {fb_fail="FB MAP";return -5;}
+ fb0=f;fb_pixels=(uint8_t *)(uintptr_t)f.phys;
+ for(uint32_t i=0;i<f.bytes/4u;i++) ((volatile uint32_t *)(void *)fb_pixels)[i]=0;
+ fb_mode_us=micros()-t;
+ char line[64],*p=line;append(&p,"FB mode ");append_n(&p,w);append(&p,"x");append_n(&p,h);append(&p,"x");append_n(&p,d);
+ append(&p," in ");append_n(&p,fb_mode_us);append(&p," us");log_line(line);
+ return 0;
+}
+int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb) {
+ static uint32_t m[FB_PALETTE_WORDS] __attribute__((aligned(16)));
+ uint32_t words=fb_palette_request(m,first,count,rgb);
+ return property_message(m,words,500000)&&m[1]==0x80000000u&&!m[5]?0:-5;
+}
