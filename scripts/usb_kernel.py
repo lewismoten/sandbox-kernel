@@ -85,7 +85,7 @@ def send_file(port,path,name):
     """PUTF: install one development file as /OS/<name>, or as /GAMES/<DIR>/<NAME>
     when name is GAMES/<DIR>/<NAME> (8.3, upper case; DIR without an extension)."""
     data=path.read_bytes()
-    if not (re.fullmatch(NAME83,name) or re.fullmatch(r'GAMES/[A-Z0-9_-]{1,8}/'+NAME83,name)): raise ValueError(f'{name!r} is not an upper-case 8.3 name or GAMES/<DIR>/<NAME>')
+    if not (re.fullmatch(NAME83,name) or re.fullmatch(r'(GAMES|APPS)/[A-Z0-9_-]{1,8}/'+NAME83,name)): raise ValueError(f'{name!r} is not an upper-case 8.3 name , GAMES/<DIR>/<NAME> or APPS/<DIR>/<NAME>')
     if not 0<len(data)<=1024*1024: raise ValueError('file must be 1 byte to 1 MiB')
     print(handshake(port))
     port.send(f'PUTF {name} {len(data)} {zlib.crc32(data):08x} {hashlib.sha256(data).hexdigest()}\n'.encode())
@@ -93,7 +93,7 @@ def send_file(port,path,name):
     for offset in range(0,len(data),1024):
         block=data[offset:offset+1024];port.send(block)
         expect(port,'VERIFY' if offset+len(block)==len(data) else f'ACK {offset+len(block)}',10)
-    shown=f'/{name}' if '/' in name else f'/OS/{name}'
+    shown=f'/{name}' if name.startswith('GAMES/') else f'/OS/{name}'
     expect(port,f'OK file {shown} {len(data)}',120)
     print(f'Installed {shown} ({len(data)} bytes)');return 0
 
