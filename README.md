@@ -1,7 +1,9 @@
 # sandbox-kernel
 
 A small, reusable bare-metal Raspberry Pi kernel under the MIT license.
-**Status: design.** This repository contains specifications. The kernel itself is not written yet.
+**Status: M0 implemented; board qualification pending.** ARMv6 selector/runtime,
+e-ink status, TinyUSB CDC logging, and verified A/B kernel updates build for Zero W.
+No physical acceptance test has passed yet.
 
 The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
 Later ports target Pi 1, 2, 3, 4, and 5 through separate board backends.
@@ -23,6 +25,13 @@ Goals:
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
 The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
-There are no build or flash commands yet. A separate Circle-based prototype has already booted on a
-Zero W with the e-ink status display and USB updates working; what it taught us is folded into the
-[milestones](docs/milestones.md).
+Build with `make`, run host checks with `make test`, and assemble a boot folder
+and card image with `make boot`. The default compiler is the requested Arm GNU
+15.3.rel2 installation. Dependencies are pinned and fetched without git.
+See [M0 build, wire formats and board handoff](docs/m0.md) for commands, layout,
+recovery policy and remaining physical tests. Claude handles flashing and commits.
+The selector is `build/kernel.img`; send `build/runtime.ski` with the stdlib Mac
+tool in `scripts/usb_kernel.py`. M0 uses preallocated A/B files on FAT32.
+
+A separate Circle-based prototype supplied hardware observations recorded in the
+[milestones](docs/milestones.md); its sources were not consulted for this implementation.

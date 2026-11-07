@@ -1,7 +1,9 @@
 # Kernel design
 
-Design baseline: November 6, 2026. Everything below is proposed behavior, not
-implemented support. The initial target is Raspberry Pi Zero W v1.1. Original
+Design baseline: November 6, 2026. This remains the long-term design. M0 has a
+buildable implementation, with physical acceptance pending; its exact formats and
+FAT-file storage override are specified in [m0.md](m0.md). Other milestones below
+remain proposed behavior. The initial target is Raspberry Pi Zero W v1.1. Original
 kernel and SDK work is MIT.
 
 ## Ownership and execution model
@@ -516,8 +518,8 @@ vendor firmware changes outside normal runtime updates.
 
 ## Dependencies and primary references
 
-No dependency is vendored yet. Links below identify intended sources, not pinned
-release inputs. Before import, pin revisions, retain full notices and audit the
+TinyUSB and firmware are now pinned fetch inputs for M0 (see NOTICE.md).
+Other links below identify intended sources, not pinned release inputs. Before import, pin revisions, retain full notices and audit the
 complete selected dependency set, including build/runtime support libraries.
 The MIT project license does not replace upstream terms.
 

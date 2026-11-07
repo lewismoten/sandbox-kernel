@@ -1,6 +1,6 @@
 # Milestones and acceptance tests
 
-Status: design, November 6, 2026. No milestone has passed. Gates are cumulative;
+Status: M0 implementation builds, November 6, 2026. No milestone has passed. Gates are cumulative;
 record board revision, image/firmware hashes, upstream pins, configuration,
 timings, logs and failures for each run. Host checks and emulation complement
 physical tests but do not establish Pi support. Use spare cards for power cuts.
@@ -16,6 +16,15 @@ M0 does not require a user-mode OS or a general FAT filesystem API. The selector
 and updater still require raw storage and durable boot-control records.
 Vendor firmware stays separate. No Circle source, headers, libraries or binaries
 may enter the build. UART is the early boot fallback.
+
+Implementation progress: startup/MMU, UART, timer/IRQ, GPIO/SPI/V4 status, watchdog,
+TinyUSB CDC, original EMMC/restricted FAT writer, fixed selector, manifest/hash
+validation, alternating control records, trial/fallback/confirmation, stdlib Mac
+sender and reproducible boot image are implemented. Host checks run the actual
+parser/FAT writer with fake CDC/media. **All nine physical acceptance gates remain
+pending**. See [M0 implementation and board handoff](m0.md) for exact formats,
+commands, pins, measured build sizes and limitations. M0 uses preallocated FAT32
+files per the implementation request, overriding the proposed raw partition layout.
 
 Status display behavior (from testing the Circle prototype on the Zero W, 2026-11-06):
 
