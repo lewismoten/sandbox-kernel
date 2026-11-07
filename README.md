@@ -1,10 +1,9 @@
 # sandbox-kernel
 
 A small, reusable bare-metal Raspberry Pi kernel under the MIT license.
-**Status: design.** This repository contains specifications, not a bootable
-kernel, drivers, SDK, or tested hardware support.
+**Status: design.** This repository contains specifications. The kernel itself is not written yet.
 
-The first target is Lewis's Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
+The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
 Later ports target Pi 1, 2, 3, 4, and 5 through separate board backends.
 The kernel owns hardware and protects itself from a separately loaded,
 user-mode OS program. Game-Maker OS is the first intended program, maintained
@@ -23,6 +22,7 @@ Goals:
 
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
-The design selects route B from Lewis's November 6, 2026 license research.
-Earlier Linux and Circle plans do not define this kernel's implementation.
-There are no build or flash commands yet. Nothing here has been tested on a Pi.
+The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
+There are no build or flash commands yet. A separate Circle-based prototype has already booted on a
+Zero W with the e-ink status display and USB updates working; what it taught us is folded into the
+[milestones](docs/milestones.md).

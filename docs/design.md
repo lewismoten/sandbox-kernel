@@ -2,7 +2,7 @@
 
 Design baseline: November 6, 2026. Everything below is proposed behavior, not
 implemented support. The initial target is Raspberry Pi Zero W v1.1. Original
-kernel and SDK work is MIT, using route B from Lewis's license decision.
+kernel and SDK work is MIT.
 
 ## Ownership and execution model
 
@@ -235,7 +235,7 @@ CE0 GPIO8/pin24, DC GPIO25/pin22, reset GPIO17/pin11, and BUSY GPIO24/pin18.
 The V4 panel is 122 by 250 pixels with a 16-byte row stride (4,000 bytes per
 plane); the status surface can rotate to 250 by 122. BUSY is active high.
 The prototype uses SPI mode 0 at 4 MHz and a five-second BUSY deadline.
-Validate these settings on Lewis's board before claiming support.
+Validate these settings on a real board before claiming support.
 
 Use the independent
 [Waveshare V4 driver](https://github.com/waveshareteam/e-Paper/blob/master/RaspberryPi_JetsonNano/c/lib/e-Paper/EPD_2in13_V4.c)

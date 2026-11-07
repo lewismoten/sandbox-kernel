@@ -3,25 +3,16 @@
 Copyright (c) 2026 Lewis Moten. Original material in this repository is licensed
 under the [MIT license](LICENSE).
 
-OpenAI Codex assisted with research and writing this design, directed by Lewis
-Moten, on November 6, 2026. This repository currently contains documentation
-only. No third-party source, firmware, or binaries are included. The dependency
+OpenAI Codex and Claude (Anthropic) assisted with research and writing this design on November 6, 2026.
+This repository currently contains documentation only. No third-party source, firmware, or binaries are included. The dependency
 table in [docs/design.md](docs/design.md#dependencies-and-primary-references)
 identifies planned sources; it is not a claim that they have been imported,
 pinned, ported, or tested.
 
-Requirements came from Lewis's local research files:
-
-- `GameMaker/.for-lewis/research/pi-os/kernel-principles.md`
-- `GameMaker/.for-lewis/research/pi-os/kernel-license-options.md` (route B)
-- `GameMaker/.for-lewis/research/pi-os/answers-2026-11-06.md`
-
-Hardware and protocol observations came from the separate Circle prototype's
-README and `src/epaper.cpp`, `src/protocol.h`, and `src/update.cpp` at
-`GameMaker/.claude/worktrees/pi-os-bm/hardware/pi-os`.
-Those files were read for facts only. Their code is not included or translated.
-The prototype's documentation also says physical validation is pending; these
-observations are bring-up inputs, not certification of working hardware.
+Hardware and protocol observations came from a separate throwaway prototype built on Circle, which
+booted on a Raspberry Pi Zero W v1.1 with a Waveshare 2.13 inch e-Paper HAT (V4): e-ink status with
+partial refresh, a USB serial link to a Mac, and kernel updates over that link. The prototype was read
+for facts only. Its code is not included or translated.
 Circle, by R. Stange and contributors, is GPL-3.0-or-later and is not a dependency.
 
 Credit the independent sources when their code is actually imported:

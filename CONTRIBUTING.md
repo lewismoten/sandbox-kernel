@@ -47,4 +47,4 @@ power interruption where relevant. Follow the acceptance gates in
 results separately. Use spare media for destructive power-loss tests.
 
 Contributions must be reviewable as ordinary file changes. Do not commit, stage,
-change branches, or otherwise write Git metadata unless Lewis requests it.
+change branches, or otherwise write Git metadata unless the maintainer requests it.

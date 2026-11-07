@@ -29,7 +29,7 @@ Status display behavior (from testing the Circle prototype on the Zero W, 2026-1
 
 Acceptance tests:
 
-1. Boot Lewis's Zero W v1.1 from an MBR/FAT32 image on ten cold starts. Capture
+1. Boot a Zero W v1.1 from an MBR/FAT32 image on ten cold starts. Capture
    board/profile, build ID, reset cause and selected slot over UART/CDC. Show a
    deterministic V4 status image. Record time to first log, USB enumeration and
    first completed panel refresh. Validate root boot files and firmware notices.
