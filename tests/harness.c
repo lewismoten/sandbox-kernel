@@ -18,7 +18,8 @@ void close_disk(void) {fclose(disk);}
 bool sd_init(void) {return disk!=NULL;}
 bool sd_init_after_handoff(const uint32_t in[8]) {(void)in;return disk!=NULL;}
 uint32_t sd_sectors(void) {return 264192;}
-bool sd_read(uint32_t lba,void *p) {return fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+static uint32_t reads;uint32_t read_count(void) {return reads;}
+bool sd_read(uint32_t lba,void *p) {reads++;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
@@ -31,3 +32,20 @@ uint32_t tud_cdc_read(void *p,uint32_t n) {if(n>in_w-in_r)n=in_w-in_r;memcpy(p,i
 void tud_cdc_read_flush(void) {in_r=in_w=0;}
 bool verify_confirmed(void);
 bool initialize(void) {storage_ready=store_init();updates_ready=storage_ready&&verify_confirmed();return updates_ready;}
+/* M1 slice 2: the kernel map, framebuffer, logs and watchdog seen by
+   core/uspace.c, core/sys.c, core/os.c and core/fatput.c. */
+#include "fb.h"
+struct fb_info fb0;uint8_t *fb_pixels;uint32_t boot_trial;
+static uint32_t ktable[4096];
+const uint32_t *mmu_table(void) {return ktable;}
+uint32_t *kernel_table(void) {return ktable;}
+void watchdog_feed(void) {}
+static char logs[1<<16];static unsigned logn;
+void log_line(const char *s) {size_t n=strlen(s);if(logn+n+2>=sizeof(logs))logn=0;memcpy(logs+logn,s,n);logn+=(unsigned)n;logs[logn++]='\n';logs[logn]=0;}
+const char *take_log(void) {static char copy[1<<16];memcpy(copy,logs,logn+1);logn=0;logs[0]=0;return copy;}
+static uint8_t hw[2700*480];
+uint8_t *fb_setup(uint32_t order,int present) {
+ memset(&fb0,0,sizeof fb0);fb_pixels=NULL;if(!present)return NULL;
+ fb0.width=640;fb0.height=480;fb0.depth=32;fb0.pitch=2700;fb0.bytes=sizeof(hw);fb0.pixel_order=order;
+ memset(hw,0xaa,sizeof hw);fb_pixels=hw;return hw;
+}

@@ -11,10 +11,25 @@ CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-u
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c $(TUSB)/device/usbd_control.c $(TUSB)/class/cdc/cdc_device.c $(TUSB)/portable/synopsys/dwc2/dcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
-KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
+KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/elf.c core/sys.c core/os.c core/fatput.c core/abi.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
-.PHONY: all clean deps boot test FORCE
-all: build/kernel.img build/runtime.img build/runtime.ski
+.PHONY: all clean deps boot test programs FORCE
+all: build/kernel.img build/runtime.img build/runtime.ski programs
+# OS programs: built only against sdk/ (no kernel headers).
+PFLAGS := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -std=c11 -Os -ffreestanding -fno-builtin -nostdlib -Wall -Wextra -Werror -Isdk/include -Tsdk/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
+SDKLIB := sdk/lib/crt0.S sdk/lib/mem.c
+SDKDEPS := $(SDKLIB) sdk/lib/sandbox.ld $(wildcard sdk/include/sandbox/*.h) Makefile
+FAULTS := PRIV:1 TEXTW:2 LOOP:3 KREAD:4 MMIO:5 XDATA:6 STACK:7
+programs: build/os/DIAG.ELF $(foreach f,$(FAULTS),build/os/$(word 1,$(subst :, ,$(f))).ELF)
+build/os:
+	mkdir -p build/os
+build/os/DIAG.ELF: programs/diag/diag.c $(SDKDEPS) | build/os
+	$(CC) $(PFLAGS) $(SDKLIB) $< -lgcc -o $@
+define FAULT_RULE
+build/os/$(word 1,$(subst :, ,$(1))).ELF: programs/faults/fault.c $(SDKDEPS) | build/os
+	$$(CC) $$(PFLAGS) -DFAULT=$(word 2,$(subst :, ,$(1))) $$(SDKLIB) $$< -lgcc -o $$@
+endef
+$(foreach f,$(FAULTS),$(eval $(call FAULT_RULE,$(f))))
 build:
 	mkdir -p build
 third_party/tinyusb/.fetched:

@@ -2,7 +2,7 @@
  * sandbox-kernel SDK: raw ARM32 system-call wrappers (ARM state, soft-float).
  * svc #0 with r7 = call, r0 = record, r1 = record bytes, r2 = ABI major,
  * r3-r6 = 0. Each wrapper returns 0 or a negative SBX_E* value; a libc layer
- * can turn that into -1 and errno later. No kernel loads programs yet (M1). */
+ * can turn that into -1 and errno later. */
 #ifndef SANDBOX_SYSCALL_H
 #define SANDBOX_SYSCALL_H
 #include "abi.h"
@@ -66,6 +66,13 @@ static inline int32_t sbx_fb_query(uint64_t fb_fd, sbx_fb_mode *mode) {
 static inline int32_t sbx_fb_present(uint64_t fb_fd, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
   sbx_fb_present_rec p = {SBX_HEADER(sbx_fb_present_rec), x, y, w, h};
   return sbx_ioctl(fb_fd, SBX_IOC_FB_PRESENT, &p, sizeof p);
+}
+/* Map the open /dev/fb0 surface (read/write, shared); *address gets its start. */
+static inline int32_t sbx_fb_map(uint64_t fb_fd, uint64_t bytes, void **address) {
+  sbx_mmap_rec r = {SBX_HEADER(sbx_mmap_rec), fb_fd, 0, bytes, SBX_PROT_READ | SBX_PROT_WRITE, SBX_MAP_SHARED, 0};
+  int32_t s = sbx_syscall(SBX_CALL_MMAP, &r, sizeof r);
+  if (!s) *address = (void *)(uintptr_t)r.address;
+  return s;
 }
 __attribute__((noreturn)) static inline void sbx_exit(int64_t status) {
   sbx_exit_rec r = {SBX_HEADER(sbx_exit_rec), status};

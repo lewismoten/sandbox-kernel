@@ -10,5 +10,20 @@ it may still change before 1.0 is frozen.
   negative `SBX_E*` value: `sbx_open`, `sbx_read`, `sbx_write`, `sbx_close`,
   `sbx_ioctl`, `sbx_log`, `sbx_fb_query`, `sbx_fb_present`, `sbx_exit`.
 
-The kernel does not load programs yet (see [docs/m1.md](../docs/m1.md)). Build with
-`-marm -mfloat-abi=soft` for ARM1176 targets and add `sdk/include` to the include path.
+- `sbx_fb_map` maps the `/dev/fb0` surface (`mmap`, call 6); `sbx_startup` is the
+  read-only record whose address is in r0 at entry.
+- `lib/crt0.S`, `lib/mem.c` and `lib/sandbox.ld`: entry (`int main(const sbx_startup *)`,
+  whose return value is the exit status), `memset`/`memcpy`, and the link map (text
+  at `0x08000000`, data on separate never-executable pages).
+
+Build an ARM1176 program with the SDK only:
+
+```
+arm-none-eabi-gcc -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -Os -ffreestanding \
+  -nostdlib -Isdk/include -Tsdk/lib/sandbox.ld -Wl,-z,noexecstack \
+  sdk/lib/crt0.S sdk/lib/mem.c program.c -lgcc -o PROGRAM.ELF
+```
+
+`programs/diag` is the example. Install a program on the card with
+`scripts/usb_kernel.py <port> put PROGRAM.ELF` and start it with `run PROGRAM.ELF`;
+`/OS/DIAG.ELF` starts by itself 10 s after boot. See [docs/m1.md](../docs/m1.md).

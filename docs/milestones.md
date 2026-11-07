@@ -1,6 +1,9 @@
 # Milestones and acceptance tests
 
-Status: M0 implementation builds, November 6, 2026. No milestone has passed. Gates are cumulative;
+Status, November 7, 2026: M0 board-qualified on the Zero W v1.1 (boot, USB logging,
+updates with trial confirmation, automatic fallback, and the e-ink start and status
+screens, photographed). Not yet run from M0's list: ten timed cold boots and power
+cuts at each transition. M1 in progress ([docs/m1.md](m1.md)). Gates are cumulative;
 record board revision, image/firmware hashes, upstream pins, configuration,
 timings, logs and failures for each run. Host checks and emulation complement
 physical tests but do not establish Pi support. Use spare cards for power cuts.

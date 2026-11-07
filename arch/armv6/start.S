@@ -65,14 +65,37 @@ vectors:
     ldr pc, [pc, #24]
     ldr pc, [pc, #24]
     .word _start, undef, svc, prefetch, abort, reserved, irq, fiq
-undef: mov r0, #1
-    b panic
-svc: mov r0, #2
-    b panic
-prefetch: mov r0, #3
-    b panic
-abort: mov r0, #4
-    b panic
+/* Exceptions from User mode save the program's registers in the frame that
+   user_enter was given (struct uframe: r0-r12, sp, lr, pc, cpsr) and return
+   from user_enter with a reason; anything from a privileged mode is a panic,
+   as in M0. The vector's lr adjustment makes pc the instruction to resume
+   (svc, irq) or the one that faulted (undef, prefetch, data abort). */
+.macro FROM_USER reason, adjust, stack, kind
+    sub lr, lr, #\adjust
+    str r0, [sp, #-4]!
+    mrs r0, spsr
+    and r0, r0, #0x1f
+    cmp r0, #0x10
+    ldr r0, [sp], #4
+    movne r0, #\kind
+    bne panic
+    ldr sp, =user_frame_ptr
+    ldr sp, [sp]
+    stmia sp, {r0-r12}
+    str lr, [sp, #60]
+    mrs r0, spsr
+    str r0, [sp, #64]
+    add r0, sp, #52
+    stmia r0, {sp, lr}^
+    nop
+    mov r0, #\reason
+    ldr sp, =\stack
+    b user_exit
+.endm
+undef: FROM_USER 3, 4, __undef_stack, 1
+svc: FROM_USER 1, 0, __svc_stack, 2
+prefetch: FROM_USER 4, 4, __abort_stack, 3
+abort: FROM_USER 5, 8, __abort_stack, 4
 reserved: mov r0, #5
     b panic
 fiq: mov r0, #7
@@ -80,5 +103,73 @@ fiq: mov r0, #7
 irq:
     sub lr, lr, #4
     stmdb sp!, {r0-r3,r12,lr}
+    mrs r0, spsr
+    and r0, r0, #0x1f
+    cmp r0, #0x10
+    beq irq_user
     bl irq_handler
     ldmia sp!, {r0-r3,r12,pc}^
+irq_user:
+    /* Leave the interrupt pending: it is taken again in SVC mode once the
+       kernel unmasks IRQs after user_enter returns. */
+    ldmia sp!, {r0-r3,r12,lr}
+    ldr sp, =user_frame_ptr
+    ldr sp, [sp]
+    stmia sp, {r0-r12}
+    str lr, [sp, #60]
+    mrs r0, spsr
+    str r0, [sp, #64]
+    add r0, sp, #52
+    stmia r0, {sp, lr}^
+    nop
+    mov r0, #2
+    ldr sp, =__irq_stack
+    b user_exit
+
+/* unsigned user_enter(struct uframe *frame, uint32_t user_ttbr): run the
+   program until its next exception. The privileged table comes back before
+   the kernel's own registers do. */
+.global user_enter
+user_enter:
+    push {r4-r12, lr}
+    cpsid i
+    ldr r2, =kernel_sp
+    str sp, [r2]
+    ldr r2, =user_frame_ptr
+    str r0, [r2]
+    mrc p15, 0, r2, c2, c0, 0
+    ldr r3, =kernel_ttbr
+    str r2, [r3]
+    mcr p15, 0, r1, c2, c0, 0
+    mov r2, #0
+    mcr p15, 0, r2, c7, c10, 4
+    mcr p15, 0, r2, c8, c7, 0
+    mcr p15, 0, r2, c7, c5, 6
+    mcr p15, 0, r2, c7, c5, 4
+    ldr r1, [r0, #64]
+    msr spsr_cxsf, r1
+    add r1, r0, #52
+    ldmia r1, {sp, lr}^
+    nop
+    ldr lr, [r0, #60]
+    ldmia r0, {r0-r12}
+    movs pc, lr
+user_exit:
+    cps #0x13
+    ldr r1, =kernel_ttbr
+    ldr r1, [r1]
+    mcr p15, 0, r1, c2, c0, 0
+    mov r2, #0
+    mcr p15, 0, r2, c7, c10, 4
+    mcr p15, 0, r2, c8, c7, 0
+    mcr p15, 0, r2, c7, c5, 6
+    mcr p15, 0, r2, c7, c5, 4
+    ldr sp, =kernel_sp
+    ldr sp, [sp]
+    pop {r4-r12, lr}
+    bx lr
+.section .bss
+.balign 4
+kernel_sp: .word 0
+kernel_ttbr: .word 0
+user_frame_ptr: .word 0

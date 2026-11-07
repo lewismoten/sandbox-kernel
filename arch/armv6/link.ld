@@ -16,5 +16,6 @@ SECTIONS {
  } :data
  __end = .;
  ASSERT(__end < MEMORY_LIMIT, "image exceeds reserved RAM")
+ ASSERT(__end <= 0x04000000, "kernel RAM reaches the user page pool (include/uspace.h)")
  /DISCARD/ : { *(.comment) *(.note*) *(.ARM.exidx*) *(.ARM.extab*) }
 }

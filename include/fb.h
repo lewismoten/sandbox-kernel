@@ -19,4 +19,5 @@ void fb_pattern(const struct fb_info *fb,uint8_t *pixels);
 uint32_t fb_pattern_pixel(const struct fb_info *fb,uint32_t x,uint32_t y);
 extern const char *fb_fail;
 extern struct fb_info fb0;
+extern uint8_t *fb_pixels; /* kernel pointer to the mapped buffer, or NULL */
 bool fb_start(void); /* allocate, map, draw, log; never touches USB or the panel */

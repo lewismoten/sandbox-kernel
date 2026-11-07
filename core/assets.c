@@ -200,3 +200,7 @@ int asset_close(int id) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  h->used=false; h->gen=bump(h->gen); return 0;
 }
+int asset_volume(struct asset_volume *o) {
+ if(!v.mounted) return fail("ASSET UNMOUNTED",ASSET_ENODEV);
+ o->base=v.base;o->end=v.end;o->fat=v.fat;o->fat_size=v.fat_size;o->data=v.data;o->clusters=v.clusters;o->spc=v.spc;o->root=v.root;return 0;
+}

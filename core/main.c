@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include "kernel.h"
 #include "fb.h"
+#include "os.h"
 void asset_probe(void);
 bool storage_ready,updates_ready;
-uint32_t boot_slot,boot_generation;
+uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
 void log_line(const char *s) {uart_puts(s);uart_puts("\r\n");usb_log(s);}
 void error(const char *s) {last_error=s;log_line(s);}
@@ -12,7 +13,7 @@ void kernel_main(void) {
  uint32_t boot_time=micros();
  uint32_t h[8];memcpy(h,(const void *)0x7000,sizeof(h));
  if(h[0]!=HANDOFF_MAGIC||h[1]!=1||h[2]>1||h[3]>1||h[6]<128*1024*1024u||h[7]!=crc32(h,28)) {uart_init();uart_puts("Invalid selector handoff\r\n");for(;;){}}
- boot_slot=h[2];boot_generation=h[4];
+ boot_slot=h[2];boot_generation=h[4];boot_trial=h[3];
  /* The first visible image is completed before USB, SD or timer IRQ setup.
     System-timer free-running hardware is used only for bounded panel delays. */
  panel_start();while(!panel_boot_done())panel_task("starting",0);
@@ -38,12 +39,21 @@ void kernel_main(void) {
  watchdog_feed();fb_start();
  if(storage_ready)asset_probe();
  watchdog_feed();
+ /* M1: the OS program starts 10 s after boot, so a program that could take
+    the kernel down can still be replaced over USB (PUTF) before it runs.
+    A missing or rejected file keeps the recovery console. */
+ bool autostart=storage_ready;
+ if(autostart)log_line("OS autostart in 10 s: /OS/DIAG.ELF");
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  usb_task();protocol_task();
+  usb_task();protocol_task();os_task();
+  if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
+   autostart=false;
+   if(!os_running()&&os_start("/OS/DIAG.ELF"))log_line("OS none; recovery console (USB PUTF and RUN available)");
+  }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
   panel_task(usb_state(),seconds);
   if(expired(start,100000)) {
@@ -58,7 +68,7 @@ void kernel_main(void) {
    if(expired(diagnostics_start,30000000)) {
     memcpy(c,control,512);c[3]=boot_slot;c[6]=boot_generation;c[4]=NO_SLOT;c[5]=0;c[7]=0;memcpy(c+16,c+24,32);memset(c+24,0,32);
     if(!control_commit(c)) {error("Confirmation failed");for(;;)service_io();}
-    trial=false;log_line("Trial confirmed after 30 seconds");
+    trial=false;boot_trial=0;log_line("Trial confirmed after 30 seconds");
    }
   }
  }

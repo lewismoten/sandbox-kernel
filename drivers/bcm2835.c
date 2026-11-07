@@ -6,6 +6,7 @@ void gpio_set(unsigned p,bool v) { REG(GPIO+(v?0x1c:0x28)+(p/32)*4)=1u<<(p%32); 
 bool gpio_get(unsigned p) { return (REG(GPIO+0x34+(p/32)*4)>>(p%32))&1; }
 void delay_us(uint32_t us) { uint32_t s=micros(); while(!expired(s,us)) service_io(); }
 static uint32_t table[4096] __attribute__((aligned(16384)));
+const uint32_t *mmu_table(void) { return table; }
 /* Noncached mailbox page lies outside cacheable sections (see mmu_init). */
 const char *property_fail="none";
 /* The message page (0x80000) is strongly ordered, so no cache maintenance is
@@ -85,7 +86,7 @@ void panic(unsigned kind) { char n[12]; number(n,kind); uart_puts("PANIC excepti
  * sections (the HDMI framebuffer). Only above the 128 MiB kernel map and
  * below 512 MiB; existing entries are never replaced. */
 bool mmu_map_uncached(uint32_t phys,uint32_t bytes) {
- if(!bytes||phys<0x08000000u||phys>=0x20000000u||bytes>0x20000000u-phys) return false;
+ if(!bytes||phys<0x10000000u||phys>=0x20000000u||bytes>0x20000000u-phys) return false; /* below 256 MiB is the kernel map and the user image window */
  for(uint32_t i=phys>>20;i<=(phys+bytes-1)>>20;i++) if(table[i]&&table[i]!=((i<<20)|0x1412u)) return false;
  for(uint32_t i=phys>>20;i<=(phys+bytes-1)>>20;i++) table[i]=(i<<20)|0x1412u; /* TEX=001 C=B=0, AP=01, XN */
  uint32_t z=0;

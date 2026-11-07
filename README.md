@@ -1,9 +1,12 @@
 # sandbox-kernel
 
 A small, reusable bare-metal Raspberry Pi kernel under the MIT license.
-**Status: M0 implemented; board qualification pending.** ARMv6 selector/runtime,
-e-ink status, TinyUSB CDC logging, and verified A/B kernel updates build for Zero W.
-No physical acceptance test has passed yet.
+**Status: M0 board-qualified on the Zero W v1.1; M1 in progress.** The ARMv6
+selector and runtime boot, show the e-ink start and status screens, log over USB
+CDC, and take verified A/B kernel updates with trial, confirmation and automatic
+fallback, all on the board. M1 adds the HDMI framebuffer, read-only FAT32 assets,
+the SDK, and a User-mode OS program loaded from the card with fault recovery
+([docs/m1.md](docs/m1.md)).
 
 The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
 Later ports target Pi 1, 2, 3, 4, and 5 through separate board backends.

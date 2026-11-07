@@ -15,7 +15,7 @@
 /* Call numbers (r7 on ARM32). Only the first calls have records here. */
 enum {
   SBX_CALL_QUERY = 0, SBX_CALL_OPEN = 1, SBX_CALL_READ = 2, SBX_CALL_WRITE = 3,
-  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_EXIT = 16
+  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_EXIT = 16
 };
 
 /* Negative return values. */
@@ -34,6 +34,15 @@ enum {
 #define SBX_O_NONBLOCK 0x100u
 #define SBX_MAX_TRANSFER (1024u * 1024u)
 #define SBX_MAX_PATH 255u
+
+/* mmap protections and flags. Only an approved shared buffer (the /dev/fb0
+   surface) can be mapped in this draft; the kernel chooses the address. */
+#define SBX_PROT_READ 1u
+#define SBX_PROT_WRITE 2u
+#define SBX_PROT_EXEC 4u
+#define SBX_MAP_SHARED 1u
+#define SBX_MAP_PRIVATE 2u
+#define SBX_MAP_ANONYMOUS 0x20u
 
 /* ioctl request = (class << 16) | operation. Class 1 is the framebuffer. */
 #define SBX_IOC(class_, op) ((uint32_t)(class_) << 16 | (uint32_t)(op))
@@ -82,6 +91,21 @@ typedef struct sbx_fb_present_rec { /* copy this rectangle of the mapped surface
   uint64_t x, y, width, height;
 } sbx_fb_present_rec;
 
+typedef struct sbx_mmap_rec {
+  sbx_header h;
+  uint64_t fd, offset, length, protection, flags;
+  uint64_t address; /* out */
+} sbx_mmap_rec;
+
+/* Read-only record whose address is in r0 at entry. Returning from the entry
+   point ends the program with r0 as its exit status. */
+typedef struct sbx_startup {
+  uint32_t size;
+  uint16_t major, minor;
+  uint32_t generation, trial; /* kernel boot generation; 1 while it is on trial */
+  uint64_t image_bytes, stack_bytes, handles; /* quotas */
+} sbx_startup;
+
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
@@ -104,6 +128,13 @@ SBX_AT(sbx_fb_mode, format, 40); SBX_AT(sbx_fb_mode, buffer_bytes, 48);
 SBX_CHECK(sbx_fb_present_rec, 48);
 SBX_AT(sbx_fb_present_rec, x, 16); SBX_AT(sbx_fb_present_rec, y, 24);
 SBX_AT(sbx_fb_present_rec, width, 32); SBX_AT(sbx_fb_present_rec, height, 40);
+SBX_CHECK(sbx_mmap_rec, 64);
+SBX_AT(sbx_mmap_rec, fd, 16); SBX_AT(sbx_mmap_rec, offset, 24); SBX_AT(sbx_mmap_rec, length, 32);
+SBX_AT(sbx_mmap_rec, protection, 40); SBX_AT(sbx_mmap_rec, flags, 48); SBX_AT(sbx_mmap_rec, address, 56);
+SBX_CHECK(sbx_startup, 40);
+SBX_AT(sbx_startup, major, 4); SBX_AT(sbx_startup, minor, 6); SBX_AT(sbx_startup, generation, 8);
+SBX_AT(sbx_startup, trial, 12); SBX_AT(sbx_startup, image_bytes, 16); SBX_AT(sbx_startup, stack_bytes, 24);
+SBX_AT(sbx_startup, handles, 32);
 #undef SBX_CHECK
 #undef SBX_AT
 #endif

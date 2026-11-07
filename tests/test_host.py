@@ -29,3 +29,14 @@ class SenderTests(unittest.TestCase):
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
             self.assertEqual(usb_kernel.send_kernel(p,f),2)
         self.assertEqual(sum(s.startswith(b'PUT2') for s in p.sent),1)
+    def test_put_file_blocks_and_hash(self):
+        import hashlib, zlib
+        data=b'E'*1500;info='INFO 2 test confirmed=1'
+        p=FakePort([info,'READY 1024','ACK 1024','VERIFY','OK file /OS/DIAG.ELF 1500'])
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/'diag.elf';f.write_bytes(data)
+            self.assertEqual(usb_kernel.send_file(p,f,'DIAG.ELF'),0)
+            self.assertEqual(p.sent[1],f'PUTF DIAG.ELF 1500 {zlib.crc32(data):08x} {hashlib.sha256(data).hexdigest()}\n'.encode())
+            self.assertEqual(p.sent[2:],[data[:1024],data[1024:]])
+            for bad in ('diag.elf','../X','TOOLONGNAME.ELF'):
+                with self.assertRaises(ValueError): usb_kernel.send_file(FakePort([]),f,bad)
