@@ -38,8 +38,10 @@ def fat_image(folder,output):
     files={p.name:p.read_bytes() for p in folder.iterdir() if p.is_file() and p.suffix.lower() not in ('.json','.md')}
     order=['BOOTCT0.BIN','KERNA.BIN','BOOTCT1.BIN','KERNB.BIN']+sorted(set(files)-{'BOOTCT0.BIN','KERNA.BIN','BOOTCT1.BIN','KERNB.BIN'})
     if len(order)>24: raise ValueError('root directory full')
-    root_index=0
+    root_index=1
     root=bytearray(1024);entry(2,3);entry(3,0x0fffffff);next_cluster=4;layout={}
+    # Match the BPB label with a root volume entry (no data cluster or size).
+    root[:11]=b'SANDBOX M0 ';root[11]=0x08
     with output.open('wb') as out:
         out.truncate((start+total)*512)
         def sector(lba,b): out.seek(lba*512);out.write(b)

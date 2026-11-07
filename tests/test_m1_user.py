@@ -384,7 +384,12 @@ def fsck(disk,work):
         for i in range(0,262144*512,1<<20):
             b=src.read(1<<20)
             if b.strip(b'\0'): dst.seek(i);dst.write(b)
-    r=subprocess.run(['fsck_msdos','-n',str(part)],capture_output=True,text=True);part.unlink();return r
+    checker=shutil.which('fsck_msdos') or shutil.which('fsck.fat') or shutil.which('fsck.vfat')
+    if not checker: raise RuntimeError('Install fsck_msdos or dosfstools to check FAT images')
+    try:
+        return subprocess.run([checker,'-n',str(part)],capture_output=True,text=True)
+    finally:
+        part.unlink()
 
 class Install(Work):
     def setUp(self):
