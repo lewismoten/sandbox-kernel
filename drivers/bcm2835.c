@@ -5,15 +5,19 @@ void gpio_mode(unsigned p,unsigned m) { uint32_t a=GPIO+(p/10)*4, s=(p%10)*3; RE
 void gpio_set(unsigned p,bool v) { REG(GPIO+(v?0x1c:0x28)+(p/32)*4)=1u<<(p%32); barrier(); }
 bool gpio_get(unsigned p) { return (REG(GPIO+0x34+(p/32)*4)>>(p%32))&1; }
 void delay_us(uint32_t us) { uint32_t s=micros(); while(!expired(s,us)) service_io(); }
+static uint32_t table[4096] __attribute__((aligned(16384)));
 /* Noncached mailbox page lies outside cacheable sections (see mmu_init). */
 const char *property_fail="none";
 /* The message page (0x80000) is strongly ordered, so no cache maintenance is
  * needed. The GPU gets the 0xC0000000 alias (uncached, bypasses its L2), so a
  * response can never sit in a GPU cache line the ARM does not see. */
-static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) {
+/* Post a whole tag message (size word first, at most 64 words) and copy the
+ * reply back. Bounded by `timeout` microseconds; never touches the reply on
+ * failure. Used by single-tag calls and by multi-tag framebuffer allocation. */
+bool property_message(uint32_t *m,unsigned words,uint32_t timeout) {
  volatile uint32_t *b=(volatile uint32_t *)0x80000;
- b[0]=(n+6)*4; b[1]=0; b[2]=tag; b[3]=n*4; b[4]=n*4;
- for(unsigned i=0;i<n;i++) b[5+i]=v[i]; b[5+n]=0;
+ if(words<3||words>64||m[0]!=words*4) {property_fail="MBOX ARGS";return false;}
+ for(unsigned i=0;i<words;i++) b[i]=m[i];
  uint32_t z=0; __asm__ volatile("mcr p15,0,%0,c7,c10,4":: "r"(z):"memory"); /* drain write buffer */
  uint32_t s=micros();
  while(REG(PERIPH+0xb898)&0x80000000u) if(expired(s,100000)) {property_fail="MBOX FULL";return false;}
@@ -24,11 +28,18 @@ static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) 
    uint32_t r=REG(PERIPH+0xb880); barrier();
    if(r!=0xc0080008u) continue; /* some other reply; keep waiting */
    if(b[1]!=0x80000000u) {property_fail="MBOX RESP";return false;}
-   if(!(b[4]&0x80000000u)) {property_fail="MBOX TAG";return false;}
-   for(unsigned i=0;i<n;i++) v[i]=b[5+i]; return true;
+   for(unsigned i=0;i<words;i++) m[i]=b[i];
+   return true;
   }
  }
  property_fail="MBOX TIMEOUT"; return false;
+}
+static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) {
+ uint32_t m[14]; m[0]=(n+6)*4; m[1]=0; m[2]=tag; m[3]=n*4; m[4]=n*4;
+ for(unsigned i=0;i<n;i++) m[5+i]=v[i]; m[5+n]=0;
+ if(!property_message(m,n+6,timeout)) return false;
+ if(!(m[4]&0x80000000u)) {property_fail="MBOX TAG";return false;}
+ for(unsigned i=0;i<n;i++) v[i]=m[5+i]; return true;
 }
 bool property(uint32_t tag,uint32_t *v,unsigned n) {
  if(n>8) {property_fail="MBOX ARGS";return false;}
@@ -70,7 +81,17 @@ void watchdog_feed(void) {
 }
 void reboot(void) { REG(PERIPH+0x100024)=0x5a000010; REG(PERIPH+0x10001c)=0x5a000020; for(;;) {} }
 void panic(unsigned kind) { char n[12]; number(n,kind); uart_puts("PANIC exception "); uart_puts(n); uart_puts("\r\n"); for(;;) {} }
-static uint32_t table[4096] __attribute__((aligned(16384)));
+/* Map [phys, phys+bytes) as privileged normal non-cacheable, execute-never
+ * sections (the HDMI framebuffer). Only above the 128 MiB kernel map and
+ * below 512 MiB; existing entries are never replaced. */
+bool mmu_map_uncached(uint32_t phys,uint32_t bytes) {
+ if(!bytes||phys<0x08000000u||phys>=0x20000000u||bytes>0x20000000u-phys) return false;
+ for(uint32_t i=phys>>20;i<=(phys+bytes-1)>>20;i++) if(table[i]&&table[i]!=((i<<20)|0x1412u)) return false;
+ for(uint32_t i=phys>>20;i<=(phys+bytes-1)>>20;i++) table[i]=(i<<20)|0x1412u; /* TEX=001 C=B=0, AP=01, XN */
+ uint32_t z=0;
+ __asm__ volatile("mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c8,c7,0\n mcr p15,0,%0,c7,c5,4"::"r"(z):"memory");
+ return true;
+}
 void mmu_init(void) {
  /* M0 privileged identity map; no user execution. First section uncached for
     vectors, selector, mailbox. Runtime RAM write-through, MMIO device+XN. */

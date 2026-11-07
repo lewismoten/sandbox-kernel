@@ -31,7 +31,10 @@ void tud_mount_cb(void) {suspended=false;log_line("USB enumerated (reader separa
 void tud_umount_cb(void) {protocol_reset();log_line("USB unmounted");}
 void tud_suspend_cb(bool remote) {(void)remote;suspended=true;protocol_reset();}
 void tud_resume_cb(void) {suspended=false;}
-void tud_cdc_line_state_cb(uint8_t itf,bool dtr,bool rts) {(void)itf;(void)rts;if(!dtr)protocol_reset();log_line(dtr?"USB reader open":"USB reader closed");}
+/* Boot notes go out 1 s after a reader opens: bytes sent right as the port
+   opens can be lost on the host side. */
+static bool summary_due; static uint32_t summary_at;
+void tud_cdc_line_state_cb(uint8_t itf,bool dtr,bool rts) {(void)itf;(void)rts;if(!dtr)protocol_reset();log_line(dtr?"USB reader open":"USB reader closed");if(dtr){summary_at=micros();summary_due=true;}}
 /* Called on every bus reset, before queued task events. No disk work in ISR. */
 void tud_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr) {
  (void)rhport;(void)in_isr; if(eventid==DCD_EVENT_BUS_RESET) {extern volatile bool usb_reset_seen;usb_reset_seen=true;}
@@ -59,6 +62,7 @@ void usb_task(void) {
  if(!tud_mounted()) {inside=false;return;}
  while(rp!=wp&&tud_cdc_write_available()) {tud_cdc_write_char(replies[rp++%sizeof(replies)]);}
  if(!protocol_busy()&&rp==wp&&tud_cdc_connected()) {
+  if(summary_due&&expired(summary_at,1000000)) {summary_due=false;boot_summary();}
   while(lr!=lw&&tud_cdc_write_available())tud_cdc_write_char(logs[lr++%sizeof(logs)]);
   if(dropped&&lr==lw&&tud_cdc_write_available()>=26) {tud_cdc_write_str("LOG dropped (slow reader)\n");dropped=0;}
  }

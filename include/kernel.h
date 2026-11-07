@@ -35,6 +35,8 @@ void reboot(void) __attribute__((noreturn));
 void panic(unsigned kind) __attribute__((noreturn));
 bool property(uint32_t tag,uint32_t *values,unsigned words);
 extern const char *property_fail; /* why the last property call failed */
+bool property_message(uint32_t *message,unsigned words,uint32_t timeout_us);
+bool mmu_map_uncached(uint32_t phys,uint32_t bytes);
 void service_io(void);
 bool sd_init(void);
 bool sd_init_after_handoff(const uint32_t in[8]);
@@ -50,6 +52,8 @@ void sha256(const void *p,size_t n,uint8_t out[32]);
 void number(char *out,uint32_t n);
 void uptime(char *out,uint32_t seconds);
 void log_line(const char *s);
+void boot_note(const char *s); /* log now and again for each new USB reader */
+void boot_summary(void);
 extern const char *last_error;
 void error(const char *s);
 void panel_start(void);

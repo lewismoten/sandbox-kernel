@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "kernel.h"
+#include "fb.h"
+void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation;
 const char *last_error="none";
@@ -31,6 +33,11 @@ void kernel_main(void) {
    if(!control_commit(c)) {updates_ready=false;error("Fallback commit failed");}
   }
  }
+ /* M1 probes: HDMI framebuffer and read-only assets. Neither touches USB,
+    the panel or any card sector; failures are logged, never fatal. */
+ watchdog_feed();fb_start();
+ if(storage_ready)asset_probe();
+ watchdog_feed();
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;

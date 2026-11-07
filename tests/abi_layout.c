@@ -1,0 +1,25 @@
+/* SPDX-License-Identifier: MIT; compile-time proof that the SDK and kernel
+ * declare the same records. Built for the host and for ARM32 by test_abi.py. */
+#include "abi.h"
+#include <sandbox/abi.h>
+#define SAME(k,s,f) _Static_assert(offsetof(struct k,f)==offsetof(s,f)&&sizeof(((struct k *)0)->f)==sizeof(((s *)0)->f),#s "." #f)
+#define SIZE(k,s) _Static_assert(sizeof(struct k)==sizeof(s),#s)
+SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_header,flags); SAME(k_header,sbx_header,reserved0); SAME(k_header,sbx_header,reserved1);
+SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
+SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);
+SIZE(k_close,sbx_close_rec); SAME(k_close,sbx_close_rec,fd);
+SIZE(k_ioctl,sbx_ioctl_rec); SAME(k_ioctl,sbx_ioctl_rec,fd); SAME(k_ioctl,sbx_ioctl_rec,request); SAME(k_ioctl,sbx_ioctl_rec,buffer); SAME(k_ioctl,sbx_ioctl_rec,bytes);
+SIZE(k_exit,sbx_exit_rec); SAME(k_exit,sbx_exit_rec,status);
+SIZE(k_fb_mode,sbx_fb_mode); SAME(k_fb_mode,sbx_fb_mode,width); SAME(k_fb_mode,sbx_fb_mode,height); SAME(k_fb_mode,sbx_fb_mode,pitch); SAME(k_fb_mode,sbx_fb_mode,format); SAME(k_fb_mode,sbx_fb_mode,buffer_bytes);
+SIZE(k_fb_present,sbx_fb_present_rec); SAME(k_fb_present,sbx_fb_present_rec,x); SAME(k_fb_present,sbx_fb_present_rec,y); SAME(k_fb_present,sbx_fb_present_rec,width); SAME(k_fb_present,sbx_fb_present_rec,height);
+_Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI version");
+#ifdef __arm__
+#include <sandbox/syscall.h>
+/* Every wrapper compiles to ARM-state svc code. */
+int32_t use_all(uint64_t fd,char *b) {
+ uint64_t n,f; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
+ s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd);
+ if(s==-1) sbx_exit(1);
+ return s;
+}
+#endif

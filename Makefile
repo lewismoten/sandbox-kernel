@@ -11,7 +11,7 @@ CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-u
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c $(TUSB)/device/usbd_control.c $(TUSB)/class/cdc/cdc_device.c $(TUSB)/portable/synopsys/dwc2/dcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
-KERNEL := $(COMMON) drivers/panel.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
+KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
 .PHONY: all clean deps boot test FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski
