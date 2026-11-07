@@ -52,6 +52,8 @@ void sha256(const void *p,size_t n,uint8_t out[32]);
 void number(char *out,uint32_t n);
 void uptime(char *out,uint32_t seconds);
 void log_line(const char *s);
+void boot_note(const char *s); /* log now and again for each new USB reader */
+void boot_summary(void);
 extern const char *last_error;
 void error(const char *s);
 void panel_start(void);

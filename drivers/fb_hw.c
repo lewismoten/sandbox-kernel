@@ -13,7 +13,7 @@ bool fb_start(void) {
  uint32_t d[2]={0,0};
  if(property(0x40003,d,2)) {append(&p,"FB display ");append_n(&p,d[0]);append(&p,"x");append_n(&p,d[1]);}
  else {append(&p,"FB display unknown ");append(&p,property_fail);}
- log_line(line);
+ boot_note(line);
  uint32_t m[FB_MESSAGE_WORDS]; const char *why=NULL;
  for(unsigned attempt=0;attempt<2&&(!attempt||why);attempt++) {
   fb_request(m,FB_WIDTH,FB_HEIGHT,FB_DEPTH);
@@ -21,11 +21,11 @@ bool fb_start(void) {
  }
  if(!why&&!mmu_map_uncached(fb0.phys,fb0.bytes)) why="FB MAP";
  p=line;
- if(why) {fb_fail=why;append(&p,why);if(!strcmp(why,"FB MBOX")){append(&p," ");append(&p,property_fail);}log_line(line);return false;}
+ if(why) {fb_fail=why;append(&p,why);if(!strcmp(why,"FB MBOX")){append(&p," ");append(&p,property_fail);}boot_note(line);return false;}
  fb_pattern(&fb0,(uint8_t *)(uintptr_t)fb0.phys);
  append(&p,"FB ok ");append_n(&p,fb0.width);append(&p,"x");append_n(&p,fb0.height);append(&p," ");append_n(&p,fb0.depth);append(&p," ");append_n(&p,fb0.pitch);
- log_line(line);
+ boot_note(line);
  p=line;append(&p,"FB bus ");append_hex(&p,fb0.bus);append(&p," bytes ");append_n(&p,fb0.bytes);append(&p," order ");append_n(&p,fb0.pixel_order);
- log_line(line);
+ boot_note(line);
  return true;
 }

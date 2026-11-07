@@ -31,7 +31,7 @@ void tud_mount_cb(void) {suspended=false;log_line("USB enumerated (reader separa
 void tud_umount_cb(void) {protocol_reset();log_line("USB unmounted");}
 void tud_suspend_cb(bool remote) {(void)remote;suspended=true;protocol_reset();}
 void tud_resume_cb(void) {suspended=false;}
-void tud_cdc_line_state_cb(uint8_t itf,bool dtr,bool rts) {(void)itf;(void)rts;if(!dtr)protocol_reset();log_line(dtr?"USB reader open":"USB reader closed");}
+void tud_cdc_line_state_cb(uint8_t itf,bool dtr,bool rts) {(void)itf;(void)rts;if(!dtr)protocol_reset();log_line(dtr?"USB reader open":"USB reader closed");if(dtr)boot_summary();}
 /* Called on every bus reset, before queued task events. No disk work in ISR. */
 void tud_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr) {
  (void)rhport;(void)in_isr; if(eventid==DCD_EVENT_BUS_RESET) {extern volatile bool usb_reset_seen;usb_reset_seen=true;}
