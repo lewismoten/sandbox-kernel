@@ -2,7 +2,7 @@
 import ctypes as C
 import hashlib, importlib.util, os, pathlib, random, shutil, struct, subprocess, sys, tempfile, unittest, zlib
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'scripts'))
+sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT/'tests'))
 import image
 
 class CoreTests(unittest.TestCase):
@@ -10,7 +10,7 @@ class CoreTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.work=pathlib.Path(cls.temp.name)
         cls.lib=cls.work/'core.dylib'
-        subprocess.run(['cc','-shared','-fPIC','-O1','-fno-builtin','-DHOST_TEST','-D_FORTIFY_SOURCE=0','-I'+str(ROOT/'tests/stubs'),'-I'+str(ROOT/'include'),*map(str,[ROOT/'core/util.c',ROOT/'core/divide.c',ROOT/'core/store.c',ROOT/'core/protocol.c',ROOT/'tests/harness.c']),'-o',str(cls.lib)],check=True)
+        import hostlib;hostlib.build(cls.lib)
         cls.folder=cls.work/'boot';cls.folder.mkdir()
         cls.known=image.pack(bytes(range(256))*4,'known')
         (cls.folder/'KERNA.BIN').write_bytes(cls.known.ljust(image.MAX_IMAGE,b'\0'))

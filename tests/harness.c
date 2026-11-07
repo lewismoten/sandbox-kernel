@@ -31,3 +31,20 @@ uint32_t tud_cdc_read(void *p,uint32_t n) {if(n>in_w-in_r)n=in_w-in_r;memcpy(p,i
 void tud_cdc_read_flush(void) {in_r=in_w=0;}
 bool verify_confirmed(void);
 bool initialize(void) {storage_ready=store_init();updates_ready=storage_ready&&verify_confirmed();return updates_ready;}
+/* M1 slice 2: the kernel map, framebuffer, logs and watchdog seen by
+   core/uspace.c, core/sys.c, core/os.c and core/fatput.c. */
+#include "fb.h"
+struct fb_info fb0;uint8_t *fb_pixels;uint32_t boot_trial;
+static uint32_t ktable[4096];
+const uint32_t *mmu_table(void) {return ktable;}
+uint32_t *kernel_table(void) {return ktable;}
+void watchdog_feed(void) {}
+static char logs[1<<16];static unsigned logn;
+void log_line(const char *s) {size_t n=strlen(s);if(logn+n+2>=sizeof(logs))logn=0;memcpy(logs+logn,s,n);logn+=(unsigned)n;logs[logn++]='\n';logs[logn]=0;}
+const char *take_log(void) {static char copy[1<<16];memcpy(copy,logs,logn+1);logn=0;logs[0]=0;return copy;}
+static uint8_t hw[2700*480];
+uint8_t *fb_setup(uint32_t order,int present) {
+ memset(&fb0,0,sizeof fb0);fb_pixels=NULL;if(!present)return NULL;
+ fb0.width=640;fb0.height=480;fb0.depth=32;fb0.pitch=2700;fb0.bytes=sizeof(hw);fb0.pixel_order=order;
+ memset(hw,0xaa,sizeof hw);fb_pixels=hw;return hw;
+}

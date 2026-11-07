@@ -15,8 +15,7 @@ class FbInfo(C.Structure):
 
 def build_lib(work):
     lib=work/'m1.dylib'
-    srcs=['core/util.c','core/divide.c','core/store.c','core/protocol.c','core/assets.c','core/fb.c','tests/harness.c']
-    subprocess.run(['cc','-shared','-fPIC','-O1','-fno-builtin','-DHOST_TEST','-D_FORTIFY_SOURCE=0','-Wall','-Wextra','-Werror','-I'+str(ROOT/'tests/stubs'),'-I'+str(ROOT/'include'),*[str(ROOT/s) for s in srcs],'-o',str(lib)],check=True)
+    import hostlib;hostlib.build(lib)
     return lib
 
 def data(n,seed=1):
