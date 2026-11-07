@@ -2,6 +2,21 @@
  * register sequence adapted from Waveshare team, permission in licenses/. */
 #include "kernel.h"
 #define SPI (PERIPH+0x204000)
+/* The text is laid out as 250x122 landscape and mapped to the 122x250 native
+ * panel. PANEL_ROTATE_180=1 (default) is the orientation the first board test
+ * showed correct after the original mapping came out upside down; build with
+ * PANEL_ROTATE_180=0 (make PANEL_ROTATE_180=0) for the previous mapping.
+ * Both refresh paths draw from the same plane, so both rotate. */
+#ifndef PANEL_ROTATE_180
+#define PANEL_ROTATE_180 1
+#endif
+#if PANEL_ROTATE_180
+#define NATIVE_X(lx,ly) (121u-(ly))
+#define NATIVE_Y(lx,ly) (lx)
+#else
+#define NATIVE_X(lx,ly) (ly)
+#define NATIVE_Y(lx,ly) (249u-(lx))
+#endif
 static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos;
 static uint32_t since,delay;
@@ -12,7 +27,7 @@ static const uint16_t glyphs[]={075757,065656,074447,065556,074647,074644,074557
 static void text(unsigned x,unsigned y,const char *s) {
  while(*s&&x<244) {
   unsigned ch=(uint8_t)*s++; if(ch==0xe2 && (uint8_t)s[0]==0x80 && (uint8_t)s[1]==0xa6) {
-   s+=2; for(unsigned dot=0;dot<3;dot++) {unsigned px=y+8,py=249-(x+dot*2);if(px<122&&py<250)desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));} x+=8;continue;
+   s+=2; for(unsigned dot=0;dot<3;dot++) {unsigned px=NATIVE_X(x+dot*2,y+8),py=NATIVE_Y(x+dot*2,y+8);if(px<122&&py<250)desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));} x+=8;continue;
   }
   if(ch>='a'&&ch<='z') ch-=32;
   unsigned index=39; for(unsigned i=0;i<sizeof(alphabet)-1;i++) if(ch==(unsigned)alphabet[i]) {index=i;break;}
@@ -20,7 +35,7 @@ static void text(unsigned x,unsigned y,const char *s) {
   for(unsigned row=0;row<5;row++) for(unsigned col=0;col<3;col++) if(bits&(1u<<((4-row)*3+2-col)))
    for(unsigned dy=0;dy<2;dy++) for(unsigned dx=0;dx<2;dx++) {
     unsigned lx=x+col*2+dx,ly=y+row*2+dy;
-    if(lx<250&&ly<122) {unsigned px=ly,py=249-lx;desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));}
+    if(lx<250&&ly<122) {unsigned px=NATIVE_X(lx,ly),py=NATIVE_Y(lx,ly);desired[py*16+px/8]&=(uint8_t)~(0x80>>(px%8));}
    }
   x+=8;
  }
