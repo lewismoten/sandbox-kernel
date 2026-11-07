@@ -63,7 +63,8 @@ static int cursor_next(struct cursor *c,uint8_t e[32]) {
   if(c->done) return 0;
   if(c->index==v.spc*16) {
    uint32_t n; int r=next_cluster(c->cluster,&n);
-   if(r<0) return r; if(r) {c->done=true;return 0;}
+   if(r<0) return r;
+   if(r) {c->done=true;return 0;}
    if(++c->hops>=c->limit) return fail("DIR LOOP",ASSET_EIO);
    c->cluster=n;c->index=0;
   }
@@ -114,7 +115,8 @@ static int new_handle(void) {
  return fail("ASSET EMFILE",ASSET_EMFILE);
 }
 static struct handle *get(int id) {
- if(id<0) return NULL; struct handle *h=&handles[id&7];
+ if(id<0) return NULL;
+ struct handle *h=&handles[id&7];
  return h->used&&h->gen==(uint16_t)((uint32_t)id>>3)&&((uint32_t)id>>3)<=0xffffu?h:NULL;
 }
 int asset_open(const char *path,uint32_t n,uint32_t flags) {

@@ -8,6 +8,7 @@ AI models used on this repository:
 | Model | Tool | What it did |
 | --- | --- | --- |
 | GPT-6.1 Sol (OpenAI) | Codex CLI | Researched license options; wrote the first design, milestones and contribution rules (2026-11-06) |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | M1 host acceptance: deterministic ELF rejection witnesses and extended fuzzing, syscall edge cases, resource exhaustion and USB queue reserves; Linux host binding and FAT image label regressions; integration and coverage documentation (2026-11-07) |
 | GPT-6 (OpenAI) | Codex | Implemented original M0 code, integration, tools, host checks and documentation (2026-11-06) |
 | Claude Opus 5.5 (Anthropic) | Claude Code | Directed the work; reviewed and edited the design; added profiles, gates and latches; edited docs (2026-11-06) |
 | Claude Sonnet 5.5 (Anthropic) | Claude Code | First-board fixes: mailbox and SD handoff, failure codes, panel rotation, 5×7 font, logo badge and its generator, host screen renderer (2026-11-07) |
