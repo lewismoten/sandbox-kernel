@@ -15,5 +15,6 @@ extern int64_t sys_exit_status;
 extern uint32_t sys_calls; /* every call, counted */
 extern uint32_t sys_healths; /* accepted health calls since the program started */
 extern uint32_t sys_presents; /* framebuffer presents since the program started */
+extern uint64_t sys_wake_us; /* sleep_until: the program waits until clock_us() reaches this (0: awake) */
 void sys_reset(void); /* close every handle and forget the surface */
 uint32_t sys_open_handles(void);

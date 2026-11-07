@@ -10,13 +10,13 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 0u
+#define SBX_ABI_MINOR 1u /* 1.1: clock_gettime (13) and sleep_until (14) */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
   SBX_CALL_QUERY = 0, SBX_CALL_OPEN = 1, SBX_CALL_READ = 2, SBX_CALL_WRITE = 3,
   SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_GETDENTS = 11,
-  SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17
+  SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17
 };
 
 /* Negative return values. */
@@ -136,6 +136,16 @@ typedef struct sbx_health_rec { /* heartbeat; the first one is the readiness rep
   uint64_t generation; /* sbx_startup.generation */
   uint64_t sequence;   /* strictly increasing, from 1 */
 } sbx_health_rec;
+#define SBX_CLOCK_MONOTONIC 0u /* nanoseconds since the kernel started (the input event clock) */
+typedef struct sbx_clock_rec { /* clock_gettime (ABI 1.1) */
+  sbx_header h;
+  uint64_t clock; /* SBX_CLOCK_MONOTONIC */
+  uint64_t ns;    /* out */
+} sbx_clock_rec;
+typedef struct sbx_sleep_rec { /* sleep_until (ABI 1.1): not run again before the deadline */
+  sbx_header h;
+  uint64_t deadline; /* absolute monotonic nanoseconds; one already passed returns at once */
+} sbx_sleep_rec;
 typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
   uint64_t ns; /* monotonic nanoseconds since the kernel started */
   uint16_t type, code;
@@ -193,6 +203,8 @@ SBX_CHECK(sbx_dirents_rec, 48);
 SBX_AT(sbx_dirents_rec, fd, 16); SBX_AT(sbx_dirents_rec, buffer, 24); SBX_AT(sbx_dirents_rec, bytes, 32); SBX_AT(sbx_dirents_rec, transferred, 40);
 SBX_CHECK(sbx_dirent, 8); SBX_AT(sbx_dirent, type, 2); SBX_AT(sbx_dirent, name_bytes, 3); SBX_AT(sbx_dirent, size, 4);
 SBX_CHECK(sbx_health_rec, 32); SBX_AT(sbx_health_rec, generation, 16); SBX_AT(sbx_health_rec, sequence, 24);
+SBX_CHECK(sbx_clock_rec, 32); SBX_AT(sbx_clock_rec, clock, 16); SBX_AT(sbx_clock_rec, ns, 24);
+SBX_CHECK(sbx_sleep_rec, 24); SBX_AT(sbx_sleep_rec, deadline, 16);
 SBX_CHECK(sbx_input_event, 16); SBX_AT(sbx_input_event, type, 8); SBX_AT(sbx_input_event, code, 10); SBX_AT(sbx_input_event, value, 12);
 SBX_CHECK(sbx_input_info, 72);
 SBX_AT(sbx_input_info, flags, 16); SBX_AT(sbx_input_info, instance, 24); SBX_AT(sbx_input_info, queue_records, 32);

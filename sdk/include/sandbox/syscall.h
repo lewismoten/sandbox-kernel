@@ -86,6 +86,19 @@ static inline int32_t sbx_health(uint32_t generation, uint64_t sequence) {
   sbx_health_rec r = {SBX_HEADER(sbx_health_rec), generation, sequence};
   return sbx_syscall(SBX_CALL_HEALTH, &r, sizeof r);
 }
+/* Monotonic nanoseconds since the kernel started (ABI 1.1). */
+static inline int32_t sbx_clock_ns(uint64_t *ns) {
+  sbx_clock_rec r = {SBX_HEADER(sbx_clock_rec), SBX_CLOCK_MONOTONIC, 0};
+  int32_t s = sbx_syscall(SBX_CALL_CLOCK_GETTIME, &r, sizeof r);
+  if (!s) *ns = r.ns;
+  return s;
+}
+/* Wait, without running, until the monotonic clock reaches deadline_ns (ABI 1.1).
+   The heartbeat deadline keeps running: wake in time to report. */
+static inline int32_t sbx_sleep_until(uint64_t deadline_ns) {
+  sbx_sleep_rec r = {SBX_HEADER(sbx_sleep_rec), deadline_ns};
+  return sbx_syscall(SBX_CALL_SLEEP_UNTIL, &r, sizeof r);
+}
 static inline int32_t sbx_input_query(uint64_t input_fd, sbx_input_info *info) {
   *info = (sbx_input_info){SBX_HEADER(sbx_input_info), 0, 0, 0, 0, 0, 0, 0};
   return sbx_ioctl(input_fd, SBX_IOC_INPUT_QUERY, info, sizeof *info);
