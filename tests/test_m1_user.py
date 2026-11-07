@@ -412,6 +412,11 @@ class Install(Work):
         self.assertEqual(self.c.fatput(b'LOOP.ELF',b'x',1),0);self.assertEqual(self.read('/OS/LOOP.ELF'),b'x')
         self.untouched()
         r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
+    def test_bounded_reads(self):
+        # The card's first 8,000+ clusters are in use (slots, firmware): the free
+        # scan must read each FAT sector once, or the board's 8 s watchdog fires.
+        r0=self.c.read_count();self.assertEqual(self.c.fatput(b'DIAG.ELF',b'x'*5000,5000),0)
+        self.assertLess(self.c.read_count()-r0,600)
     def test_refusals(self):
         for name in (b'diag.elf',b'../X',b'/OS/X',b'A.B.C',b'TOOLONGNAME.ELF',b'X.ELFS',b'.ELF',b'',b'K RN.BIN'):
             with self.subTest(name): self.assertEqual(self.c.fatput(name,b'x',1),-EINVAL)

@@ -28,12 +28,19 @@ static int wr(uint32_t lba,const uint8_t *b,uint32_t fsinfo) {
  if(!sd_read(lba,chk)||memcmp(chk,b,512)) return fail("PUT READBACK",5);
  return 0;
 }
+/* One cached sector from each FAT copy: a scan for free clusters reads each
+   FAT sector once, not once per cluster (the watchdog allows 8 s). */
+static uint8_t fc[2][512]; static uint32_t fc_sec=~0u;
 static int fat_get(uint32_t c,uint32_t *out) {
- int r=rd(v.fat+c/128,s); if(r) return r; uint32_t a=u32(s+(c%128)*4)&0x0fffffffu;
- if((r=rd(v.fat+v.fat_size+c/128,s))) return r; if((u32(s+(c%128)*4)&0x0fffffffu)!=a) return fail("PUT FAT MISMATCH",5);
+ uint32_t sec=c/128; int r;
+ if(sec>=v.fat_size) return fail("PUT FAT RANGE",5);
+ if(sec!=fc_sec) {fc_sec=~0u; if((r=rd(v.fat+sec,fc[0]))||(r=rd(v.fat+v.fat_size+sec,fc[1]))) return r; fc_sec=sec;}
+ uint32_t a=u32(fc[0]+(c%128)*4)&0x0fffffffu;
+ if((u32(fc[1]+(c%128)*4)&0x0fffffffu)!=a) return fail("PUT FAT MISMATCH",5);
  *out=a; return 0;
 }
 static int fat_set(uint32_t c,uint32_t val) {
+ fc_sec=~0u;
  for(uint32_t copy=0;copy<2;copy++) {
   uint32_t lba=v.fat+copy*v.fat_size+c/128; int r=rd(lba,s); if(r) return r;
   uint8_t *e=s+(c%128)*4; put32(e,(u32(e)&0xf0000000u)|(val&0x0fffffffu));
@@ -82,7 +89,7 @@ static int scan(uint32_t dir,const uint8_t name[11],struct slot *hit,struct slot
 }
 static int alloc(uint32_t n) {
  uint32_t got=0;
- for(uint32_t c=2;c<v.clusters+2&&got<n;c++) {uint32_t x; int r=fat_get(c,&x); if(r) return r; if(!x) chain[got++]=c;}
+ for(uint32_t c=2;c<v.clusters+2&&got<n;c++) {uint32_t x; int r=fat_get(c,&x); if(r) return r; if(!x) chain[got++]=c; if(!(c&0xfff)) watchdog_feed();}
  if(got<n) return fail("PUT FULL",28);
  taken+=n; return 0;
 }
@@ -114,7 +121,7 @@ int fatput(const char *name,const uint8_t *data,uint32_t bytes) {
  int r=fatput_name(name,nm); if(r) return r;
  if(bytes>FATPUT_MAX) return fail("PUT SIZE",27);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
- taken=0;
+ taken=0; fc_sec=~0u;
  if((r=rd(v.base,s))) return r;
  uint32_t fsinfo=v.base+u16(s+48); if(u16(s+48)==0||u16(s+48)==0xffff) fsinfo=0;
  struct slot hit,free_slot; uint32_t dir;
