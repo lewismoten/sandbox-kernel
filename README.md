@@ -29,7 +29,8 @@ Build with `make`, run host checks with `make test`, and assemble a boot folder
 and card image with `make boot`. The default compiler is the requested Arm GNU
 15.3.rel2 installation. Dependencies are pinned and fetched without git.
 See [M0 build, wire formats and board handoff](docs/m0.md) for commands, layout,
-recovery policy and remaining physical tests. Claude handles flashing and commits.
+recovery policy and remaining physical tests. [M1 slice 1](docs/m1.md) adds the HDMI
+framebuffer, read-only FAT32 assets and the first [SDK](sdk/README.md) headers. Claude handles flashing and commits.
 The selector is `build/kernel.img`; send `build/runtime.ski` with the stdlib Mac
 tool in `scripts/usb_kernel.py`. M0 uses preallocated A/B files on FAT32.
 
