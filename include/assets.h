@@ -25,3 +25,5 @@ int asset_read(int handle,void *buffer,uint32_t count); /* bytes; 0 is EOF */
 int asset_readdir(int handle,struct asset_dirent *out); /* 1 entry, 0 end */
 int asset_close(int handle);
 int asset_size(int handle,uint32_t *bytes);
+struct asset_volume {uint32_t base,end,fat,fat_size,data,clusters,spc,root;};
+int asset_volume(struct asset_volume *out); /* geometry of the mounted volume, for core/fatput.c */
