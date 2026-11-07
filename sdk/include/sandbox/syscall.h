@@ -74,6 +74,26 @@ static inline int32_t sbx_fb_map(uint64_t fb_fd, uint64_t bytes, void **address)
   if (!s) *address = (void *)(uintptr_t)r.address;
   return s;
 }
+/* Directory entries (sbx_dirent) of an open /sd directory; *done 0 at the end. */
+static inline int32_t sbx_getdents(uint64_t dir_fd, void *buffer, uint32_t bytes, uint64_t *done) {
+  sbx_dirents_rec r = {SBX_HEADER(sbx_dirents_rec), dir_fd, (uint32_t)(uintptr_t)buffer, bytes, 0};
+  int32_t s = sbx_syscall(SBX_CALL_GETDENTS, &r, sizeof r);
+  if (!s) *done = r.transferred;
+  return s;
+}
+/* Heartbeat: call within 10 s of starting (readiness), then at least every 2 s. */
+static inline int32_t sbx_health(uint32_t generation, uint64_t sequence) {
+  sbx_health_rec r = {SBX_HEADER(sbx_health_rec), generation, sequence};
+  return sbx_syscall(SBX_CALL_HEALTH, &r, sizeof r);
+}
+static inline int32_t sbx_input_query(uint64_t input_fd, sbx_input_info *info) {
+  *info = (sbx_input_info){SBX_HEADER(sbx_input_info), 0, 0, 0, 0, 0, 0, 0};
+  return sbx_ioctl(input_fd, SBX_IOC_INPUT_QUERY, info, sizeof *info);
+}
+static inline int32_t sbx_input_state_get(uint64_t input_fd, sbx_input_state *state) {
+  *state = (sbx_input_state){SBX_HEADER(sbx_input_state), {0}, {0}};
+  return sbx_ioctl(input_fd, SBX_IOC_INPUT_STATE, state, sizeof *state);
+}
 __attribute__((noreturn)) static inline void sbx_exit(int64_t status) {
   sbx_exit_rec r = {SBX_HEADER(sbx_exit_rec), status};
   sbx_syscall(SBX_CALL_EXIT, &r, sizeof r);

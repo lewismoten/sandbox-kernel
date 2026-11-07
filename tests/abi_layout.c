@@ -14,6 +14,12 @@ SIZE(k_fb_mode,sbx_fb_mode); SAME(k_fb_mode,sbx_fb_mode,width); SAME(k_fb_mode,s
 SIZE(k_fb_present,sbx_fb_present_rec); SAME(k_fb_present,sbx_fb_present_rec,x); SAME(k_fb_present,sbx_fb_present_rec,y); SAME(k_fb_present,sbx_fb_present_rec,width); SAME(k_fb_present,sbx_fb_present_rec,height);
 SIZE(k_mmap,sbx_mmap_rec); SAME(k_mmap,sbx_mmap_rec,fd); SAME(k_mmap,sbx_mmap_rec,offset); SAME(k_mmap,sbx_mmap_rec,length); SAME(k_mmap,sbx_mmap_rec,protection); SAME(k_mmap,sbx_mmap_rec,flags); SAME(k_mmap,sbx_mmap_rec,address);
 SIZE(k_startup,sbx_startup); SAME(k_startup,sbx_startup,size); SAME(k_startup,sbx_startup,major); SAME(k_startup,sbx_startup,minor); SAME(k_startup,sbx_startup,generation); SAME(k_startup,sbx_startup,trial); SAME(k_startup,sbx_startup,image_bytes); SAME(k_startup,sbx_startup,stack_bytes); SAME(k_startup,sbx_startup,handles);
+SIZE(k_io,sbx_dirents_rec); SAME(k_io,sbx_dirents_rec,fd); SAME(k_io,sbx_dirents_rec,buffer); _Static_assert(offsetof(struct k_io,count)==offsetof(sbx_dirents_rec,bytes)&&offsetof(struct k_io,transferred)==offsetof(sbx_dirents_rec,transferred),"dirents");
+SIZE(k_dirent,sbx_dirent); SAME(k_dirent,sbx_dirent,length); SAME(k_dirent,sbx_dirent,type); SAME(k_dirent,sbx_dirent,name_bytes); SAME(k_dirent,sbx_dirent,size);
+SIZE(k_health,sbx_health_rec); SAME(k_health,sbx_health_rec,generation); SAME(k_health,sbx_health_rec,sequence);
+SIZE(k_input_event,sbx_input_event); SAME(k_input_event,sbx_input_event,ns); SAME(k_input_event,sbx_input_event,type); SAME(k_input_event,sbx_input_event,code); SAME(k_input_event,sbx_input_event,value);
+SIZE(k_input_info,sbx_input_info); SAME(k_input_info,sbx_input_info,flags); SAME(k_input_info,sbx_input_info,instance); SAME(k_input_info,sbx_input_info,queue_records); SAME(k_input_info,sbx_input_info,keys); SAME(k_input_info,sbx_input_info,axes); SAME(k_input_info,sbx_input_info,axis_min); SAME(k_input_info,sbx_input_info,axis_max);
+SIZE(k_input_state,sbx_input_state); SAME(k_input_state,sbx_input_state,keys); SAME(k_input_state,sbx_input_state,axes);
 _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI version");
 #ifdef __arm__
 #include <sandbox/syscall.h>
@@ -21,6 +27,7 @@ _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI versi
 int32_t use_all(uint64_t fd,char *b) {
  uint64_t n,f; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
  s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd); void *a; s|=sbx_fb_map(fd,4096,&a);
+ sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
  if(s==-1) sbx_exit(1);
  return s;
 }

@@ -2,6 +2,8 @@
 #include "kernel.h"
 #include "fb.h"
 #include "os.h"
+#include "clock.h"
+#include "input.h"
 void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
@@ -36,6 +38,8 @@ void kernel_main(void) {
  }
  /* M1 probes: HDMI framebuffer and read-only assets. Neither touches USB,
     the panel or any card sector; failures are logged, never fatal. */
+ /* Slice 3: the synthetic input device (USB KEY/AXIS), present from boot. */
+ input_init();boot_note("INPUT /dev/input/event0 synthetic (USB KEY, AXIS)");
  watchdog_feed();fb_start();
  if(storage_ready)asset_probe();
  watchdog_feed();
@@ -49,7 +53,7 @@ void kernel_main(void) {
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  usb_task();protocol_task();os_task();
+  clock_us();usb_task();protocol_task();os_task();
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
    if(!os_running()&&os_start("/OS/DIAG.ELF"))log_line("OS none; recovery console (USB PUTF and RUN available)");

@@ -12,10 +12,11 @@
 #define SBX_ABI_MAJOR 1u
 #define SBX_ABI_MINOR 0u
 
-/* Call numbers (r7 on ARM32). Only the first calls have records here. */
+/* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
   SBX_CALL_QUERY = 0, SBX_CALL_OPEN = 1, SBX_CALL_READ = 2, SBX_CALL_WRITE = 3,
-  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_EXIT = 16
+  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_GETDENTS = 11,
+  SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17
 };
 
 /* Negative return values. */
@@ -49,6 +50,29 @@ enum {
 #define SBX_IOC_FB_QUERY SBX_IOC(1, 0)
 #define SBX_IOC_FB_PRESENT SBX_IOC(1, 1)
 #define SBX_FB_FORMAT_XRGB8888 1u /* 32-bit little-endian words 0x00RRGGBB */
+/* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
+#define SBX_IOC_INPUT_QUERY SBX_IOC(3, 0)
+#define SBX_IOC_INPUT_STATE SBX_IOC(3, 1) /* current state; also empties the queue */
+#define SBX_INPUT_SYNTHETIC 1u /* query flag: a synthetic source (USB KEY/AXIS commands) */
+/* Event types and codes follow the Linux input conventions (event-codes.rst). */
+#define SBX_EV_SYN 0u
+#define SBX_EV_KEY 1u
+#define SBX_EV_ABS 3u
+#define SBX_SYN_REPORT 0u
+#define SBX_SYN_DROPPED 3u /* events were lost: read the state, then go on */
+#define SBX_KEY_ESC 1u
+#define SBX_KEY_Q 16u
+#define SBX_KEY_ENTER 28u
+#define SBX_KEY_SPACE 57u
+#define SBX_KEY_UP 103u
+#define SBX_KEY_LEFT 105u
+#define SBX_KEY_RIGHT 106u
+#define SBX_KEY_DOWN 108u
+#define SBX_INPUT_KEYS 768u
+#define SBX_INPUT_AXES 32u
+/* getdents entry types */
+#define SBX_DT_FILE 1u
+#define SBX_DT_DIR 2u
 
 typedef struct sbx_header {
   uint32_t size, flags, reserved0, reserved1;
@@ -97,6 +121,36 @@ typedef struct sbx_mmap_rec {
   uint64_t address; /* out */
 } sbx_mmap_rec;
 
+typedef struct sbx_dirents_rec { /* getdents: whole sbx_dirent entries into buffer */
+  sbx_header h;
+  uint64_t fd, buffer, bytes;
+  uint64_t transferred; /* out; zero means no more entries */
+} sbx_dirents_rec;
+typedef struct sbx_dirent { /* followed by name_bytes of name (no NUL), padded so length is a multiple of 8 */
+  uint16_t length;
+  uint8_t type, name_bytes; /* SBX_DT_* */
+  uint32_t size; /* file bytes; 0 for a directory */
+} sbx_dirent;
+typedef struct sbx_health_rec { /* heartbeat; the first one is the readiness report */
+  sbx_header h;
+  uint64_t generation; /* sbx_startup.generation */
+  uint64_t sequence;   /* strictly increasing, from 1 */
+} sbx_health_rec;
+typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
+  uint64_t ns; /* monotonic nanoseconds since the kernel started */
+  uint16_t type, code;
+  int32_t value; /* key: 0 up, 1 down, 2 repeat; axis: position */
+} sbx_input_event;
+typedef struct sbx_input_info { /* SBX_IOC_INPUT_QUERY output */
+  sbx_header h;
+  uint64_t flags, instance, queue_records, keys, axes;
+  int64_t axis_min, axis_max;
+} sbx_input_info;
+typedef struct sbx_input_state { /* SBX_IOC_INPUT_STATE output */
+  sbx_header h;
+  uint64_t keys[SBX_INPUT_KEYS / 64]; /* bit (code % 64) of word (code / 64) is set while down */
+  int64_t axes[SBX_INPUT_AXES];
+} sbx_input_state;
 /* Read-only record whose address is in r0 at entry. Returning from the entry
    point ends the program with r0 as its exit status. */
 typedef struct sbx_startup {
@@ -135,6 +189,15 @@ SBX_CHECK(sbx_startup, 40);
 SBX_AT(sbx_startup, major, 4); SBX_AT(sbx_startup, minor, 6); SBX_AT(sbx_startup, generation, 8);
 SBX_AT(sbx_startup, trial, 12); SBX_AT(sbx_startup, image_bytes, 16); SBX_AT(sbx_startup, stack_bytes, 24);
 SBX_AT(sbx_startup, handles, 32);
+SBX_CHECK(sbx_dirents_rec, 48);
+SBX_AT(sbx_dirents_rec, fd, 16); SBX_AT(sbx_dirents_rec, buffer, 24); SBX_AT(sbx_dirents_rec, bytes, 32); SBX_AT(sbx_dirents_rec, transferred, 40);
+SBX_CHECK(sbx_dirent, 8); SBX_AT(sbx_dirent, type, 2); SBX_AT(sbx_dirent, name_bytes, 3); SBX_AT(sbx_dirent, size, 4);
+SBX_CHECK(sbx_health_rec, 32); SBX_AT(sbx_health_rec, generation, 16); SBX_AT(sbx_health_rec, sequence, 24);
+SBX_CHECK(sbx_input_event, 16); SBX_AT(sbx_input_event, type, 8); SBX_AT(sbx_input_event, code, 10); SBX_AT(sbx_input_event, value, 12);
+SBX_CHECK(sbx_input_info, 72);
+SBX_AT(sbx_input_info, flags, 16); SBX_AT(sbx_input_info, instance, 24); SBX_AT(sbx_input_info, queue_records, 32);
+SBX_AT(sbx_input_info, keys, 40); SBX_AT(sbx_input_info, axes, 48); SBX_AT(sbx_input_info, axis_min, 56); SBX_AT(sbx_input_info, axis_max, 64);
+SBX_CHECK(sbx_input_state, 368); SBX_AT(sbx_input_state, keys, 16); SBX_AT(sbx_input_state, axes, 112);
 #undef SBX_CHECK
 #undef SBX_AT
 #endif
