@@ -12,13 +12,15 @@ SIZE(k_ioctl,sbx_ioctl_rec); SAME(k_ioctl,sbx_ioctl_rec,fd); SAME(k_ioctl,sbx_io
 SIZE(k_exit,sbx_exit_rec); SAME(k_exit,sbx_exit_rec,status);
 SIZE(k_fb_mode,sbx_fb_mode); SAME(k_fb_mode,sbx_fb_mode,width); SAME(k_fb_mode,sbx_fb_mode,height); SAME(k_fb_mode,sbx_fb_mode,pitch); SAME(k_fb_mode,sbx_fb_mode,format); SAME(k_fb_mode,sbx_fb_mode,buffer_bytes);
 SIZE(k_fb_present,sbx_fb_present_rec); SAME(k_fb_present,sbx_fb_present_rec,x); SAME(k_fb_present,sbx_fb_present_rec,y); SAME(k_fb_present,sbx_fb_present_rec,width); SAME(k_fb_present,sbx_fb_present_rec,height);
+SIZE(k_mmap,sbx_mmap_rec); SAME(k_mmap,sbx_mmap_rec,fd); SAME(k_mmap,sbx_mmap_rec,offset); SAME(k_mmap,sbx_mmap_rec,length); SAME(k_mmap,sbx_mmap_rec,protection); SAME(k_mmap,sbx_mmap_rec,flags); SAME(k_mmap,sbx_mmap_rec,address);
+SIZE(k_startup,sbx_startup); SAME(k_startup,sbx_startup,size); SAME(k_startup,sbx_startup,major); SAME(k_startup,sbx_startup,minor); SAME(k_startup,sbx_startup,generation); SAME(k_startup,sbx_startup,trial); SAME(k_startup,sbx_startup,image_bytes); SAME(k_startup,sbx_startup,stack_bytes); SAME(k_startup,sbx_startup,handles);
 _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI version");
 #ifdef __arm__
 #include <sandbox/syscall.h>
 /* Every wrapper compiles to ARM-state svc code. */
 int32_t use_all(uint64_t fd,char *b) {
  uint64_t n,f; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
- s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd);
+ s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd); void *a; s|=sbx_fb_map(fd,4096,&a);
  if(s==-1) sbx_exit(1);
  return s;
 }
