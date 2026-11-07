@@ -85,22 +85,22 @@ def send_file(port,path,name):
     """PUTF: install one development file as /OS/<name>, or as /GAMES/<DIR>/<NAME>
     when name is GAMES/<DIR>/<NAME> (8.3, upper case; DIR without an extension)."""
     data=path.read_bytes()
-    if not (re.fullmatch(NAME83,name) or re.fullmatch(r'GAMES/[A-Z0-9_-]{1,8}/'+NAME83,name)): raise ValueError(f'{name!r} is not an upper-case 8.3 name or GAMES/<DIR>/<NAME>')
-    if not 0<len(data)<=512*1024: raise ValueError('file must be 1 byte to 512 KiB')
+    if not (re.fullmatch(NAME83,name) or re.fullmatch(r'(GAMES|APPS)/[A-Z0-9_-]{1,8}/'+NAME83,name)): raise ValueError(f'{name!r} is not an upper-case 8.3 name , GAMES/<DIR>/<NAME> or APPS/<DIR>/<NAME>')
+    if not 0<len(data)<=1024*1024: raise ValueError('file must be 1 byte to 1 MiB')
     print(handshake(port))
     port.send(f'PUTF {name} {len(data)} {zlib.crc32(data):08x} {hashlib.sha256(data).hexdigest()}\n'.encode())
     expect(port,'READY 1024',5)
     for offset in range(0,len(data),1024):
         block=data[offset:offset+1024];port.send(block)
         expect(port,'VERIFY' if offset+len(block)==len(data) else f'ACK {offset+len(block)}',10)
-    shown=f'/{name}' if '/' in name else f'/OS/{name}'
+    shown=f'/{name}' if name.startswith('GAMES/') else f'/OS/{name}'
     expect(port,f'OK file {shown} {len(data)}',120)
     print(f'Installed {shown} ({len(data)} bytes)');return 0
 
-def send_folder(port,folder,dir_name):
+def send_folder(port,folder,dir_name,root='GAMES'):
     """Install every file of a game folder as /GAMES/<DIR>/<NAME>, one PUTF each."""
     files=sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith('.'))
-    for p in files: send_file(port,p,f'GAMES/{dir_name}/{p.name.upper()}')
+    for p in files: send_file(port,p,f'{root}/{dir_name}/{p.name.upper()}')
     return 0
 
 # Synthetic input (KEY/AXIS commands): Linux key codes by name.
@@ -146,6 +146,7 @@ def main():
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
     p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
+    p=sub.add_parser('putapp',help='install an app folder as /OS/APPS/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('key',help='press keys on the synthetic /dev/input/event0: up down enter esc q, a code, or name:down / name:up')
     p.add_argument('keys',nargs='+');p.add_argument('--gap',type=float,default=0.3);p.add_argument('--seconds',type=float,default=2)
     p=sub.add_parser('axis',help='AXIS <code> <value> on the synthetic device');p.add_argument('code',type=int);p.add_argument('value',type=int)
@@ -156,6 +157,7 @@ def main():
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())
         if a.action=='run': return run_program(port,a.name.upper(),a.seconds)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
+        if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
         if a.action=='key': return send_keys(port,a.keys,a.gap,a.seconds)
         if a.action=='axis': return send_command(port,f'AXIS {a.code} {a.value}')
         if a.action=='input': return send_command(port,f'INPUT {a.state}')

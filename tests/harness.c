@@ -51,3 +51,12 @@ uint8_t *fb_setup(uint32_t order,int present) {
  fb0.width=640;fb0.height=480;fb0.depth=32;fb0.pitch=2700;fb0.bytes=sizeof(hw);fb0.pixel_order=order;
  memset(hw,0xaa,sizeof hw);fb_pixels=hw;return hw;
 }
+/* ABI 1.2 mode sets on the host: the fake buffer takes the mode (pitch padded
+   as the board's is), and palettes are kept for the tests to read. */
+uint32_t fb_palette[256],fb_mode_sets;
+int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
+ if(!fb_pixels) return -19;
+ uint32_t pitch=w*(d/8u)+60u; if(pitch*h>sizeof hw) return -5;
+ fb0.width=w;fb0.height=h;fb0.depth=d;fb0.pitch=pitch;memset(hw,0,sizeof hw);fb_mode_sets++;return 0;
+}
+int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb) {memcpy(fb_palette+first,rgb,count*4u);return 0;}

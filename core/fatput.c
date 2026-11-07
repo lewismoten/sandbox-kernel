@@ -1,5 +1,5 @@
-/* SPDX-License-Identifier: MIT; original restricted FAT32 writer for /OS and
- * /GAMES/<DIR> (development installs over USB PUTF).
+/* SPDX-License-Identifier: MIT; original restricted FAT32 writer for /OS,
+ * /OS/APPS/<DIR> and /GAMES/<DIR> (development installs over USB PUTF).
  * Order makes a power cut safe for every existing file: the new clusters
  * are free until the FAT links them, the directory entry switches to them
  * last, and only then is the old chain released. A cut can leak clusters
@@ -151,8 +151,9 @@ static int ensure_dir(uint32_t parent,bool top,const uint8_t name[11],uint32_t *
  if((r=write_entry(free_slot,name,0x10,d0,0))) return r;
  *dir=d0; return 0;
 }
-/* "NAME" is /OS/NAME; "GAMES/DIR/NAME" is /GAMES/DIR/NAME. Nothing else. */
-static int split(const char *path,uint8_t dirs[2][11],unsigned *ndirs,uint8_t nm[11]) {
+/* "NAME" is /OS/NAME; "GAMES/DIR/NAME" is /GAMES/DIR/NAME; "APPS/DIR/NAME"
+   is /OS/APPS/DIR/NAME (an app's folder). Nothing else. */
+static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm[11]) {
  static const uint8_t os_name[11]={'O','S',' ',' ',' ',' ',' ',' ',' ',' ',' '};
  char part[3][13]; unsigned n=0,k=0;
  for(const char *p=path;;p++) {
@@ -161,13 +162,14 @@ static int split(const char *path,uint8_t dirs[2][11],unsigned *ndirs,uint8_t nm
   part[n][k++]=*p;
  }
  if(n==1) {memcpy(dirs[0],os_name,11);*ndirs=1;return fatput_name(part[0],nm);}
- if(n!=3||strcmp(part[0],"GAMES")) return fail("PUT NAME",22);
- for(unsigned i=0;i<2;i++) {int r=fatput_name(part[i],dirs[i]); if(r) return r; for(const char *c=part[i];*c;c++) if(*c=='.') return fail("PUT NAME",22);}
- *ndirs=2; return fatput_name(part[2],nm);
+ if(n!=3||(strcmp(part[0],"GAMES")&&strcmp(part[0],"APPS"))) return fail("PUT NAME",22);
+ unsigned d=0; if(part[0][0]=='A') memcpy(dirs[d++],os_name,11); /* APPS lives in /OS */
+ for(unsigned i=0;i<2;i++,d++) {int r=fatput_name(part[i],dirs[d]); if(r) return r; for(const char *c=part[i];*c;c++) if(*c=='.') return fail("PUT NAME",22);}
+ *ndirs=d; return fatput_name(part[2],nm);
 }
-int fatput_check(const char *path) {uint8_t d[2][11],nm[11];unsigned n;return split(path,d,&n,nm);}
+int fatput_check(const char *path) {uint8_t d[3][11],nm[11];unsigned n;return split(path,d,&n,nm);}
 int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
- uint8_t nm[11],e[32],dirs[2][11]; unsigned ndirs;
+ uint8_t nm[11],e[32],dirs[3][11]; unsigned ndirs;
  int r=split(path,dirs,&ndirs,nm); if(r) return r;
  if(bytes>FATPUT_MAX) return fail("PUT SIZE",27);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);

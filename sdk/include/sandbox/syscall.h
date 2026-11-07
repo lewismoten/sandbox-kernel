@@ -67,6 +67,16 @@ static inline int32_t sbx_fb_present(uint64_t fb_fd, uint32_t x, uint32_t y, uin
   sbx_fb_present_rec p = {SBX_HEADER(sbx_fb_present_rec), x, y, w, h};
   return sbx_ioctl(fb_fd, SBX_IOC_FB_PRESENT, &p, sizeof p);
 }
+/* ABI 1.2: another screen mode (SBX_FB_*), then query it again for its pitch. */
+static inline int32_t sbx_fb_set_mode(uint64_t fb_fd, uint32_t w, uint32_t h, uint32_t format) {
+  sbx_fb_set_rec r = {SBX_HEADER(sbx_fb_set_rec), w, h, format};
+  return sbx_ioctl(fb_fd, SBX_IOC_FB_SET_MODE, &r, sizeof r);
+}
+/* ABI 1.2: palette entries for SBX_FB_INDEX8 (r is filled from rgb). */
+static inline int32_t sbx_fb_palette(uint64_t fb_fd, sbx_fb_palette_rec *r, uint32_t first, uint32_t count) {
+  r->h = (sbx_header)SBX_HEADER(sbx_fb_palette_rec); r->first = first; r->count = count;
+  return sbx_ioctl(fb_fd, SBX_IOC_FB_PALETTE, r, sizeof *r);
+}
 /* Map the open /dev/fb0 surface (read/write, shared); *address gets its start. */
 static inline int32_t sbx_fb_map(uint64_t fb_fd, uint64_t bytes, void **address) {
   sbx_mmap_rec r = {SBX_HEADER(sbx_mmap_rec), fb_fd, 0, bytes, SBX_PROT_READ | SBX_PROT_WRITE, SBX_MAP_SHARED, 0};

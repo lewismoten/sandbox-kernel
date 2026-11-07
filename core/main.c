@@ -41,7 +41,7 @@ void kernel_main(void) {
     the panel or any card sector; failures are logged, never fatal. */
  /* Slice 3: the synthetic input device (USB KEY/AXIS), present from boot. */
  input_init();boot_note("INPUT /dev/input/event0 synthetic (USB KEY, AXIS)");
- watchdog_feed();fb_start();
+ watchdog_feed();cpu_speed();fb_start();
  if(storage_ready)asset_probe();
  watchdog_feed();
  /* M1: the OS program starts 10 s after boot, so a program that could take

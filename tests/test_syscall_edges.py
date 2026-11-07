@@ -271,7 +271,7 @@ class SyscallEdges(m1.Work):
         _, fb = self.open('/dev/fb0', 2)
         _, log = self.open('/dev/log', 1)
         _, asset = self.open('/sd/S512.BIN')
-        for fd, request in ((fb, 0), (fb, U64_MAX), (fb, 0x10002),
+        for fd, request in ((fb, 0), (fb, U64_MAX), (fb, 0x10004),
                             (log, 0x10000), (asset, 0x10000)):
             self.reject(5, self.hdr(48) + struct.pack('<4Q', fd, request, U64_MAX, 56), m1.ENOTTY)
 

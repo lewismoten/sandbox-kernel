@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 1u /* 1.1: clock_gettime (13) and sleep_until (14) */
+#define SBX_ABI_MINOR 2u /* 1.1: clock_gettime (13) and sleep_until (14); 1.2: fb modes and palettes */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -49,6 +49,11 @@ enum {
 #define SBX_IOC(class_, op) ((uint32_t)(class_) << 16 | (uint32_t)(op))
 #define SBX_IOC_FB_QUERY SBX_IOC(1, 0)
 #define SBX_IOC_FB_PRESENT SBX_IOC(1, 1)
+#define SBX_IOC_FB_SET_MODE SBX_IOC(1, 2) /* 1.2: sbx_fb_set_rec; the firmware scales the mode to HDMI */
+#define SBX_IOC_FB_PALETTE SBX_IOC(1, 3)  /* 1.2: sbx_fb_palette_rec, for SBX_FB_INDEX8 */
+#define SBX_FB_XRGB8888 1u /* sbx_fb_mode.format: 32-bit words 0x00RRGGBB */
+#define SBX_FB_RGB565 2u   /* 16-bit words rrrrrggggggbbbbb */
+#define SBX_FB_INDEX8 3u   /* bytes, colors from the palette */
 #define SBX_FB_FORMAT_XRGB8888 1u /* 32-bit little-endian words 0x00RRGGBB */
 /* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
 #define SBX_IOC_INPUT_QUERY SBX_IOC(3, 0)
@@ -114,6 +119,17 @@ typedef struct sbx_fb_present_rec { /* copy this rectangle of the mapped surface
   sbx_header h;
   uint64_t x, y, width, height;
 } sbx_fb_present_rec;
+
+typedef struct sbx_fb_set_rec { /* SBX_IOC_FB_SET_MODE: width (a multiple of 4) x height x format, inside the surface */
+  sbx_header h;
+  uint64_t width, height, format;
+} sbx_fb_set_rec;
+
+typedef struct sbx_fb_palette_rec { /* SBX_IOC_FB_PALETTE: count entries from first, 0x00RRGGBB */
+  sbx_header h;
+  uint64_t first, count;
+  uint32_t rgb[256];
+} sbx_fb_palette_rec;
 
 typedef struct sbx_mmap_rec {
   sbx_header h;
@@ -190,6 +206,8 @@ SBX_CHECK(sbx_fb_mode, 56);
 SBX_AT(sbx_fb_mode, width, 16); SBX_AT(sbx_fb_mode, height, 24); SBX_AT(sbx_fb_mode, pitch, 32);
 SBX_AT(sbx_fb_mode, format, 40); SBX_AT(sbx_fb_mode, buffer_bytes, 48);
 SBX_CHECK(sbx_fb_present_rec, 48);
+SBX_CHECK(sbx_fb_set_rec, 40);
+SBX_CHECK(sbx_fb_palette_rec, 1056);
 SBX_AT(sbx_fb_present_rec, x, 16); SBX_AT(sbx_fb_present_rec, y, 24);
 SBX_AT(sbx_fb_present_rec, width, 32); SBX_AT(sbx_fb_present_rec, height, 40);
 SBX_CHECK(sbx_mmap_rec, 64);

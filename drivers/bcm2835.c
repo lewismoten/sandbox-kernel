@@ -104,3 +104,22 @@ void mmu_init(void) {
  __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(c)); c|=0x1005|(1u<<23); /* XP extended tables */
  __asm__ volatile("mcr p15,0,%0,c1,c0,0\n mcr p15,0,%1,c7,c5,4"::"r"(c),"r"(z):"memory");
 }
+/* The firmware starts the ARM below its rated clock and there is no governor
+   here: ask for the maximum (clock id 3). Branch prediction (SCTLR.Z) is safe
+   because user_enter already flushes the predictor when the tables change. */
+void cpu_speed(void) {
+ uint32_t was[2]={3,0},max[2]={3,0},set[3]={3,0,0};
+ property(0x30002,was,2);property(0x30004,max,2);
+ if(max[1]) {set[1]=max[1];property(0x38002,set,3);}
+ uint32_t c; __asm__ volatile("mrc p15,0,%0,c1,c0,0":"=r"(c)); c|=1u<<11; __asm__ volatile("mcr p15,0,%0,c1,c0,0"::"r"(c):"memory");
+ uint32_t now[2]={3,0};property(0x30002,now,2);
+ char line[80],*p=line,t[12];
+ const char *a="CPU arm clock ";while(*a)*p++=*a++;
+ number(t,was[1]/1000000u);for(char *q=t;*q;)*p++=*q++;
+ a=" MHz, now ";while(*a)*p++=*a++;
+ number(t,now[1]/1000000u);for(char *q=t;*q;)*p++=*q++;
+ a=" MHz (max ";while(*a)*p++=*a++;
+ number(t,max[1]/1000000u);for(char *q=t;*q;)*p++=*q++;
+ a=" MHz), branch prediction on";while(*a)*p++=*a++;*p=0;
+ boot_note(line);
+}

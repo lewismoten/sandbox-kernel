@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 1u
+#define K_ABI_MINOR 2u
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};
@@ -14,6 +14,8 @@ struct k_ioctl {struct k_header h; uint64_t fd,request,buffer,bytes;};
 struct k_exit {struct k_header h; int64_t status;};
 struct k_fb_mode {struct k_header h; uint64_t width,height,pitch,format,buffer_bytes;};
 struct k_fb_present {struct k_header h; uint64_t x,y,width,height;};
+struct k_fb_set {struct k_header h; uint64_t width,height,format;}; /* ABI 1.2: format 1 XRGB8888, 2 RGB565, 3 8-bit indices */
+struct k_fb_palette {struct k_header h; uint64_t first,count; uint32_t rgb[256];}; /* ABI 1.2: 0x00RRGGBB */
 struct k_mmap {struct k_header h; uint64_t fd,offset,length,protection,flags,address;};
 struct k_health {struct k_header h; uint64_t generation,sequence;};
 struct k_clock {struct k_header h; uint64_t clock,ns;}; /* clock_gettime (13): clock 0 is monotonic; ns out */
@@ -25,7 +27,7 @@ struct k_dirent {uint16_t length; uint8_t type,name_bytes; uint32_t size;}; /* t
 struct k_startup {uint32_t size; uint16_t major,minor; uint32_t generation,trial; uint64_t image_bytes,stack_bytes,handles;};
 #define K_SIZE(t,n) _Static_assert(sizeof(struct t)==(n),#t)
 K_SIZE(k_header,16); K_SIZE(k_open,56); K_SIZE(k_io,48); K_SIZE(k_close,24);
-K_SIZE(k_ioctl,48); K_SIZE(k_exit,24); K_SIZE(k_fb_mode,56); K_SIZE(k_fb_present,48); K_SIZE(k_mmap,64); K_SIZE(k_startup,40);
+K_SIZE(k_ioctl,48); K_SIZE(k_exit,24); K_SIZE(k_fb_mode,56); K_SIZE(k_fb_present,48); K_SIZE(k_fb_set,40); K_SIZE(k_fb_palette,1056); K_SIZE(k_mmap,64); K_SIZE(k_startup,40);
 K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_dirent,8);
 _Static_assert(offsetof(struct k_open,fd)==48&&offsetof(struct k_io,transferred)==40&&offsetof(struct k_fb_mode,buffer_bytes)==48,"tail fields");
 #undef K_SIZE
