@@ -8,7 +8,11 @@
 #include <stdbool.h>
 struct uframe {uint32_t r[13],sp,lr,pc,cpsr;}; /* layout used by arch/armv6/start.S */
 enum {OS_SVC=1,OS_IRQ=2,OS_UNDEF=3,OS_PABT=4,OS_DABT=5};
-#define OS_STALL_US 2000000u /* a program that makes no call for 2 s is stopped */
+/* Heartbeat (docs/design.md): the first health call is the readiness report
+   and must come within 10 s of the start; after it, health calls at least
+   every 2 s. Missing either is a fault. Other calls do not count. */
+#define OS_READY_US 10000000u
+#define OS_HEARTBEAT_US 2000000u
 #define OS_FAULT_WINDOW_US 60000000ull
 extern struct uframe os_frame;
 extern const char *os_fail;

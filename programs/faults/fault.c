@@ -6,9 +6,10 @@ static void say(uint64_t fd, const char *s) {unsigned n = 0; while (s[n]) n++; s
 #if FAULT == 6
 static uint32_t data_word = 0xe12fff1eu; /* "bx lr", in a never-executable page */
 #endif
-int main(void) {
+int main(const sbx_startup *start) {
   uint64_t log;
   if (sbx_open("/dev/log", 8, SBX_O_WRONLY, &log)) return 3;
+  (void)start;
 #if FAULT == 1
   say(log, "FAULT privileged instruction (write SCTLR)");
   __asm__ volatile("mcr p15, 0, %0, c1, c0, 0" ::"r"(0));
@@ -16,7 +17,8 @@ int main(void) {
   say(log, "FAULT write to text");
   *(volatile uint32_t *)(uintptr_t)&main = 0;
 #elif FAULT == 3
-  say(log, "FAULT infinite loop");
+  say(log, "FAULT infinite loop after one heartbeat");
+  sbx_health(start->generation, 1);
   for (;;) __asm__ volatile("");
 #elif FAULT == 4
   say(log, "FAULT read kernel memory");

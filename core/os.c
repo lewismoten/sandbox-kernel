@@ -4,6 +4,7 @@
 #include "assets.h"
 #include "abi.h"
 #include "elf.h"
+#include "clock.h"
 #include "fb.h"
 #include "os.h"
 #include "sys.h"
@@ -15,13 +16,13 @@ struct os_policy os_policy_state;
 uint32_t os_starts,os_stops;
 extern uint32_t boot_generation,boot_trial;
 static bool running;
-static uint64_t clock_us; static uint32_t clock_last,progress_calls; static uint64_t progress_us;
+static uint64_t start_us,health_us; static uint32_t healths; static bool ready;
 static uint8_t file[ELF_MAX_FILE] __attribute__((aligned(8)));
 bool os_running(void) {return running;}
 static void append(char **p,const char *s) {while(*s)*(*p)++=*s++; **p=0;}
 static void append_n(char **p,uint32_t n) {char t[12];number(t,n);append(p,t);}
 static void append_hex(char **p,uint32_t n) {append(p,"0x");for(int i=28;i>=0;i-=4)*(*p)++="0123456789abcdef"[(n>>i)&15];**p=0;}
-static uint64_t now(void) {uint32_t t=micros();clock_us+=(uint32_t)(t-clock_last);clock_last=t;return clock_us;}
+static uint64_t now(void) {return clock_us();}
 static void sync_caches(void) {
 #ifndef HOST_TEST
  uint32_t z=0; /* write-through D-cache: drain; then drop stale instructions and branch targets */
@@ -58,7 +59,7 @@ int os_start(const char *path) {
  sync_caches();
  memset(&os_frame,0,sizeof os_frame);
  os_frame.r[0]=U_START_VA;os_frame.sp=U_STACK_TOP;os_frame.lr=U_EXIT_VA;os_frame.pc=plan.entry;os_frame.cpsr=0x10; /* User, ARM, IRQ on */
- progress_us=now();progress_calls=sys_calls;running=true;os_starts++;
+ start_us=health_us=now();healths=0;ready=false;running=true;os_starts++;
  char line[80],*p=line; append(&p,"OS start ");append(&p,os_path);append(&p," entry ");append_hex(&p,plan.entry);append(&p," pages ");append_n(&p,plan.bytes/4096);log_line(line);
  return 0;
 }
@@ -87,24 +88,31 @@ static void fault(const char *kind,uint32_t fsr,uint32_t far) {
  append(&p," fsr ");append_hex(&p,fsr);append(&p," addr ");append_hex(&p,far);log_line(line);
  stop(true,kind,0);
 }
+/* The heartbeat rules; true if the program was stopped for missing one. */
+static bool overdue(uint64_t t) {
+ if(sys_healths!=healths) {
+  healths=sys_healths;health_us=t;
+  if(!ready) {ready=true;char line[80],*p=line;append(&p,"OS ready ");append(&p,os_path);append(&p," after ");append_n(&p,(uint32_t)(t-start_us)/1000u);append(&p," ms");log_line(line);}
+ }
+ if(!ready&&t-start_us>=OS_READY_US) {fault("no readiness report in 10 s",0,os_frame.pc);return true;}
+ if(ready&&t-health_us>=OS_HEARTBEAT_US) {fault("heartbeat missed 2 s",0,os_frame.pc);return true;}
+ return false;
+}
 void os_handle(unsigned reason,uint32_t fsr,uint32_t far) {
  if(!running) return;
  uint64_t t=now();
- if(sys_calls!=progress_calls) {progress_calls=sys_calls;progress_us=t;}
  switch(reason) {
   case OS_SVC: {
    uint32_t insn=0;
    if(os_frame.cpsr&0x20u) {fault("thumb",0,os_frame.pc);return;}
    if(us_copy_in(&insn,(uint64_t)os_frame.pc-4u,4)) {fault("svc fetch",0,os_frame.pc-4u);return;}
-   if((insn&0x0fffffffu)!=0x0f000000u) {os_frame.r[0]=(uint32_t)-38;return;} /* svc with a nonzero number */
+   if((insn&0x0fffffffu)!=0x0f000000u) {os_frame.r[0]=(uint32_t)-38;overdue(t);return;} /* svc with a nonzero number */
    int32_t r=sys_call(os_frame.r);
-   progress_calls=sys_calls;progress_us=t;
    if(r==SYS_EXITED) {if(sys_exit_status) stop(true,NULL,sys_exit_status); else stop(false,NULL,0);return;}
-   os_frame.r[0]=(uint32_t)r;return;
+   os_frame.r[0]=(uint32_t)r;overdue(t);return;
   }
   case OS_IRQ:
-   if(t-progress_us>=OS_STALL_US) {fault("stalled 2 s without a call",0,os_frame.pc);}
-   return;
+   overdue(t);return;
   case OS_PABT:
    if(os_frame.pc==U_EXIT_VA) { /* returned from the entry point */
     int32_t s=(int32_t)os_frame.r[0]; sys_exit_status=s;
