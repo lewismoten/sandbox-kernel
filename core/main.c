@@ -21,7 +21,7 @@ void kernel_main(void) {
  number(num,boot_generation);log_line("Generation:");log_line(num);
  watchdog_feed();
  storage_ready=store_init();
- if(!storage_ready)error("SD/FAT unavailable");
+ if(!storage_ready) {log_line("SD/FAT unavailable, step:");error(store_fail);if(strcmp(property_fail,"none"))log_line(property_fail);}
  else {
   updates_ready=verify_confirmed();
   if(!updates_ready)error("No verified fallback");

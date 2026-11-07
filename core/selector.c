@@ -5,7 +5,7 @@ void selector_main(void) {
  uart_init(); uart_puts("sandbox selector M0\r\n");
  uint32_t ram[2]={0,0};
  if(!property(0x10005,ram,2)||ram[0]||ram[1]<128*1024*1024u) { uart_puts("Unsupported ARM RAM; card-reader rescue\r\n"); for(;;){} }
- if(!store_init()) { uart_puts("SD/FAT invalid; card-reader rescue\r\n"); for(;;){} }
+ if(!store_init()) { uart_puts("SD/FAT invalid at ");uart_puts(store_fail);uart_puts("; card-reader rescue\r\n"); for(;;){} }
  uint32_t slot=0,trial=0,generation=0,bytes;
  uint8_t *target=(uint8_t *)(RUNTIME_BASE-256);
  if(control[0]==CONTROL_MAGIC) {

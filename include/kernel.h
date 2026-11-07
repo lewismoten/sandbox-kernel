@@ -34,8 +34,11 @@ void watchdog_feed(void);
 void reboot(void) __attribute__((noreturn));
 void panic(unsigned kind) __attribute__((noreturn));
 bool property(uint32_t tag,uint32_t *values,unsigned words);
+extern const char *property_fail; /* why the last property call failed */
 void service_io(void);
 bool sd_init(void);
+extern const char *sd_fail; /* short code of the failing init step */
+extern const char *store_fail; /* short code of the failing store_init step */
 bool sd_read(uint32_t lba,void *data);
 bool sd_write(uint32_t lba,const void *data);
 uint32_t sd_sectors(void);

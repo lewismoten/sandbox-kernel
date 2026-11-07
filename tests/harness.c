@@ -8,6 +8,7 @@ static uint8_t input[MAX_IMAGE+1024];static unsigned in_r,in_w;
 static char output[8192];static unsigned out;
 bool storage_ready,updates_ready;uint32_t boot_slot,boot_generation=1;
 const char *last_error="none";
+const char *sd_fail="none";
 uint32_t micros(void) {return now;}
 void advance(uint32_t us) {now+=us;}
 uint32_t write_count(void) {return writes;}
