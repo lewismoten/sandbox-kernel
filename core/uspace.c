@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT; original ARMv6 user address space builder.
  * Descriptor bits from the ARM1176JZF-S TRM (DDI 0301H, section 6.11, XP=1):
  * coarse L1 = base|01; small page = base|AP|C|1x with bit 0 = XN,
- * AP[1:0] at bits 5:4 and APX at bit 9. Every user page is TEX=000 C=1 B=0
- * (write-through), the same attributes as the kernel's alias of the pool. */
+ * AP[1:0] at bits 5:4 and APX at bit 9. Every user page is TEX=000 C=1 B=1
+ * (write-back; write-through until 2026-11-07, which made stores, and so the
+ * JS runtime and drawing, about 1.6x slower). The kernel's alias of the pool
+ * stays write-through; the ARM1176 D-cache is physically tagged, so both
+ * views hit the same lines, and nothing here uses DMA. */
 #include "kernel.h"
 #include "uspace.h"
 struct uregion us_regions[U_REGIONS];
@@ -35,7 +38,7 @@ int us_reset(const uint32_t *k) {
  us_fail="none";return 0;
 }
 static uint32_t page_bits(uint32_t prot) {
- uint32_t d=0x2u|0x8u; /* small page, C=1 B=0 TEX=000 */
+ uint32_t d=0x2u|0x8u|0x4u; /* small page, C=1 B=1 TEX=000: write-back (the D-cache is physically tagged, so the kernel's write-through alias sees the same lines) */
  if(prot&U_W) d|=0x30u; else d|=0x200u|0x20u; /* AP=11 full; else APX=1 AP=10 read-only for both */
  if((prot&U_W)||!(prot&U_X)) d|=1u; /* XN: data is never executable */
  return d;
