@@ -18,7 +18,7 @@ def main():
     record=control_record(image)
     (dest/'BOOTCT0.BIN').write_bytes(record+bytes(4096-512))
     (dest/'BOOTCT1.BIN').write_bytes(record+bytes(4096-512))
-    (dest/'config.txt').write_text('kernel=kernel.img\nkernel_address=0x8000\narm_64bit=0\ndevice_tree=\ngpu_mem=32\ncore_freq=250\ncore_freq_min=250\nforce_turbo=0\nenable_uart=1\ninit_uart_clock=3000000\n')
+    (dest/'config.txt').write_text('kernel=kernel.img\nkernel_address=0x8000\narm_64bit=0\ndevice_tree=\ngpu_mem=32\ncore_freq=250\ncore_freq_min=250\nforce_turbo=0\nenable_uart=1\ninit_uart_clock=3000000\nhdmi_force_hotplug=1\nhdmi_group=2\nhdmi_mode=4\n')  # hdmi_*: force HDMI on at 640x480 60 Hz (DMT mode 4) even when no display is detected at power-on
     # Full notices at the root; .txt names fit 8.3.
     shutil.copyfile(ROOT/'LICENSE',dest/'MIT.TXT')
     shutil.copyfile(ROOT/'licenses/TinyUSB.txt',dest/'TINYUSB.TXT')
