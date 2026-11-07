@@ -152,7 +152,15 @@ static int ensure_dir(uint32_t parent,bool top,const uint8_t name[11],uint32_t *
  *dir=d0; return 0;
 }
 /* "NAME" is /OS/NAME; "GAMES/DIR/NAME" is /GAMES/DIR/NAME; "APPS/DIR/NAME"
-   is /OS/APPS/DIR/NAME (an app's folder). Nothing else. */
+   is /OS/APPS/DIR/NAME (an app's folder); "GAMES/NAME.GMP" and
+   "POCKET/NAME.GMP" are a packed game (or its further volume, NAME.G01 to
+   NAME.G99) in /GAMES or /POCKET, the Pocket Player's folder, and
+   "GAMES/LIBRARY.JSL" the library index. Nothing else. */
+static bool pack_name(const char *s) {
+ const char *dot=0; for(const char *c=s;*c;c++) if(*c=='.') dot=c;
+ if(!dot||dot==s||strlen(dot)!=4||dot[1]!='G') return false;
+ return (dot[2]=='M'&&dot[3]=='P')||(dot[2]>='0'&&dot[2]<='9'&&dot[3]>='0'&&dot[3]<='9'&&(dot[2]!='0'||dot[3]!='0'));
+}
 static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm[11]) {
  static const uint8_t os_name[11]={'O','S',' ',' ',' ',' ',' ',' ',' ',' ',' '};
  char part[3][13]; unsigned n=0,k=0;
@@ -162,6 +170,10 @@ static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm
   part[n][k++]=*p;
  }
  if(n==1) {memcpy(dirs[0],os_name,11);*ndirs=1;return fatput_name(part[0],nm);}
+ if(n==2&&(!strcmp(part[0],"GAMES")||!strcmp(part[0],"POCKET"))&&(pack_name(part[1])||(part[0][0]=='G'&&!strcmp(part[1],"LIBRARY.JSL")))) {
+  int r=fatput_name(part[0],dirs[0]); if(r) return r;
+  *ndirs=1; return fatput_name(part[1],nm);
+ }
  if(n!=3||(strcmp(part[0],"GAMES")&&strcmp(part[0],"APPS"))) return fail("PUT NAME",22);
  unsigned d=0; if(part[0][0]=='A') memcpy(dirs[d++],os_name,11); /* APPS lives in /OS */
  for(unsigned i=0;i<2;i++,d++) {int r=fatput_name(part[i],dirs[d]); if(r) return r; for(const char *c=part[i];*c;c++) if(*c=='.') return fail("PUT NAME",22);}
