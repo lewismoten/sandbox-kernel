@@ -358,6 +358,7 @@ class Supervisor(Calls):
         want=zlib.crc32(b''.join(bytes(px[i+j] for j in range(3))+b'\0' for i in range(0,len(px),4)))
         f=self.frame();f.pc=EXIT_VA;f.r[0]=0;self.c.take_log();self.c.os_handle(4,0,EXIT_VA)
         self.assertIn(f'OS screen crc {want}'.encode(),self.c.take_log())
+        self.assertEqual(C.string_at(self.hw,4),bytes(px[:3])+b'\0')   # a clean exit leaves the program's last frame
     def test_rejected_files(self):
         self.c.os_handle(5,0,0);self.c.os_handle(5,0,0);self.c.close_disk()
         bad={'WX.ELF':elf([(IMAGE,7,TEXT,16)]),'E64.ELF':elf([(IMAGE,5,TEXT,16)],ident=b'\x7fELF\x02\x01\x01'+bytes(9))}

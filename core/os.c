@@ -70,7 +70,7 @@ static void stop(bool fault,const char *why,int64_t status) {
   char t[48],*q=t; append(&q,"OS screen crc ");append_n(&q,~c);log_line(t);
  }
  sys_reset();
- if(fb_pixels) fb_pattern(&fb0,fb_pixels); /* HDMI back to the kernel's own screen */
+ if(fault&&fb_pixels) fb_pattern(&fb0,fb_pixels); /* a fault puts the kernel's own screen back; a clean exit leaves the last frame */
  char line[80],*p=line;
  if(!fault) {append(&p,"OS exit 0 ");append(&p,os_path);append(&p,"; recovery console");log_line(line);return;}
  if(!why) {append(&p,"OS exit ");if(status<0){append(&p,"-");status=-status;}append_n(&p,(uint32_t)status);append(&p," counts as a fault");log_line(line);}
