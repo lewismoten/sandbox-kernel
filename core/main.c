@@ -39,14 +39,21 @@ void kernel_main(void) {
  watchdog_feed();fb_start();
  if(storage_ready)asset_probe();
  watchdog_feed();
- /* M1: the OS program. A missing or rejected file keeps the recovery console. */
- if(storage_ready&&os_start("/OS/DIAG.ELF"))log_line("OS none; recovery console (USB PUTF and RUN available)");
+ /* M1: the OS program starts 10 s after boot, so a program that could take
+    the kernel down can still be replaced over USB (PUTF) before it runs.
+    A missing or rejected file keeps the recovery console. */
+ bool autostart=storage_ready;
+ if(autostart)log_line("OS autostart in 10 s: /OS/DIAG.ELF");
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
   usb_task();protocol_task();os_task();
+  if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
+   autostart=false;
+   if(!os_running()&&os_start("/OS/DIAG.ELF"))log_line("OS none; recovery console (USB PUTF and RUN available)");
+  }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
   panel_task(usb_state(),seconds);
   if(expired(start,100000)) {
