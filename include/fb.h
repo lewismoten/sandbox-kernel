@@ -3,9 +3,15 @@
  * tested; fb_start (drivers/fb_hw.c) talks to the board. */
 #pragma once
 #include <stdint.h>
+/* The mode every program starts in (ABI 1.0 programs know no other). */
 #define FB_WIDTH 640u
 #define FB_HEIGHT 480u
 #define FB_DEPTH 32u
+/* The kernel's own screen (the test pattern at boot and after a fault):
+   16:9, so a 1080p monitor shows it doubled and edge to edge. */
+#define FB_HOME_WIDTH 960u
+#define FB_HOME_HEIGHT 540u
+#define FB_HOME_DEPTH 32u
 #define FB_MESSAGE_WORDS 36u
 /* The program's surface is this size in every mode (640x480 at 32 bpp); a
    mode set with SBX_IOC_FB_SET_MODE must fit in it (960x540 at 16 bpp does). */
@@ -33,11 +39,14 @@ uint32_t fb_pattern_pixel(const struct fb_info *fb,uint32_t x,uint32_t y);
    first, each 0x00RRGGBB, sent as R,G,B,A bytes; returns the message words. */
 uint32_t fb_palette_request(uint32_t m[FB_PALETTE_WORDS],uint32_t first,uint32_t count,const uint32_t *rgb);
 /* Another mode from the firmware (depth 8, 16 or 32; it scales the buffer to
-   the HDMI mode), mapped and cleared: 0 or a negative errno. fb_restore puts
-   640x480x32 back when the mode differs (a program's end). */
+   the HDMI mode), mapped and cleared: 0 or a negative errno. fb_program_mode
+   puts 640x480x32 up for a program's start (when it fails, the screen is
+   given up: fb_pixels NULL, so no program writes past its surface);
+   fb_home puts the kernel's own mode and test pattern back (after a fault). */
 int fb_set_mode(uint32_t width,uint32_t height,uint32_t depth);
 int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb);
-void fb_restore(void);
+void fb_program_mode(void);
+void fb_home(void);
 extern uint32_t fb_mode_us; /* how long the last mode set took */
 extern const char *fb_fail;
 extern struct fb_info fb0;

@@ -55,6 +55,14 @@ void fb_pattern(const struct fb_info *f,uint8_t *pixels) {
   for(uint32_t x=0;x<f->width;x++) row[x]=fb_pattern_pixel(f,x,y);
  }
 }
-/* Mode sets: the defaults the kernel starts in, kept for fb_restore. */
+/* Mode sets: a program's start mode, and the kernel's own screen. */
 uint32_t fb_mode_us;
-void fb_restore(void) {if(fb0.width!=FB_WIDTH||fb0.height!=FB_HEIGHT||fb0.depth!=FB_DEPTH) fb_set_mode(FB_WIDTH,FB_HEIGHT,FB_DEPTH);}
+static bool fb_is(uint32_t w,uint32_t h,uint32_t d) {return fb0.width==w&&fb0.height==h&&fb0.depth==d;}
+void fb_program_mode(void) {
+ if(fb_pixels&&!fb_is(FB_WIDTH,FB_HEIGHT,FB_DEPTH)&&fb_set_mode(FB_WIDTH,FB_HEIGHT,FB_DEPTH)) {fb_pixels=NULL;log_line("FB program mode refused; screen off");}
+}
+void fb_home(void) {
+ if(!fb_pixels) return;
+ if(!fb_is(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)&&fb_set_mode(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)) return; /* the mode it has keeps the pattern */
+ fb_pattern(&fb0,fb_pixels);
+}

@@ -45,7 +45,7 @@ void watchdog_feed(void) {}
 static char logs[1<<16];static unsigned logn;
 void log_line(const char *s) {size_t n=strlen(s);if(logn+n+2>=sizeof(logs))logn=0;memcpy(logs+logn,s,n);logn+=(unsigned)n;logs[logn++]='\n';logs[logn]=0;}
 const char *take_log(void) {static char copy[1<<16];memcpy(copy,logs,logn+1);logn=0;logs[0]=0;return copy;}
-static uint8_t hw[2700*480];
+static uint8_t hw[3900*540]; /* the kernel's 960x540x32 screen, pitch padded */
 uint8_t *fb_setup(uint32_t order,int present) {
  memset(&fb0,0,sizeof fb0);fb_pixels=NULL;if(!present)return NULL;
  fb0.width=640;fb0.height=480;fb0.depth=32;fb0.pitch=2700;fb0.bytes=sizeof(hw);fb0.pixel_order=order;

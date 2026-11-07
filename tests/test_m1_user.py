@@ -321,8 +321,11 @@ class Calls(CallsBase):
         for first,count in ((0,0),(255,2),(256,1)):
             poke(self.c,q,self.hdr(1056)+struct.pack('<2Q',first,count)+bytes(1024))
             with self.subTest((first,count)): self.assertEqual(self.ioctl(fb,0x10003,q,1056),-EINVAL)
-        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # the program ends: 640x480x32 again
-        f=C.c_uint32*3;self.assertEqual(tuple(f.from_address(C.addressof(C.c_uint32.in_dll(self.c,'fb0')))),(640,480,32))
+        f=C.c_uint32*3;mode=lambda:tuple(f.from_address(C.addressof(C.c_uint32.in_dll(self.c,'fb0'))))
+        self.c.os_handle(5,0,0);self.assertEqual(mode(),(640,480,32))   # a fault: the restart starts in 640x480x32
+        self.c.os_handle(5,0,0);self.assertEqual(mode(),(960,540,32))   # it stops: the kernel's own 16:9 screen ...
+        self.assertEqual(C.string_at(self.hw,4),b'\xff\xff\xff\x00')                  # ... with its test pattern (the white border)
+        self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'),0);self.assertEqual(mode(),(640,480,32))   # the next program starts in 640x480x32
     def test_rgb_and_no_display(self):
         self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # end the program from setUp
         self.c.close_disk();self.card(order=1)   # firmware kept RGB bytes: present swaps
