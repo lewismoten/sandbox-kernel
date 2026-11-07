@@ -7,7 +7,7 @@ CDC, and take verified A/B kernel updates with trial, confirmation and automatic
 fallback, all on the board. M1 adds the HDMI framebuffer, read-only FAT32 assets,
 the SDK, a User-mode OS program loaded from the card with fault recovery, an
 input event queue (synthetic USB source first) and a health heartbeat
-([docs/m1.md](docs/m1.md)).
+([docs/m1.md](docs/m1.md)). [docs/js-spike.md](docs/js-spike.md) measures a JavaScript layer for building your own OS shell on it (2026-11-07).
 
 The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
 Later ports target Pi 1, 2, 3, 4, and 5 through separate board backends.

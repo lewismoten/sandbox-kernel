@@ -17,6 +17,7 @@ AI models used on this repository:
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 2: User mode entry and exceptions, user page tables, ELF32 checks and fuzz tests, system-call dispatcher, OS supervisor and restart policy, /OS file install over USB, SDK crt0 and link map, DIAG and fault programs, board runs (2026-11-07) |
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 3: input event queue and synthetic USB source, getdents, health heartbeat, PUTF into /GAMES folders with folder growth, host tests, board runs (2026-11-07) |
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 4: clock_gettime and sleep_until (ABI 1.1), SDK records and wrappers, host tests, board run (2026-11-07) |
+| Claude Sonnet 5.5 (Anthropic) | Claude Code | JS spike: PUTF to 1 MiB and /OS/APPS folders, ABI 1.2 screen modes and palettes, the boot clock, branch prediction and write-back user pages, host tests, board benchmarks, docs/js-spike.md (2026-11-07) |
 
 The initial design was documentation only. M0 now fetches the pinned dependencies
 listed below into gitignored third_party/ and generates boot artifacts. The dependency
