@@ -124,10 +124,18 @@ void os_handle(unsigned reason,uint32_t fsr,uint32_t far) {
   default: fault("unknown exception",reason,0);return;
  }
 }
+/* A program waiting in sleep_until is not entered until its deadline; the
+   heartbeat rules still run while it waits. True: leave it asleep this pass. */
+bool os_asleep(void) {
+ if(!running||!sys_wake_us) return false;
+ uint64_t t=now();
+ if(t>=sys_wake_us) {sys_wake_us=0;return false;}
+ overdue(t); return true;
+}
 #ifndef HOST_TEST
 extern unsigned user_enter(struct uframe *frame,uint32_t ttbr);
 void os_task(void) {
- if(!running) return;
+ if(!running||os_asleep()) return;
  unsigned reason=user_enter(&os_frame,(uint32_t)(uintptr_t)us_table);
  __asm__ volatile("cpsie i":::"memory");
  uint32_t fsr=0,far=0;

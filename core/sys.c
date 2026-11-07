@@ -3,6 +3,7 @@
  * zero on entry; addresses are u64 with zero upper bits; transfers are at
  * most 1 MiB. Handles carry a generation, so a closed id is EBADF forever. */
 #include "kernel.h"
+#include "clock.h"
 #include "abi.h"
 #include "assets.h"
 #include "fb.h"
@@ -28,7 +29,7 @@ enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT};
    entry that did not fit the last getdents buffer. */
 static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_dirent pend;} fds[SYS_HANDLES];
 static bool surface_mapped; static uint32_t surface_bytes;
-int64_t sys_exit_status; uint32_t sys_calls,sys_presents,sys_healths; uint64_t sys_health_seq;
+int64_t sys_exit_status; uint32_t sys_calls,sys_presents,sys_healths; uint64_t sys_health_seq,sys_wake_us;
 extern uint32_t boot_generation;
 static void release(unsigned i) {
  if(fds[i].kind==K_ASSET) asset_close(fds[i].asset);
@@ -37,7 +38,7 @@ static void release(unsigned i) {
 }
 void sys_reset(void) {
  for(unsigned i=0;i<SYS_HANDLES;i++) release(i);
- surface_mapped=false;surface_bytes=0;sys_presents=0;sys_healths=0;sys_health_seq=0;
+ surface_mapped=false;surface_bytes=0;sys_presents=0;sys_healths=0;sys_health_seq=0;sys_wake_us=0;
 }
 uint32_t sys_open_handles(void) {uint32_t n=0;for(unsigned i=0;i<SYS_HANDLES;i++) n+=fds[i].kind!=K_FREE;return n;}
 static int lookup(uint64_t fd) {
@@ -197,7 +198,22 @@ static int do_mmap(struct k_mmap *r) {
  if(!surface_mapped) {int e=us_map(U_FB_BASE,need,U_R|U_W); if(e) return e==-12?-ENOMEM:e; surface_mapped=true;surface_bytes=fb_surface_bytes();}
  r->address=U_FB_BASE; return 0;
 }
-static const uint32_t sizes[18]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[11]=48,[16]=24,[17]=32};
+/* clock_gettime (13): selector 0, monotonic time since the kernel started, in ns
+   (microsecond steps; the same clock as input event times). */
+static int clock_get(struct k_clock *r) {
+ if(r->clock) return -EINVAL;
+ r->ns=clock_us()*1000u; return 0;
+}
+/* sleep_until (14): the program is not run again until the monotonic clock
+   reaches the deadline (ns, absolute); a deadline already passed returns at
+   once. The kernel loop keeps serving USB and the panel meanwhile. Waiting
+   is not progress: the heartbeat deadline still runs. */
+static int sleep_until(const struct k_sleep *r) {
+ uint64_t n=r->deadline>~0ull-999u?~0ull:r->deadline+999u,us=0,rem=0; /* ceil(ns / 1000) without a 64-bit divide helper */
+ for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
+ sys_wake_us=us>clock_us()?us:0; return 0;
+}
+static const uint32_t sizes[18]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[11]=48,[13]=32,[14]=24,[16]=24,[17]=32};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
@@ -215,8 +231,9 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 1: if(((struct k_open *)rec)->fd) return -EINVAL; break;
   case 2: case 3: case 11: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
+  case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==11)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==11||call==13)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -243,6 +260,8 @@ int32_t sys_call(const uint32_t reg[8]) {
   }
   case 6: if((e=do_mmap((struct k_mmap *)rec))) return e; break;
   case 11: if((e=getdents((struct k_io *)rec))) return e; break;
+  case 13: if((e=clock_get((struct k_clock *)rec))) return e; break;
+  case 14: return sleep_until((const struct k_sleep *)rec);
   case 17: return health((const struct k_health *)rec);
   case 16: sys_exit_status=((struct k_exit *)rec)->status; return SYS_EXITED;
  }

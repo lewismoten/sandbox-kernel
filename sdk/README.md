@@ -12,7 +12,10 @@ it may still change before 1.0 is frozen.
   `sbx_getdents` (directory entries of an open `/sd` folder), `sbx_health` (the
   heartbeat: within 10 s of the start, then at least every 2 s), `sbx_input_query`
   and `sbx_input_state_get` for `/dev/input/event0` (16-byte `sbx_input_event`
-  records, Linux event codes; open it read-only with `SBX_O_NONBLOCK`).
+  records, Linux event codes; open it read-only with `SBX_O_NONBLOCK`), and from
+  slice 4 (ABI 1.1; check `sbx_startup.minor`) `sbx_clock_ns` (monotonic
+  nanoseconds, the input event clock) and `sbx_sleep_until` (wait without running
+  until an absolute deadline; the heartbeat still has to come every 2 s).
 
 - `sbx_fb_map` maps the `/dev/fb0` surface (`mmap`, call 6); `sbx_startup` is the
   read-only record whose address is in r0 at entry.

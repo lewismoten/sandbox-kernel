@@ -21,6 +21,7 @@ int os_start(const char *path); /* load and prepare; 0 or a negative errno */
 bool os_running(void);
 void os_handle(unsigned reason,uint32_t fsr,uint32_t far); /* one return from User mode */
 void os_task(void); /* board: run one slice, then handle why it ended */
+bool os_asleep(void); /* true while the program waits in sleep_until (checks the heartbeat) */
 /* Restart policy: after a fault (or nonzero exit), true means restart once;
    a second fault within 60 s keeps the kernel recovery console. */
 struct os_policy {uint32_t faults; uint64_t first_us;};
