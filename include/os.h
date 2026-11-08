@@ -19,6 +19,12 @@ extern const char *os_fail;
 extern char os_path[32];
 int os_start(const char *path); /* load and prepare; 0 or a negative errno */
 bool os_running(void);
+/* USB recovery is queued, never torn down inside a syscall/SD service_io.
+   os_task applies it at the main-loop boundary; result: 1 stopped, 0 idle,
+   negative errno if address-space cleanup failed (program still revoked). */
+void os_request_stop(void);
+bool os_stop_pending(void);
+int os_stop_result(void);
 void os_handle(unsigned reason,uint32_t fsr,uint32_t far); /* one return from User mode */
 void os_task(void); /* board: run one slice, then handle why it ended */
 bool os_asleep(void); /* true while the program waits in sleep_until (checks the heartbeat) */

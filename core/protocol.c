@@ -15,6 +15,7 @@ static uint32_t expected,received,transport_crc,activity,block_end,sector_index,
 static unsigned inactive;
 static uint8_t image_hash[32];
 static bool executing,overflow,session,putf;
+static bool waiting_stop;
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
@@ -86,6 +87,10 @@ static void input_command(const char *p,bool axis) {
 }
 static void command_line(void) {
  line[used]=0;
+ if(!strcmp(line,"STOP")) {
+  if(!session) {usb_reply("ERR not-ready\n");return;}
+  os_request_stop();waiting_stop=true;return;
+ }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
@@ -115,6 +120,15 @@ static void command_line(void) {
 }
 static void work(void) {
  if(usb_reset_seen) {usb_reset_seen=false;protocol_reset();}
+ /* STOP can be parsed inside SD service_io. Acknowledge only after the
+    main-loop os_task boundary has revoked the old execution context. */
+ if(waiting_stop) {
+  if(os_stop_pending()) return;
+  waiting_stop=false;
+  if(os_stop_result()<0) {usb_reply("ERR stop ");usb_reply(os_fail);usb_reply("\n");}
+  else usb_reply(os_stop_result()?"OK stop\n":"OK stop idle\n");
+  return;
+ }
  if(phase==1&&expired(activity,15000000)) {tud_cdc_read_flush();fail("timeout");return;}
  if(phase>=2) {
   if(phase>=3&&phase<7&&tud_cdc_available()) {tud_cdc_read_flush();fail("trailing-input");return;}

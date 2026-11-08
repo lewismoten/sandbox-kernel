@@ -143,11 +143,19 @@ def run_program(port,name,seconds):
         except TimeoutError: break
     return 0 if line.startswith('OK run') else 1
 
+def stop_program(port):
+    """STOP acknowledges only after kernel-boundary cleanup, not just receipt."""
+    print(handshake(port));port.send(b'STOP\n');line=port.reply(10)
+    while line.startswith('INFO 2 '): line=port.reply(10)
+    print(line,flush=True)
+    return 0 if line in ('OK stop','OK stop idle') else 1
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
+    sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
     p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('putapp',help='install an app folder as /OS/APPS/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('key',help='press keys on the synthetic /dev/input/event0: up down enter esc q, a code, or name:down / name:up')
@@ -159,6 +167,7 @@ def main():
         if a.action=='send': return send_kernel(port,a.kernel)
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())
         if a.action=='run': return run_program(port,a.name.upper(),a.seconds)
+        if a.action=='stop': return stop_program(port)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
         if a.action=='key': return send_keys(port,a.keys,a.gap,a.seconds)

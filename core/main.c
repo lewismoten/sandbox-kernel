@@ -56,6 +56,7 @@ void kernel_main(void) {
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
   clock_us();usb_task();protocol_task();os_task();
+  if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
    if(!os_running()&&autostart_run(autostart_pick()))log_line("OS none; recovery console (USB PUTF and RUN available)");

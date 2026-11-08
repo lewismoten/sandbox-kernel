@@ -6,6 +6,7 @@
 #include "os.h"
 static char picked[20];
 static bool armed; /* the running program came from autostart and is not DIAG */
+static bool cancelled;
 static bool present(const char *path) {
  int h=asset_open(path,(uint32_t)strlen(path),0);if(h<0)return false;asset_close(h);return true;
 }
@@ -47,7 +48,8 @@ int autostart_run(const char *path) {
  armed=!r&&strcmp(path,AUTOSTART_FALLBACK);
  return r;
 }
-void autostart_cancel(void) {armed=false;}
+void autostart_cancel(void) {armed=false;cancelled=true;}
+bool autostart_cancelled(void) {return cancelled;}
 bool autostart_fallback(void) {
  if(!armed)return false;
  armed=false;os_policy_state.faults=0;

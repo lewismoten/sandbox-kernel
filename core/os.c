@@ -10,6 +10,7 @@
 #include "autostart.h"
 #include "sys.h"
 #include "uspace.h"
+#include "input.h"
 struct uframe os_frame;
 const char *os_fail="none";
 char os_path[32];
@@ -17,6 +18,11 @@ struct os_policy os_policy_state;
 uint32_t os_starts,os_stops;
 extern uint32_t boot_generation,boot_trial;
 static bool running;
+static bool stop_requested;
+static int stop_result;
+void os_request_stop(void) {stop_requested=true;}
+bool os_stop_pending(void) {return stop_requested;}
+int os_stop_result(void) {return stop_result;}
 static uint64_t start_us,health_us; static uint32_t healths; static bool ready;
 static uint8_t file[ELF_MAX_FILE] __attribute__((aligned(8)));
 bool os_running(void) {return running;}
@@ -40,7 +46,7 @@ static int reject(const char *why,int e) {
  return e;
 }
 int os_start(const char *path) {
- if(running) return -16;
+ if(running||stop_requested) return -16;
  size_t n=strlen(path); if(n>=sizeof(os_path)) return -36;
  memcpy(os_path,path,n+1);
  int h=asset_open(path,(uint32_t)n,0); if(h<0) return reject(asset_fail,h);
@@ -137,7 +143,25 @@ bool os_asleep(void) {
 }
 #ifndef HOST_TEST
 extern unsigned user_enter(struct uframe *frame,uint32_t ttbr);
+#endif
 void os_task(void) {
+ if(stop_requested) {
+  /* Only called by the main loop: user_enter has restored privileged
+     TTBR/SP/registers and IRQs, and any syscall/SD operation has returned.
+     Keep pending true during framebuffer service_io to block new commands. */
+  stop_result=running?1:0;
+  if(running) {running=false;os_stops++;}
+  autostart_cancel();os_policy_state=(struct os_policy){0};
+  sys_reset();
+  bool present=input_present();input_remove();if(present) input_add();
+  int r=us_reset(mmu_table());
+  memset(&os_frame,0,sizeof os_frame);ready=false;healths=0;start_us=health_us=0;
+  fb_home();
+  if(r) {stop_result=r;os_fail=us_fail;log_line("OS stop cleanup failed; program revoked");}
+  else log_line(stop_result?"OS stopped by USB; recovery console":"OS already idle; recovery console");
+  stop_requested=false;return;
+ }
+#ifndef HOST_TEST
  if(!running||os_asleep()) return;
  unsigned reason=user_enter(&os_frame,(uint32_t)(uintptr_t)us_table);
  __asm__ volatile("cpsie i":::"memory");
@@ -145,5 +169,5 @@ void os_task(void) {
  if(reason==OS_DABT) __asm__ volatile("mrc p15,0,%0,c5,c0,0\n mrc p15,0,%1,c6,c0,0":"=r"(fsr),"=r"(far));
  if(reason==OS_PABT) __asm__ volatile("mrc p15,0,%0,c5,c0,1\n mrc p15,0,%1,c6,c0,2":"=r"(fsr),"=r"(far));
  os_handle(reason,fsr,far);
-}
 #endif
+}

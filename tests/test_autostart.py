@@ -49,6 +49,9 @@ class Autostart(Work):
             with self.subTest(text):
                 self.card({'DIAG.ELF':program(),'GMOS.ELF':program(),'AUTORUN.TXT':text})
                 self.assertEqual(self.c.autostart_pick(),b'/OS/GMOS.ELF');self.assertIn(b'ignored',self.c.take_log())
+                # Each subcase owns a different card, but the C harness has
+                # one current FILE*. Close it before opening the next one.
+                self.doCleanups()
     def test_nothing_on_card(self):
         self.card({'OTHER.ELF':program()})
         self.assertEqual(self.c.autostart_pick(),b'/OS/DIAG.ELF');self.assertNotEqual(self.c.autostart_run(b'/OS/DIAG.ELF'),0)
