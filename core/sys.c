@@ -39,7 +39,7 @@ static int cache_path(const char *p,uint32_t n,char out[13]) {
 }
 /* inst: the input instance an input handle was opened on; pend: a directory
    entry that did not fit the last getdents buffer. */
-static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_dirent pend; uint32_t meta[3];} fds[SYS_HANDLES];
+static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_long_dirent pend; uint32_t meta[3];} fds[SYS_HANDLES];
 static bool surface_mapped; static uint32_t surface_bytes;
 int64_t sys_exit_status; uint32_t sys_calls,sys_presents,sys_healths; uint64_t sys_health_seq,sys_wake_us;
 extern uint32_t boot_generation;
@@ -212,7 +212,7 @@ static int ioctl_input(unsigned i,const struct k_ioctl *r) {
 /* getdents: whole entries {u16 length, u8 type, u8 name bytes, u32 size, name,
    zero padding to 8}; "." and ".." are left out. An entry that does not fit
    waits for the next call; a buffer too small for it is EINVAL. */
-static int getdents(struct k_io *r,bool metadata) {
+static int getdents(struct k_io *r,bool metadata,bool long_names) {
  int i=lookup(r->fd); if(i<0) return i;
  if(fds[i].kind!=K_ASSET) return -ENOTDIR;
  if(r->count>(1u<<20)) return -EINVAL;
@@ -220,17 +220,17 @@ static int getdents(struct k_io *r,bool metadata) {
  uint32_t va=(uint32_t)r->buffer,count=(uint32_t)r->count,done=0;
  if(us_check(va,count,U_W)) return -EFAULT;
  for(;;) {
-  struct asset_dirent d;uint32_t meta[3];
+  struct asset_long_dirent d;uint32_t meta[3];
   if(fds[i].has_pend) {d=fds[i].pend;memcpy(meta,fds[i].meta,sizeof meta);fds[i].has_pend=false;}
-  else {int e=asset_readdir_meta(fds[i].asset,&d,meta); if(e<0) {if(done) break; return e;} if(!e) break;}
-  uint32_t nb=(uint32_t)strlen(d.name);
-  if((nb==1&&d.name[0]=='.')||(nb==2&&d.name[0]=='.'&&d.name[1]=='.')) continue;
+  else {int e=asset_readdir_long(fds[i].asset,&d,meta); if(e<0) {if(done) break; return e;} if(!e) break;}
+  const char *name=long_names?d.name:d.short_entry.name;
+  uint32_t nb=(uint32_t)strlen(name);
   uint32_t head=metadata?24u:8u,len=(head+nb+7u)&~7u;
   if(len>count-done) {fds[i].pend=d;memcpy(fds[i].meta,meta,sizeof meta);fds[i].has_pend=true; if(!done) return -EINVAL; break;}
-  uint8_t e[40]; memset(e,0,sizeof e);
-  struct k_dirent h={(uint16_t)len,(uint8_t)(d.is_dir?2:1),(uint8_t)nb,d.size}; memcpy(e,&h,8);
+  uint8_t e[280]; memset(e,0,sizeof e);
+  struct k_dirent h={(uint16_t)len,(uint8_t)(d.short_entry.is_dir?2:1),(uint8_t)nb,d.short_entry.size}; memcpy(e,&h,8);
   if(metadata)memcpy(e+8,meta,sizeof meta);
-  memcpy(e+head,d.name,nb);
+  memcpy(e+head,name,nb);
   if(us_copy_out(va+done,e,len)) return -EFAULT;
   done+=len;
  }
@@ -265,11 +265,11 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[20]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48};
+static const uint32_t sizes[21]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
- if(call>19||!sizes[call]) return -ENOSYS;
+ if(call>20||!sizes[call]) return -ENOSYS;
  if(reg[3]|reg[4]|reg[5]|reg[6]) return -EINVAL;
  if(reg[2]!=K_ABI_MAJOR) return -93;
  if(bytes<16||bytes>4096||bytes%8) return -EINVAL;
@@ -281,12 +281,12 @@ int32_t sys_call(const uint32_t reg[8]) {
  /* outputs must be zero on entry; the record must be writable if it has any */
  switch(call) {
   case 1: if(((struct k_open *)rec)->fd) return -EINVAL; break;
-  case 2: case 3: case 11: case 18: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
+  case 2: case 3: case 11: case 18: case 20: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
   case 9: if(((struct k_seek *)rec)->position) return -EINVAL; break;
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -319,7 +319,7 @@ int32_t sys_call(const uint32_t reg[8]) {
    if((e=asset_seek(fds[i].asset,(uint64_t)r->offset))) return e;
    r->position=(uint64_t)r->offset;break;
   }
-  case 11: case 18: if((e=getdents((struct k_io *)rec,call==18))) return e; break;
+  case 11: case 18: case 20: if((e=getdents((struct k_io *)rec,call!=11,call==20))) return e; break;
   case 12: {
    int i=lookup(((struct k_close *)rec)->fd);if(i<0)return i;
    if(fds[i].kind!=K_CACHE)return -EINVAL;

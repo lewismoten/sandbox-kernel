@@ -7,6 +7,7 @@ AI models used on this repository:
 
 | Model | Tool | What it did |
 | --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | VFAT long-name reader, Unicode simple folding, ABI 1.5 opt-in enumeration, compatibility and malformed-media tests (2026-11-08) |
 | GPT-6.1 Sol (OpenAI) | Codex CLI | Researched license options; wrote the first design, milestones and contribution rules (2026-11-06) |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | M1 host acceptance: deterministic ELF rejection witnesses and extended fuzzing, syscall edge cases, resource exhaustion and USB queue reserves; Linux host binding and FAT image label regressions; integration and coverage documentation (2026-11-07) |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | M0 deterministic control-record, FAT32, image-manifest and USB sender/receiver property tests; coverage matrices and combined host verification (2026-11-07) |
@@ -116,3 +117,15 @@ Primary technical references used:
 
 Build results and limitations are recorded in [docs/m0.md](docs/m0.md).
 M0 acceptance requires real-board and power-interruption testing.
+
+## VFAT Unicode data
+
+`scripts/data/CaseFolding-16.0.0.txt` is the Unicode Consortium's Unicode 16.0.0
+case-folding data, retrieved from
+<https://www.unicode.org/Public/16.0.0/ucd/CaseFolding.txt>.
+SHA-256: `6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb`.
+The C+S simple mappings generate `include/vfat_fold.h` through the original MIT
+script `scripts/unicode_fold.py`; the generated data remains Unicode-3.0 licensed.
+The full Unicode License V3 is in [licenses/Unicode.txt](licenses/Unicode.txt),
+copied to `UNICODE.TXT` in boot distributions. The original VFAT parser imports
+no FatFs or other filesystem implementation.

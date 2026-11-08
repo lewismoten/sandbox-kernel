@@ -27,6 +27,13 @@ it may still change before 1.0 is frozen.
   invalid handles `-SBX_EBADF`. Failures leave both the file cursor and the
   caller's position output unchanged. See the full bounds/error contract in M1.
 - ABI 1.4 adds metadata enumeration (`sbx_getdents_meta`, call18) and bounded
+  cache storage as described below. ABI 1.5 adds **opt-in** VFAT long names via
+  `sbx_getdents_long_meta` (call20, same metadata record). Check minor >=5, use
+  buffers >=280 bytes, and treat `name_bytes` as UTF-8 bytes for validated LFNs.
+  Calls11/18 keep short aliases for existing binaries. The full path still fits
+  255 bytes including `/sd`; check joined lengths. See the
+  [LFN contract](../docs/m1.md#vfat-long-names-abi-15-host-validation).
+- ABI 1.4 cache storage adds bounded
   `/sd/OS/CACHE/`-only create/write/fsync (`sbx_fsync`, call12) and copy-publish
   rename-over (`sbx_rename`, call19). Check startup minor >=4. This is not
   general filesystem write access or a power-loss journal. Close aborts unflushed

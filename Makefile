@@ -13,7 +13,7 @@ COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/div
 USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/device/usbd.c $(TUSB)/device/usbd_control.c $(TUSB)/class/cdc/cdc_device.c $(TUSB)/portable/synopsys/dwc2/dcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
 KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/fatput.c core/abi.c core/render.c core/logo_data.c drivers/usb.c core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
-.PHONY: all clean deps boot test programs FORCE
+.PHONY: all clean deps boot test test-asan programs FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski programs
 # OS programs: built only against sdk/ (no kernel headers).
 PFLAGS := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -std=c11 -Os -ffreestanding -fno-builtin -nostdlib -Wall -Wextra -Werror -Isdk/include -Tsdk/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
@@ -54,5 +54,7 @@ boot: all
 	$(PYTHON) scripts/assemble_boot.py
 test:
 	$(PYTHON) -m unittest discover -s tests -v
+test-asan: test
+	$(PYTHON) tests/lfn_asan.py
 clean:
 	$(PYTHON) scripts/clean.py

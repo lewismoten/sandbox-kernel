@@ -37,6 +37,7 @@ int32_t use_all(uint64_t fd,char *b) {
  uint64_t ns=0; s|=sbx_clock_ns(&ns); s|=sbx_sleep_until(ns+1000000u);
  s|=sbx_seek(fd,0,&n);
  s|=sbx_fsync(fd);s|=sbx_getdents_meta(fd,b,64,&n);s|=sbx_rename("/sd/OS/CACHE/A.TMP",18,"/sd/OS/CACHE/A.IDX",18);
+ s|=sbx_getdents_long_meta(fd,b,280,&n);
  if(s==-1) sbx_exit(1);
  return s;
 }

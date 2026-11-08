@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: MIT; original read-only FAT32 asset reader.
- * Short (8.3) names only in slice 1; long-name entries are skipped. Every
+ * Validated VFAT names plus the original 8.3 aliases. Every
  * loop is bounded by cluster or entry counts; corrupt metadata fails with
  * -EIO and a code in asset_fail, never a hang or an out-of-volume read. */
 #include "kernel.h"
 #include "assets.h"
+#include "vfat.h"
 const char *asset_fail="none";
 static struct {uint32_t base,end,fat,fat_size,data,clusters,spc,root;bool mounted;} v;
 struct cursor {uint32_t cluster,index,hops,limit;bool done;};
@@ -61,12 +62,13 @@ static void cursor_start(struct cursor *c,uint32_t first) {
  c->limit=65536/(v.spc*16)+1; /* FAT allows at most 65536 entries per directory */
 }
 /* Next raw in-use short entry: 1 with e filled, 0 at end, <0 on error. */
-static int cursor_next(struct cursor *c,uint8_t e[32],struct dir_sector *s) {
+static int cursor_next(struct cursor *c,uint8_t e[32],struct dir_sector *s,char name[256]) {
+ struct cursor saved=*c;struct vfat_name lfn;vfat_reset(&lfn);name[0]=0;
  for(;;) {
   if(c->done) return 0;
   if(c->index==v.spc*16) {
    uint32_t n; int r=next_cluster(c->cluster,&n);
-   if(r<0) return r;
+   if(r<0) {*c=saved;return r;}
    if(r) {c->done=true;return 0;}
    if(++c->hops>=c->limit) return fail("DIR LOOP",ASSET_EIO);
    c->cluster=n;c->index=0;
@@ -74,13 +76,16 @@ static int cursor_next(struct cursor *c,uint8_t e[32],struct dir_sector *s) {
   if(!cluster_ok(c->cluster)) return fail("DIR CLUSTER",ASSET_EIO);
   uint32_t lba=v.data+(c->cluster-2)*v.spc+c->index/16;
   if(s->lba!=lba) {
-   s->lba=~0u;int r=rd(lba,s->bytes);if(r)return r;s->lba=lba;
+   s->lba=~0u;int r=rd(lba,s->bytes);if(r){*c=saved;return r;}s->lba=lba;
   }
   memcpy(e,s->bytes+(c->index%16)*32,32); c->index++;
   if(!e[0]) {c->done=true;return 0;}
-  if(e[0]==0xe5||(e[11]&0x3f)==0x0f||(e[11]&0x08)) continue; /* deleted, long name, label */
+  if(e[0]==0xe5) {vfat_reset(&lfn);continue;}
+  if((e[11]&0x3f)==0x0f) {vfat_slot(&lfn,e);continue;}
+  if(e[11]&0x08) {vfat_reset(&lfn);continue;}
   if(e[11]&0xc0) return fail("DIR ATTR",ASSET_EIO);
   for(unsigned i=0;i<11;i++) if(e[i]<0x20&&!(i==0&&e[0]==0x05)) return fail("DIR NAME",ASSET_EIO);
+  if(!vfat_decode(&lfn,e,name))name[0]=0;
   if(e[0]==0x05) e[0]=0xe5;
   return 1;
  }
@@ -108,11 +113,22 @@ static int short_name(const char *p,uint32_t n,uint8_t out[11]) {
  return 0;
 }
 static uint32_t entry_cluster(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
-static int find(uint32_t dir,const uint8_t name[11],uint8_t e[32]) {
+static int find(uint32_t dir,const char *path,uint32_t bytes,uint8_t e[32]) {
  struct cursor c; cursor_start(&c,dir);
  struct dir_sector s;s.lba=~0u;
- uint8_t want[11]; memcpy(want,name,11); if(want[0]==0x05) want[0]=0xe5;
- for(;;) {int r=cursor_next(&c,e,&s); if(r<=0) return r?r:fail("ASSET NOT FOUND",ASSET_ENOENT); if(!memcmp(e,want,11)) return 0;}
+ uint8_t want[11];bool short_ok=short_name(path,bytes,want)==0;
+ if(short_ok&&want[0]==0x05)want[0]=0xe5;
+ char name[256];uint8_t candidate[32];bool found=false;
+ for(;;) {
+  int r=cursor_next(&c,e,&s,name);
+  if(r<0)return r;
+  if(!r) {if(found){memcpy(e,candidate,32);return 0;}return fail("ASSET NOT FOUND",ASSET_ENOENT);}
+  if(short_ok&&!memcmp(e,want,11))return 0; /* old aliases cannot be shadowed by an LFN */
+  if(!found&&name[0]&&vfat_equal(path,bytes,name)) {
+   if(!short_ok)return 0;
+   memcpy(candidate,e,32);found=true;
+  }
+ }
 }
 static int new_handle(void) {
  for(unsigned i=0;i<ASSET_HANDLES;i++) if(!handles[i].used) {
@@ -137,15 +153,18 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
  {uint32_t parts=0; for(uint32_t i=0;i<n;i++) if(path[i]=='/') parts++;
   if(parts>ASSET_MAX_DEPTH+1) return fail("PATH TOO DEEP",ASSET_ENAMETOOLONG);}
  fat_lba=~0u; /* never trust a cached FAT sector across calls */
- uint32_t cluster=v.root,size=0; bool dir=true; uint32_t at=1,depth=0;
+ uint32_t cluster=v.root,size=0; bool dir=true,os_dir=false,cache=false; uint32_t at=1,depth=0;
  bool trailing=n>1&&path[n-1]=='/'; /* one trailing slash names a directory */
  if(trailing) {n--; if(path[n-1]=='/') return fail("PATH EMPTY",ASSET_EINVAL);}
  while(at<n) {
   if(!dir) return fail("PATH NOT DIR",ASSET_ENOTDIR);
   if(++depth>ASSET_MAX_DEPTH) return fail("PATH TOO DEEP",ASSET_ENAMETOOLONG); /* not reached after the count above */
   uint32_t end=at; while(end<n&&path[end]!='/') end++;
-  uint8_t name[11],e[32]; int r=short_name(path+at,end-at,name); if(r) return r;
-  if((r=find(cluster,name,e))) return r;
+  uint8_t e[32];int r;
+  if(!vfat_component(path+at,end-at))return fail("PATH CHAR",ASSET_EINVAL);
+  if((r=find(cluster,path+at,end-at,e))) return r;
+  if(depth==1)os_dir=!memcmp(e,"OS         ",11);
+  if(depth==2)cache=os_dir&&!memcmp(e,"CACHE      ",11);
   dir=(e[11]&0x10)!=0; cluster=entry_cluster(e); size=u32(e+28);
   if(dir) {
    if(!cluster_ok(cluster)) /* cluster 0 is only valid in "..", never reached by a path */ return fail("DIR ENTRY CLUSTER",ASSET_EIO);
@@ -163,10 +182,7 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
  }
  int id=new_handle(); if(id<0) return id;
  struct handle *h=get(id); h->dir=dir; h->first=cluster; h->size=dir?0:size; h->cluster=cluster;
- if(n>=9&&(n==9||path[9]=='/')) {
-  const char *prefix="/OS/CACHE";h->cache=true;
-  for(unsigned i=0;i<9;i++) {char ch=path[i];if(ch>='a'&&ch<='z')ch-=32;if(ch!=prefix[i])h->cache=false;}
- }
+ h->cache=cache; /* identify the controlled short entries, not the chosen LFN spelling */
  if(dir) cursor_start(&h->c,cluster);
  return id;
 }
@@ -217,19 +233,26 @@ static void format_name(const uint8_t *e,char out[13]) {
  if(e[8]!=' ') {out[k++]='.';for(unsigned i=8;i<11&&e[i]!=' ';i++) out[k++]=(char)e[i];}
  out[k]=0;
 }
-int asset_readdir_meta(int id,struct asset_dirent *d,uint32_t meta[3]) {
+int asset_readdir_long(int id,struct asset_long_dirent *out,uint32_t meta[3]) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(!h->dir) return fail("ASSET NOT DIR",ASSET_ENOTDIR);
- if(!d) return fail("ASSET BUFFER",ASSET_EINVAL);
+ if(!out) return fail("ASSET BUFFER",ASSET_EINVAL);
+ struct asset_dirent *d=&out->short_entry;
  fat_lba=~0u; uint8_t e[32];
  struct dir_sector s;s.lba=~0u;
  for(;;) {
-  int r=cursor_next(&h->c,e,&s); if(r<=0) return r;
+  char name[256];int r=cursor_next(&h->c,e,&s,name); if(r<=0) return r;
   if(e[0]=='.') continue; /* "." and ".." */
   memset(d,0,sizeof(*d)); format_name(e,d->name); d->attr=e[11]; d->is_dir=(e[11]&0x10)?1:0; d->size=d->is_dir?0:u32(e+28);
+  memset(out->name,0,sizeof out->name);
+  memcpy(out->name,name[0]?name:d->name,strlen(name[0]?name:d->name));
   if(meta) {meta[0]=u32(e+22);meta[1]=u32(e+14);meta[2]=entry_cluster(e);}
   return 1;
  }
+}
+int asset_readdir_meta(int id,struct asset_dirent *d,uint32_t meta[3]) {
+ if(!d)return asset_readdir_long(id,NULL,meta); /* preserve BADF/NOTDIR before buffer validation */
+ struct asset_long_dirent out;int r=asset_readdir_long(id,&out,meta);if(r==1)*d=out.short_entry;return r;
 }
 int asset_readdir(int id,struct asset_dirent *d) {return asset_readdir_meta(id,d,NULL);}
 int asset_size(int id,uint32_t *bytes) {struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF); *bytes=h->size; return 0;}
