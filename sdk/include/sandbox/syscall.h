@@ -50,6 +50,13 @@ static inline int32_t sbx_close(uint64_t fd) {
   sbx_close_rec r = {SBX_HEADER(sbx_close_rec), fd};
   return sbx_syscall(SBX_CALL_CLOSE, &r, sizeof r);
 }
+/* ABI 1.3: absolute [0,file size], including EOF. Failure preserves position. */
+static inline int32_t sbx_seek(uint64_t fd, int64_t offset, uint64_t *position) {
+  sbx_seek_rec r = {SBX_HEADER(sbx_seek_rec), fd, offset, SBX_SEEK_SET, 0};
+  int32_t s = sbx_syscall(SBX_CALL_SEEK, &r, sizeof r);
+  if (!s) *position = r.position;
+  return s;
+}
 static inline int32_t sbx_ioctl(uint64_t fd, uint32_t request, void *record, uint32_t bytes) {
   sbx_ioctl_rec r = {SBX_HEADER(sbx_ioctl_rec), fd, request, (uint32_t)(uintptr_t)record, bytes};
   return sbx_syscall(SBX_CALL_IOCTL, &r, sizeof r);

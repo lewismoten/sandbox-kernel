@@ -20,6 +20,7 @@
 #define EINVAL 22
 #define EMFILE 24
 #define ENOTTY 25
+#define ESPIPE 29
 #define ENOENT 2
 #define ENAMETOOLONG 36
 #define ENOSYS 38
@@ -234,7 +235,7 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[18]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[11]=48,[13]=32,[14]=24,[16]=24,[17]=32};
+static const uint32_t sizes[18]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[13]=32,[14]=24,[16]=24,[17]=32};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
@@ -252,9 +253,10 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 1: if(((struct k_open *)rec)->fd) return -EINVAL; break;
   case 2: case 3: case 11: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
+  case 9: if(((struct k_seek *)rec)->position) return -EINVAL; break;
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==11||call==13)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -280,6 +282,13 @@ int32_t sys_call(const uint32_t reg[8]) {
    return ioctl_fb(r);
   }
   case 6: if((e=do_mmap((struct k_mmap *)rec))) return e; break;
+  case 9: {
+   struct k_seek *r=(struct k_seek *)rec; int i=lookup(r->fd); if(i<0) return i;
+   if(fds[i].kind!=K_ASSET) return -ESPIPE;
+   if(r->whence||r->offset<0) return -EINVAL;
+   if((e=asset_seek(fds[i].asset,(uint64_t)r->offset))) return e;
+   r->position=(uint64_t)r->offset;break;
+  }
   case 11: if((e=getdents((struct k_io *)rec))) return e; break;
   case 13: if((e=clock_get((struct k_clock *)rec))) return e; break;
   case 14: return sleep_until((const struct k_sleep *)rec);

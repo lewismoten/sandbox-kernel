@@ -159,6 +159,25 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
  if(dir) cursor_start(&h->c,cluster);
  return id;
 }
+int asset_seek(int id,uint64_t offset) {
+ struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
+ if(h->dir) return fail("ASSET NOT SEEKABLE",ASSET_ESPIPE);
+ if(offset>h->size) return fail("ASSET OFFSET",ASSET_EINVAL);
+ /* read keeps the cluster containing pos-1 (or first at zero), including
+    exact cluster boundaries and EOF. Build a candidate before committing. */
+ uint32_t pos=(uint32_t)offset,cb=cluster_bytes();
+ uint32_t target=pos?(pos-1)/cb:0,current=h->pos?(h->pos-1)/cb:0;
+ uint32_t c=h->cluster,at=current;
+ if(target<current) {c=h->first;at=0;}
+ fat_lba=~0u;
+ for(;at<target;at++) {
+  uint32_t next; int r=next_cluster(c,&next);
+  if(r<0) return r;
+  if(r) return fail("FAT SHORT",ASSET_EIO);
+  c=next;
+ }
+ h->cluster=c;h->pos=pos;h->err=0;return 0;
+}
 int asset_read(int id,void *out,uint32_t count) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(h->dir) return fail("ASSET IS DIR",ASSET_EINVAL);
@@ -169,12 +188,14 @@ int asset_read(int id,void *out,uint32_t count) {
  if(count>h->size-h->pos) count=h->size-h->pos;
  fat_lba=~0u; uint8_t *dst=out; uint32_t done=0,cb=cluster_bytes();
  while(done<count) {
+  uint32_t cluster=h->cluster;
   if(h->pos&&h->pos%cb==0&&h->pos!=h->size) {
    /* h->cluster still names the cluster that held the previous byte */
-   uint32_t n; int r=next_cluster(h->cluster,&n); if(!r) h->cluster=n; else {r=r<0?-r:(asset_fail="FAT SHORT",ASSET_EIO); if(done){h->err=r;return (int)done;} return -r;}
+   uint32_t n; int r=next_cluster(cluster,&n); if(!r) cluster=n; else {r=r<0?-r:(asset_fail="FAT SHORT",ASSET_EIO); if(done){h->err=r;return (int)done;} return -r;}
   }
   uint32_t in=h->pos%cb,off=in%512,take=512-off; if(take>count-done) take=count-done;
-  int r=rd(v.data+(h->cluster-2)*v.spc+in/512,buf); if(r) {if(done){h->err=-r;return (int)done;}return r;}
+  int r=rd(v.data+(cluster-2)*v.spc+in/512,buf); if(r) {if(done){h->err=-r;return (int)done;}return r;}
+  h->cluster=cluster; /* failed data I/O must not get ahead of pos-1 */
   memcpy(dst+done,buf+off,take); done+=take; h->pos+=take;
   /* keep h->cluster on the cluster holding pos-1 until pos crosses into the next */
  }

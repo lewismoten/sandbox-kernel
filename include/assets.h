@@ -14,6 +14,7 @@
 #define ASSET_ENOTDIR 20
 #define ASSET_EINVAL 22
 #define ASSET_EMFILE 24
+#define ASSET_ESPIPE 29
 #define ASSET_EROFS 30
 #define ASSET_ENAMETOOLONG 36
 #define ASSET_ENODEV 19
@@ -22,6 +23,7 @@ extern const char *asset_fail; /* short code of the last failure, for logs */
 int asset_mount(void); /* parse MBR/BPB again; closes every handle */
 int asset_open(const char *path,uint32_t bytes,uint32_t flags); /* handle */
 int asset_read(int handle,void *buffer,uint32_t count); /* bytes; 0 is EOF */
+int asset_seek(int handle,uint64_t offset); /* absolute [0,size]; failure preserves cursor/error */
 int asset_readdir(int handle,struct asset_dirent *out); /* 1 entry, 0 end */
 int asset_close(int handle);
 int asset_size(int handle,uint32_t *bytes);

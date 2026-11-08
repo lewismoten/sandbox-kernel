@@ -67,6 +67,8 @@ class SyscallEdges(m1.Work):
             1: self.hdr(56) + struct.pack('<5Q', self.BUF + 0x800, 8, 1, 0, 0),
             2: self.hdr(48) + struct.pack('<4Q', fd, self.BUF + 0x400, 4, 0),
             3: self.hdr(48) + struct.pack('<4Q', log, self.BUF + 0x400, 4, 0),
+            # Exercise seek before close in the successful zero-tail sequence.
+            9: self.hdr(48) + struct.pack('<QqQQ', fd, 400, 0, 0),
             4: self.hdr(24) + struct.pack('<Q', fd),
             5: self.hdr(48) + struct.pack('<4Q', fb, 0x10000, self.BUF, 56),
             6: self.hdr(64) + struct.pack('<6Q', fb, 0, 4096, 3, 1, 0),
@@ -115,7 +117,7 @@ class SyscallEdges(m1.Work):
 
     def test_output_fields_must_be_zero_and_records_writable(self):
         records = self.records()
-        for n, output in ((1, 48), (2, 40), (3, 40), (6, 56)):
+        for n, output in ((1, 48), (2, 40), (3, 40), (6, 56), (9, 40)):
             good = records[n]
             bad = bytearray(good)
             struct.pack_into('<Q', bad, output, 1 << 63)
@@ -125,8 +127,8 @@ class SyscallEdges(m1.Work):
 
     def test_unknown_dispatch_does_not_consume_handles_or_records(self):
         records = self.records()
-        # Calls 11, 13, 14, 16 and 17 became real in slice 3 and ABI 1.1; these are still unassigned.
-        for n in (0, 7, 8, 9, 10, 12, 15, 18, 0xffffffff):
+        # Call 9 became real in ABI 1.3; these remain unimplemented.
+        for n in (0, 7, 8, 10, 12, 15, 18, 0xffffffff):
             with self.subTest(call=n):
                 self.reject(n, records[4], m1.ENOSYS)
         # A valid handle remains usable after all dispatch/header failures.
