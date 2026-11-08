@@ -10,14 +10,15 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 4u /* 1.4: metadata enumeration and cache-only COW writes */
+#define SBX_ABI_MINOR 5u /* 1.5: opt-in UTF-8 VFAT metadata enumeration */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
   SBX_CALL_QUERY = 0, SBX_CALL_OPEN = 1, SBX_CALL_READ = 2, SBX_CALL_WRITE = 3,
   SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_SEEK = 9, SBX_CALL_GETDENTS = 11,
   SBX_CALL_FSYNC = 12, SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17,
-  SBX_CALL_GETDENTS_META = 18, SBX_CALL_RENAME = 19
+  SBX_CALL_GETDENTS_META = 18, SBX_CALL_RENAME = 19,
+  SBX_CALL_GETDENTS_LONG_META = 20
 };
 
 /* Negative return values. */
@@ -163,7 +164,10 @@ typedef struct sbx_dirent { /* followed by name_bytes of name (no NUL), padded s
   uint8_t type, name_bytes; /* SBX_DT_* */
   uint32_t size; /* file bytes; 0 for a directory */
 } sbx_dirent;
-/* ABI 1.4, call 18 only. Legacy call 11 remains exactly unchanged.
+/* ABI 1.4 call 18: short aliases. ABI 1.5 call 20: validated VFAT UTF-8 names
+   (short alias on invalid/absent/oversized LFN). Same record and padding.
+   Legacy calls 11 and 18 remain unchanged; call 20 needs a 280-byte buffer
+   to fit any one entry. name_bytes counts bytes, not Unicode characters.
    FAT date:time words are opaque fingerprints, not Unix timestamps.
    identity is the first cluster, useful but not a content hash. */
 typedef struct sbx_dirent_meta {

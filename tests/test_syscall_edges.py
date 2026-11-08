@@ -61,6 +61,7 @@ class SyscallEdges(m1.Work):
         _, fd = self.open('/sd/S512.BIN')
         _, log = self.open('/dev/log', 1)
         _, fb = self.open('/dev/fb0', 2)
+        _, directory = self.open('/sd')
         m1.poke(self.c, self.BUF + 0x800, b'/dev/log')
         m1.poke(self.c, self.BUF, self.hdr(56) + bytes(40))
         return {
@@ -73,6 +74,7 @@ class SyscallEdges(m1.Work):
             5: self.hdr(48) + struct.pack('<4Q', fb, 0x10000, self.BUF, 56),
             6: self.hdr(64) + struct.pack('<6Q', fb, 0, 4096, 3, 1, 0),
             16: self.hdr(24) + struct.pack('<q', -7),
+            20: self.hdr(48) + struct.pack('<4Q', directory, self.BUF + 0x400, 512, 0),
         }
 
     def test_dispatch_envelope_for_every_implemented_call(self):
@@ -128,7 +130,7 @@ class SyscallEdges(m1.Work):
     def test_unknown_dispatch_does_not_consume_handles_or_records(self):
         records = self.records()
         # Call 9 became real in ABI 1.3; these remain unimplemented.
-        for n in (0, 7, 8, 10, 15, 20, 0xffffffff):
+        for n in (0, 7, 8, 10, 15, 21, 0xffffffff):
             with self.subTest(call=n):
                 self.reject(n, records[4], m1.ENOSYS)
         # A valid handle remains usable after all dispatch/header failures.

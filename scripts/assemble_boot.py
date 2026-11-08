@@ -23,6 +23,7 @@ def main():
     shutil.copyfile(ROOT/'LICENSE',dest/'MIT.TXT')
     shutil.copyfile(ROOT/'licenses/TinyUSB.txt',dest/'TINYUSB.TXT')
     shutil.copyfile(ROOT/'licenses/Waveshare.txt',dest/'WAVE.TXT')
+    shutil.copyfile(ROOT/'licenses/Unicode.txt',dest/'UNICODE.TXT')
     inventory={'firmware_tag':FIRMWARE_TAG,'firmware_commit':FIRMWARE_COMMIT,'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(dest.iterdir()) if p.is_file() and p.suffix!='.json'}}
     (dest/'SHA256.json').write_text(json.dumps(inventory,indent=2)+'\n')
     fat_image(dest,build/'sandbox-m0.img')

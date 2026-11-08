@@ -68,6 +68,32 @@ bool sd_read(uint32_t lba,void *p){reads++;return lba!=bad &&
         self.assertGreaterEqual(h, 0, path)
         return h
 
+    def test_vfat_sequence_spans_clusters_and_retries_io_without_losing_name(self):
+        import fatlfn
+        import test_lfn as lf
+        self.c.close_disk()
+        tree = {f'F{i:07}': b'' for i in range(13)}
+        tree['LONGFI~1.GAM'] = b'payload'
+        long_name = 'A long filename spanning the cluster boundary.gam'
+        self.v = fatlfn.build(self.disk, tree, {'/LONGFI~1.GAM': long_name}, fragment=True)
+        self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+        self.c.asset_readdir_long.argtypes = [C.c_int, C.POINTER(lf.LongEntry), C.POINTER(C.c_uint32)]
+        h = self.opened('/')
+        e = lf.LongEntry()
+        for i in range(13):
+            self.assertEqual(self.c.asset_readdir_long(h, C.byref(e), None), 1)
+            self.assertEqual(e.name.decode(), f'F{i:07}')
+        self.c.fail_sector(self.v.lba(self.v.chains['/'][1]))
+        self.assertEqual(self.c.asset_readdir_long(h, C.byref(e), None), -5)
+        self.c.fail_sector(0xffffffff)
+        before = self.c.read_count()
+        self.assertEqual(self.c.asset_readdir_long(h, C.byref(e), None), 1)
+        self.assertEqual(e.name.decode(), long_name)
+        self.assertLessEqual(self.c.read_count()-before, 3)
+        self.assertEqual(self.c.asset_readdir_long(h, C.byref(e), None), 0)
+        self.c.asset_close(h)
+        h = self.opened('/'+long_name); self.c.asset_close(h)
+
     def test_path_lookup_reads_each_directory_sector_once(self):
         before = self.c.read_count()
         h = self.opened('/GAMES/G0000127/GAME.GAM')

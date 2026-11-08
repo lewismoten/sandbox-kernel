@@ -116,6 +116,14 @@ static inline int32_t sbx_getdents_meta(uint64_t dir_fd, void *buffer, uint32_t 
   if (!s) *done = r.transferred;
   return s;
 }
+/* ABI 1.5: sbx_dirent_meta with validated VFAT UTF-8 names (or short aliases).
+ * At least 280 bytes fits any one entry; old calls 11/18 retain short names. */
+static inline int32_t sbx_getdents_long_meta(uint64_t dir_fd, void *buffer, uint32_t bytes, uint64_t *done) {
+  sbx_dirents_rec r = {SBX_HEADER(sbx_dirents_rec), dir_fd, (uint32_t)(uintptr_t)buffer, bytes, 0};
+  int32_t s = sbx_syscall(SBX_CALL_GETDENTS_LONG_META, &r, sizeof r);
+  if (!s) *done = r.transferred;
+  return s;
+}
 /* Heartbeat: call within 10 s of starting (readiness), then at least every 2 s. */
 static inline int32_t sbx_health(uint32_t generation, uint64_t sequence) {
   sbx_health_rec r = {SBX_HEADER(sbx_health_rec), generation, sequence};

@@ -19,6 +19,7 @@
 #define ASSET_ENAMETOOLONG 36
 #define ASSET_ENODEV 19
 struct asset_dirent { char name[13]; uint8_t attr; uint8_t is_dir; uint8_t reserved; uint32_t size; };
+struct asset_long_dirent {char name[256];struct asset_dirent short_entry;};
 extern const char *asset_fail; /* short code of the last failure, for logs */
 int asset_mount(void); /* parse MBR/BPB again; closes every handle */
 int asset_open(const char *path,uint32_t bytes,uint32_t flags); /* handle */
@@ -26,6 +27,7 @@ int asset_read(int handle,void *buffer,uint32_t count); /* bytes; 0 is EOF */
 int asset_seek(int handle,uint64_t offset); /* absolute [0,size]; failure preserves cursor/error */
 int asset_readdir(int handle,struct asset_dirent *out); /* 1 entry, 0 end */
 int asset_readdir_meta(int handle,struct asset_dirent *out,uint32_t meta[3]);
+int asset_readdir_long(int handle,struct asset_long_dirent *out,uint32_t meta[3]);
 int asset_close(int handle);
 int asset_size(int handle,uint32_t *bytes);
 int asset_cache_readers(void);
