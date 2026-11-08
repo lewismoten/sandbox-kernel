@@ -29,6 +29,8 @@ Goals:
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
 The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
+An [unlinked PCM host core](docs/audio-host-core.md) is available for qualification
+only; it does not enable HDMI sound, a device path or a new ABI.
 Build with `make`, run host checks with `make test`, and assemble a boot folder
 and card image with `make boot`. The default compiler is the requested Arm GNU
 15.3.rel2 installation. Dependencies are pinned and fetched without git.
