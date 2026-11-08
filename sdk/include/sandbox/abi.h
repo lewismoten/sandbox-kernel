@@ -10,12 +10,12 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 2u /* 1.1: clock_gettime (13) and sleep_until (14); 1.2: fb modes and palettes */
+#define SBX_ABI_MINOR 3u /* 1.1: clocks; 1.2: fb modes/palettes; 1.3: bounded absolute seek */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
   SBX_CALL_QUERY = 0, SBX_CALL_OPEN = 1, SBX_CALL_READ = 2, SBX_CALL_WRITE = 3,
-  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_GETDENTS = 11,
+  SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_SEEK = 9, SBX_CALL_GETDENTS = 11,
   SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17
 };
 
@@ -35,6 +35,7 @@ enum {
 #define SBX_O_NONBLOCK 0x100u
 #define SBX_MAX_TRANSFER (1024u * 1024u)
 #define SBX_MAX_PATH 255u
+#define SBX_SEEK_SET 0u /* ABI 1.3: only absolute seeking is supported */
 
 /* mmap protections and flags. Only an approved shared buffer (the /dev/fb0
    surface) can be mapped in this draft; the kernel chooses the address. */
@@ -99,6 +100,14 @@ typedef struct sbx_close_rec {
   sbx_header h;
   uint64_t fd;
 } sbx_close_rec;
+
+typedef struct sbx_seek_rec { /* ABI 1.3: regular files only; offset in [0,size] */
+  sbx_header h;
+  uint64_t fd;
+  int64_t offset;
+  uint64_t whence; /* SBX_SEEK_SET only */
+  uint64_t position; /* out; zero on entry; failures leave file position unchanged */
+} sbx_seek_rec;
 
 typedef struct sbx_ioctl_rec { /* buffer points to a class record below */
   sbx_header h;
@@ -198,6 +207,8 @@ SBX_CHECK(sbx_io_rec, 48);
 SBX_AT(sbx_io_rec, fd, 16); SBX_AT(sbx_io_rec, buffer, 24);
 SBX_AT(sbx_io_rec, count, 32); SBX_AT(sbx_io_rec, transferred, 40);
 SBX_CHECK(sbx_close_rec, 24); SBX_AT(sbx_close_rec, fd, 16);
+SBX_CHECK(sbx_seek_rec, 48); SBX_AT(sbx_seek_rec, fd, 16); SBX_AT(sbx_seek_rec, offset, 24);
+SBX_AT(sbx_seek_rec, whence, 32); SBX_AT(sbx_seek_rec, position, 40);
 SBX_CHECK(sbx_ioctl_rec, 48);
 SBX_AT(sbx_ioctl_rec, fd, 16); SBX_AT(sbx_ioctl_rec, request, 24);
 SBX_AT(sbx_ioctl_rec, buffer, 32); SBX_AT(sbx_ioctl_rec, bytes, 40);

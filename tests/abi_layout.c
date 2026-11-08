@@ -8,6 +8,7 @@ SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_hea
 SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
 SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);
 SIZE(k_close,sbx_close_rec); SAME(k_close,sbx_close_rec,fd);
+SIZE(k_seek,sbx_seek_rec); SAME(k_seek,sbx_seek_rec,fd); SAME(k_seek,sbx_seek_rec,offset); SAME(k_seek,sbx_seek_rec,whence); SAME(k_seek,sbx_seek_rec,position);
 SIZE(k_ioctl,sbx_ioctl_rec); SAME(k_ioctl,sbx_ioctl_rec,fd); SAME(k_ioctl,sbx_ioctl_rec,request); SAME(k_ioctl,sbx_ioctl_rec,buffer); SAME(k_ioctl,sbx_ioctl_rec,bytes);
 SIZE(k_exit,sbx_exit_rec); SAME(k_exit,sbx_exit_rec,status);
 SIZE(k_fb_mode,sbx_fb_mode); SAME(k_fb_mode,sbx_fb_mode,width); SAME(k_fb_mode,sbx_fb_mode,height); SAME(k_fb_mode,sbx_fb_mode,pitch); SAME(k_fb_mode,sbx_fb_mode,format); SAME(k_fb_mode,sbx_fb_mode,buffer_bytes);
@@ -32,6 +33,7 @@ int32_t use_all(uint64_t fd,char *b) {
  s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd); void *a; s|=sbx_fb_map(fd,4096,&a);
  sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
  uint64_t ns=0; s|=sbx_clock_ns(&ns); s|=sbx_sleep_until(ns+1000000u);
+ s|=sbx_seek(fd,0,&n);
  if(s==-1) sbx_exit(1);
  return s;
 }

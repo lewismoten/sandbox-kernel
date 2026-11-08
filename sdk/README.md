@@ -19,6 +19,13 @@ it may still change before 1.0 is frozen.
 
 - `sbx_fb_map` maps the `/dev/fb0` surface (`mmap`, call 6); `sbx_startup` is the
   read-only record whose address is in r0 at entry.
+- ABI 1.3 adds `int32_t sbx_seek(uint64_t fd, int64_t offset, uint64_t *position)`
+  (call 9). Check startup major 1 / minor >= 3; older kernels return `-SBX_ENOSYS`.
+  Only regular `/sd` files and absolute offsets from 0 through file size (EOF)
+  are supported. Success returns 0 and stores the new position. Negative or
+  past-end offsets return `-SBX_EINVAL`; devices/directories `-SBX_ESPIPE`;
+  invalid handles `-SBX_EBADF`. Failures leave both the file cursor and the
+  caller's position output unchanged. See the full bounds/error contract in M1.
 - `lib/crt0.S`, `lib/mem.c` and `lib/sandbox.ld`: entry (`int main(const sbx_startup *)`,
   whose return value is the exit status), `memset`/`memcpy`, and the link map (text
   at `0x08000000`, data on separate never-executable pages).
