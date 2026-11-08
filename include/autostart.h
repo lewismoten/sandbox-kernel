@@ -16,8 +16,9 @@ const char *autostart_pick(void);
 /* Start the picked program (DIAG.ELF if it is rejected); 0 or a negative
    errno from the last attempt. Arms the fault fallback. */
 int autostart_run(const char *path);
-/* A USB RUN takes over: no fallback for the program it starts. */
+/* USB RUN/STOP takes over: no boot launch or fault fallback afterward. */
 void autostart_cancel(void);
+bool autostart_cancelled(void);
 /* From the supervisor once the restart policy gives up: true if DIAG.ELF
    was started in place of the autostarted program. */
 bool autostart_fallback(void);

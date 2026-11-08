@@ -21,7 +21,9 @@ static uint32_t media_sectors=264192;
 void set_media_sectors(uint32_t sectors) {media_sectors=sectors;}
 uint32_t sd_sectors(void) {return media_sectors;}
 static uint32_t reads;uint32_t read_count(void) {return reads;}
-bool sd_read(uint32_t lba,void *p) {reads++;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+static bool pump_read;
+void protocol_on_next_sd_read(void) {pump_read=true;}
+bool sd_read(uint32_t lba,void *p) {reads++;if(pump_read){pump_read=false;protocol_task();}return fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
