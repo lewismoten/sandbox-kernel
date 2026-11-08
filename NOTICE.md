@@ -7,6 +7,7 @@ AI models used on this repository:
 
 | Model | Tool | What it did |
 | --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | Original unlinked bounded PCM host core, native/ARM qualification, rejection/model tests and documentation (2026-11-08); no HDMI driver or audio ABI |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | VFAT long-name reader, Unicode simple folding, ABI 1.5 opt-in enumeration, compatibility and malformed-media tests (2026-11-08) |
 | GPT-6.1 Sol (OpenAI) | Codex CLI | Researched license options; wrote the first design, milestones and contribution rules (2026-11-06) |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | M1 host acceptance: deterministic ELF rejection witnesses and extended fuzzing, syscall edge cases, resource exhaustion and USB queue reserves; Linux host binding and FAT image label regressions; integration and coverage documentation (2026-11-07) |
