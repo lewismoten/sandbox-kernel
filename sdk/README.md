@@ -26,6 +26,12 @@ it may still change before 1.0 is frozen.
   past-end offsets return `-SBX_EINVAL`; devices/directories `-SBX_ESPIPE`;
   invalid handles `-SBX_EBADF`. Failures leave both the file cursor and the
   caller's position output unchanged. See the full bounds/error contract in M1.
+- ABI 1.4 adds metadata enumeration (`sbx_getdents_meta`, call18) and bounded
+  `/sd/OS/CACHE/`-only create/write/fsync (`sbx_fsync`, call12) and copy-publish
+  rename-over (`sbx_rename`, call19). Check startup minor >=4. This is not
+  general filesystem write access or a power-loss journal. Close aborts unflushed
+  bytes. See [the cache storage contract](../docs/cache-storage.md), including
+  completed-sector durability and initially non-cross-linked FAT assumptions.
 - `lib/crt0.S`, `lib/mem.c` and `lib/sandbox.ld`: entry (`int main(const sbx_startup *)`,
   whose return value is the exit status), `memset`/`memcpy`, and the link map (text
   at `0x08000000`, data on separate never-executable pages).

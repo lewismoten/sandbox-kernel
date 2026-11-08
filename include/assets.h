@@ -25,7 +25,9 @@ int asset_open(const char *path,uint32_t bytes,uint32_t flags); /* handle */
 int asset_read(int handle,void *buffer,uint32_t count); /* bytes; 0 is EOF */
 int asset_seek(int handle,uint64_t offset); /* absolute [0,size]; failure preserves cursor/error */
 int asset_readdir(int handle,struct asset_dirent *out); /* 1 entry, 0 end */
+int asset_readdir_meta(int handle,struct asset_dirent *out,uint32_t meta[3]);
 int asset_close(int handle);
 int asset_size(int handle,uint32_t *bytes);
+int asset_cache_readers(void);
 struct asset_volume {uint32_t base,end,fat,fat_size,data,clusters,spc,root;};
 int asset_volume(struct asset_volume *out); /* geometry of the mounted volume, for core/fatput.c */
