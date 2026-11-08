@@ -8,9 +8,8 @@
 const char *asset_fail="none";
 static struct {uint32_t base,end,fat,fat_size,data,clusters,spc,root;bool mounted;} v;
 struct cursor {uint32_t cluster,index,hops,limit;bool done;};
-/* A directory sector lives only for one find/readdir invocation. Never trust
- * bytes across asset calls, remounts, file reads or installer operations. */
-struct dir_sector {uint32_t lba;uint8_t bytes[512];};
+/* Directory scratch is invocation-local: find/readdir, or ONE checked
+ * call20 batch. It is never stored in an asset handle or global cache. */
 static struct handle {
  bool used,dir,cache; uint16_t gen; int err;
  uint32_t first,size,pos,cluster;
@@ -62,7 +61,7 @@ static void cursor_start(struct cursor *c,uint32_t first) {
  c->limit=65536/(v.spc*16)+1; /* FAT allows at most 65536 entries per directory */
 }
 /* Next raw in-use short entry: 1 with e filled, 0 at end, <0 on error. */
-static int cursor_next(struct cursor *c,uint8_t e[32],struct dir_sector *s,char name[256]) {
+static int cursor_next(struct cursor *c,uint8_t e[32],struct asset_dir_sector *s,char name[256]) {
  struct cursor saved=*c;struct vfat_name lfn;vfat_reset(&lfn);name[0]=0;
  for(;;) {
   if(c->done) return 0;
@@ -115,7 +114,7 @@ static int short_name(const char *p,uint32_t n,uint8_t out[11]) {
 static uint32_t entry_cluster(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
 static int find(uint32_t dir,const char *path,uint32_t bytes,uint8_t e[32]) {
  struct cursor c; cursor_start(&c,dir);
- struct dir_sector s;s.lba=~0u;
+ struct asset_dir_sector s;s.lba=~0u;
  uint8_t want[11];bool short_ok=short_name(path,bytes,want)==0;
  if(short_ok&&want[0]==0x05)want[0]=0xe5;
  char name[256];uint8_t candidate[32];bool found=false;
@@ -233,15 +232,14 @@ static void format_name(const uint8_t *e,char out[13]) {
  if(e[8]!=' ') {out[k++]='.';for(unsigned i=8;i<11&&e[i]!=' ';i++) out[k++]=(char)e[i];}
  out[k]=0;
 }
-int asset_readdir_long(int id,struct asset_long_dirent *out,uint32_t meta[3]) {
+int asset_readdir_long_batch(int id,struct asset_long_dirent *out,uint32_t meta[3],struct asset_dir_sector *s) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(!h->dir) return fail("ASSET NOT DIR",ASSET_ENOTDIR);
  if(!out) return fail("ASSET BUFFER",ASSET_EINVAL);
  struct asset_dirent *d=&out->short_entry;
  fat_lba=~0u; uint8_t e[32];
- struct dir_sector s;s.lba=~0u;
  for(;;) {
-  char name[256];int r=cursor_next(&h->c,e,&s,name); if(r<=0) return r;
+  char name[256];int r=cursor_next(&h->c,e,s,name); if(r<=0) return r;
   if(e[0]=='.') continue; /* "." and ".." */
   memset(d,0,sizeof(*d)); format_name(e,d->name); d->attr=e[11]; d->is_dir=(e[11]&0x10)?1:0; d->size=d->is_dir?0:u32(e+28);
   memset(out->name,0,sizeof out->name);
@@ -249,6 +247,10 @@ int asset_readdir_long(int id,struct asset_long_dirent *out,uint32_t meta[3]) {
   if(meta) {meta[0]=u32(e+22);meta[1]=u32(e+14);meta[2]=entry_cluster(e);}
   return 1;
  }
+}
+int asset_readdir_long(int id,struct asset_long_dirent *out,uint32_t meta[3]) {
+ struct asset_dir_sector s;s.lba=~0u;
+ return asset_readdir_long_batch(id,out,meta,&s);
 }
 int asset_readdir_meta(int id,struct asset_dirent *d,uint32_t meta[3]) {
  if(!d)return asset_readdir_long(id,NULL,meta); /* preserve BADF/NOTDIR before buffer validation */

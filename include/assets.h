@@ -28,6 +28,10 @@ int asset_seek(int handle,uint64_t offset); /* absolute [0,size]; failure preser
 int asset_readdir(int handle,struct asset_dirent *out); /* 1 entry, 0 end */
 int asset_readdir_meta(int handle,struct asset_dirent *out,uint32_t meta[3]);
 int asset_readdir_long(int handle,struct asset_long_dirent *out,uint32_t meta[3]);
+/* Kernel-only scratch: caller owns it for ONE checked call20 invocation.
+ * Initialize lba to ~0u; discard on every return, including errors. */
+struct asset_dir_sector {uint32_t lba;uint8_t bytes[512];};
+int asset_readdir_long_batch(int handle,struct asset_long_dirent *out,uint32_t meta[3],struct asset_dir_sector *sector);
 int asset_close(int handle);
 int asset_size(int handle,uint32_t *bytes);
 int asset_cache_readers(void);

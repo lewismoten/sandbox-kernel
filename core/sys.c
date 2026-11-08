@@ -213,6 +213,9 @@ static int ioctl_input(unsigned i,const struct k_ioctl *r) {
    zero padding to 8}; "." and ".." are left out. An entry that does not fit
    waits for the next call; a buffer too small for it is EINVAL. */
 static int getdents(struct k_io *r,bool metadata,bool long_names) {
+ /* Stack ownership invalidates at entry/exit, on ALL success/error paths.
+  * Only call20 shares bytes between entries; calls11/18 retain old behavior. */
+ struct asset_dir_sector sector;sector.lba=~0u;
  int i=lookup(r->fd); if(i<0) return i;
  if(fds[i].kind!=K_ASSET) return -ENOTDIR;
  if(r->count>(1u<<20)) return -EINVAL;
@@ -222,7 +225,7 @@ static int getdents(struct k_io *r,bool metadata,bool long_names) {
  for(;;) {
   struct asset_long_dirent d;uint32_t meta[3];
   if(fds[i].has_pend) {d=fds[i].pend;memcpy(meta,fds[i].meta,sizeof meta);fds[i].has_pend=false;}
-  else {int e=asset_readdir_long(fds[i].asset,&d,meta); if(e<0) {if(done) break; return e;} if(!e) break;}
+  else {int e=long_names?asset_readdir_long_batch(fds[i].asset,&d,meta,&sector):asset_readdir_long(fds[i].asset,&d,meta); if(e<0) {if(done) break; return e;} if(!e) break;}
   const char *name=long_names?d.name:d.short_entry.name;
   uint32_t nb=(uint32_t)strlen(name);
   uint32_t head=metadata?24u:8u,len=(head+nb+7u)&~7u;
