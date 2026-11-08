@@ -7,6 +7,9 @@
 const char *asset_fail="none";
 static struct {uint32_t base,end,fat,fat_size,data,clusters,spc,root;bool mounted;} v;
 struct cursor {uint32_t cluster,index,hops,limit;bool done;};
+/* A directory sector lives only for one find/readdir invocation. Never trust
+ * bytes across asset calls, remounts, file reads or installer operations. */
+struct dir_sector {uint32_t lba;uint8_t bytes[512];};
 static struct handle {
  bool used,dir; uint16_t gen; int err;
  uint32_t first,size,pos,cluster;
@@ -58,7 +61,7 @@ static void cursor_start(struct cursor *c,uint32_t first) {
  c->limit=65536/(v.spc*16)+1; /* FAT allows at most 65536 entries per directory */
 }
 /* Next raw in-use short entry: 1 with e filled, 0 at end, <0 on error. */
-static int cursor_next(struct cursor *c,uint8_t e[32]) {
+static int cursor_next(struct cursor *c,uint8_t e[32],struct dir_sector *s) {
  for(;;) {
   if(c->done) return 0;
   if(c->index==v.spc*16) {
@@ -69,8 +72,11 @@ static int cursor_next(struct cursor *c,uint8_t e[32]) {
    c->cluster=n;c->index=0;
   }
   if(!cluster_ok(c->cluster)) return fail("DIR CLUSTER",ASSET_EIO);
-  int r=rd(v.data+(c->cluster-2)*v.spc+c->index/16,buf); if(r) return r;
-  memcpy(e,buf+(c->index%16)*32,32); c->index++;
+  uint32_t lba=v.data+(c->cluster-2)*v.spc+c->index/16;
+  if(s->lba!=lba) {
+   s->lba=~0u;int r=rd(lba,s->bytes);if(r)return r;s->lba=lba;
+  }
+  memcpy(e,s->bytes+(c->index%16)*32,32); c->index++;
   if(!e[0]) {c->done=true;return 0;}
   if(e[0]==0xe5||(e[11]&0x3f)==0x0f||(e[11]&0x08)) continue; /* deleted, long name, label */
   if(e[11]&0xc0) return fail("DIR ATTR",ASSET_EIO);
@@ -104,8 +110,9 @@ static int short_name(const char *p,uint32_t n,uint8_t out[11]) {
 static uint32_t entry_cluster(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
 static int find(uint32_t dir,const uint8_t name[11],uint8_t e[32]) {
  struct cursor c; cursor_start(&c,dir);
+ struct dir_sector s;s.lba=~0u;
  uint8_t want[11]; memcpy(want,name,11); if(want[0]==0x05) want[0]=0xe5;
- for(;;) {int r=cursor_next(&c,e); if(r<=0) return r?r:fail("ASSET NOT FOUND",ASSET_ENOENT); if(!memcmp(e,want,11)) return 0;}
+ for(;;) {int r=cursor_next(&c,e,&s); if(r<=0) return r?r:fail("ASSET NOT FOUND",ASSET_ENOENT); if(!memcmp(e,want,11)) return 0;}
 }
 static int new_handle(void) {
  for(unsigned i=0;i<ASSET_HANDLES;i++) if(!handles[i].used) {
@@ -211,8 +218,9 @@ int asset_readdir(int id,struct asset_dirent *d) {
  if(!h->dir) return fail("ASSET NOT DIR",ASSET_ENOTDIR);
  if(!d) return fail("ASSET BUFFER",ASSET_EINVAL);
  fat_lba=~0u; uint8_t e[32];
+ struct dir_sector s;s.lba=~0u;
  for(;;) {
-  int r=cursor_next(&h->c,e); if(r<=0) return r;
+  int r=cursor_next(&h->c,e,&s); if(r<=0) return r;
   if(e[0]=='.') continue; /* "." and ".." */
   memset(d,0,sizeof(*d)); format_name(e,d->name); d->attr=e[11]; d->is_dir=(e[11]&0x10)?1:0; d->size=d->is_dir?0:u32(e+28);
   return 1;
