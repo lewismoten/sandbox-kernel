@@ -180,22 +180,30 @@ static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm
  *ndirs=d; return fatput_name(part[2],nm);
 }
 int fatput_check(const char *path) {uint8_t d[3][11],nm[11];unsigned n;return split(path,d,&n,nm);}
-int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
+static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cache) {
  uint8_t nm[11],e[32],dirs[3][11]; unsigned ndirs;
- int r=split(path,dirs,&ndirs,nm); if(r) return r;
+ int r;
+ if(cache) {
+  if((r=fatput_name(path,nm))) return r;
+  memcpy(dirs[0],"OS         ",11);memcpy(dirs[1],"CACHE      ",11);ndirs=2;
+ } else if((r=split(path,dirs,&ndirs,nm))) return r;
  if(bytes>FATPUT_MAX) return fail("PUT SIZE",27);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
  taken=0; fc_sec=~0u;
  if((r=rd(v.base,s))) return r;
+ if(u16(s+48)&&u16(s+48)!=0xffff&&u16(s+48)>=v.fat-v.base)return fail("PUT FSINFO RANGE",5);
  uint32_t fsinfo=v.base+u16(s+48); if(u16(s+48)==0||u16(s+48)==0xffff) fsinfo=0;
  struct slot hit,free_slot; uint32_t dir=v.root;
  for(unsigned i=0;i<ndirs;i++) if((r=ensure_dir(dir,i==0,dirs[i],&dir))) return r;
  if((r=scan(dir,nm,&hit,&free_slot,e))) return r;
  uint32_t olds=0;
  if(hit.found) {
-  if(e[11]&0x1f) return fail("PUT NOT FILE",21); /* read-only, hidden, system, label or directory */
+  if(e[11]&(cache?0x18:0x1f)) return fail("PUT NOT FILE",21); /* cache capability owns regular files, including R/O attributes */
   uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26);
-  if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) return r;
+  if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) {
+   if(!cache)return r;
+   olds=0; /* malformed expendable cache: don't reclaim an unvalidated chain */
+  }
  } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;
  if((r=alloc(n))) return r;
@@ -212,5 +220,84 @@ int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
   if(f<=v.clusters&&f>=taken&&nf<=v.clusters) {put32(s+488,nf);if((r=wr(fsinfo,s,fsinfo))) return r;}
   else if(f!=~0u) {put32(s+488,~0u);if((r=wr(fsinfo,s,fsinfo))) return r;} /* it was wrong: say unknown */
  }
- fatput_fail="none"; return asset_mount();
+ fatput_fail="none";
+ return cache?0:asset_mount();
+}
+int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
+ int r=fatput_check(path);if(r)return r;
+ if(bytes>FATPUT_MAX)return -27;
+ /* Installer timestamps are fixed. Unpublish BEFORE any content mutation,
+    including a same-name/same-size update or an interrupted install. */
+ r=fatcache_invalidate();if(r&&r!=-2)return r;
+ return put_file(path,data,bytes,false);
+}
+/* Names, never paths: this entry cannot escape /OS/CACHE. */
+int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes) {
+ if(asset_cache_readers())return -16;
+ return put_file(name,data,bytes,true);
+}
+/* Find an existing cache directory, never create it during removal. */
+static int cache_dir(uint32_t *dir) {
+ int r=asset_volume(&v);if(r)return r;
+ fc_sec=~0u;*dir=v.root;
+ const char *names[]={"OS         ","CACHE      "};
+ for(unsigned i=0;i<2;i++) {
+  struct slot hit,free_slot;uint8_t e[32];
+  if((r=scan(*dir,(const uint8_t *)names[i],&hit,&free_slot,e)))return r;
+  if(!hit.found)return -2;
+  if((e[11]&0x1e)!=0x10)return fail("PUT NOT DIR",20);
+  *dir=((uint32_t)u16(e+20)<<16)|u16(e+26);
+  if(!cluster_ok(*dir))return -5;
+ }
+ return 0;
+}
+static int remove_cache(const char *name,bool discard) {
+ if(asset_cache_readers())return -16;
+ uint8_t nm[11],e[32];uint32_t dir,n=0;struct slot hit,free_slot;
+ int r=fatput_name(name,nm);if(r)return r;
+ if((r=cache_dir(&dir)))return r;
+ if((r=rd(v.base,s)))return r;
+ if(u16(s+48)&&u16(s+48)!=0xffff&&u16(s+48)>=v.fat-v.base)return fail("PUT FSINFO RANGE",5);
+ if((r=scan(dir,nm,&hit,&free_slot,e)))return r;
+ if(!hit.found)return -2;
+ if(e[11]&(discard?0x18:0x1f))return discard?0:-21;
+ if(!discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n)))return r;
+ /* Unpublish before freeing. A cut can leak, never reuse a live chain. */
+ if((r=rd(hit.lba,s)))return r;
+ s[hit.off]=0xe5;
+ if((r=wr(hit.lba,s,0)))return r;
+ /* Invalidation is committed. Bad cache data must not deny installs. */
+ if(discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n)))return 0;
+ for(uint32_t i=0;i<n;i++)if((r=fat_set(old[i],0)))return discard?0:r;
+ /* Update FSInfo only after unpublication and release. Unknown stays unknown. */
+ if((r=rd(v.base,s)))return discard?0:r;
+ uint32_t fsinfo=v.base+u16(s+48);
+ if(!u16(s+48)||u16(s+48)==0xffff)return 0;
+ if((r=rd(fsinfo,s)))return discard?0:r;
+ if(u32(s)==0x41615252u&&u32(s+484)==0x61417272u) {
+  uint32_t f=u32(s+488);if(f!=~0u) {
+   put32(s+488,f<=v.clusters&&n<=v.clusters-f?f+n:~0u);
+   if((r=wr(fsinfo,s,fsinfo)))return discard?0:r;
+  }
+ }
+ return 0;
+}
+int fatcache_remove(const char *name) {return remove_cache(name,false);}
+int fatcache_invalidate(void) {return remove_cache("GAMES.IDX",true);}
+int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
+ uint8_t a[11],b[11];int r=fatput_name(from,a);if(r)return r;
+ if((r=fatput_name(to,b)))return r;
+ if(!memcmp(a,b,11))return -22;
+ char path[24]="/OS/CACHE/";size_t n=strlen(from);memcpy(path+10,from,n+1);
+ /* /OS/CACHE/ is 10 bytes; use no shared clusters between names. */
+ int h=asset_open(path,(uint32_t)(10+n),0);if(h<0)return h;
+ uint32_t bytes=0;if((r=asset_size(h,&bytes))||bytes>cap) {asset_close(h);return r?r:-27;}
+ uint32_t at=0;
+ while(at<bytes) {r=asset_read(h,scratch+at,bytes-at);if(r<=0){asset_close(h);return r?r:-5;}at+=(uint32_t)r;}
+ asset_close(h);
+ if((r=fatcache_put(to,scratch,bytes)))return r;
+ /* COW publication to destination, then remove source. On an interrupted
+    rename both names may remain, with INDEPENDENT chains. Readers use only
+    the destination. No two-entry FAT rename or cross-link crash window. */
+ return fatcache_remove(from);
 }

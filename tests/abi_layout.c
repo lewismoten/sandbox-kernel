@@ -8,6 +8,8 @@ SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_hea
 SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
 SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);
 SIZE(k_close,sbx_close_rec); SAME(k_close,sbx_close_rec,fd);
+SIZE(k_rename,sbx_rename_rec); SAME(k_rename,sbx_rename_rec,from); SAME(k_rename,sbx_rename_rec,from_bytes); SAME(k_rename,sbx_rename_rec,to); SAME(k_rename,sbx_rename_rec,to_bytes);
+SIZE(k_dirent_meta,sbx_dirent_meta); SAME(k_dirent_meta,sbx_dirent_meta,length); SAME(k_dirent_meta,sbx_dirent_meta,type); SAME(k_dirent_meta,sbx_dirent_meta,name_bytes); SAME(k_dirent_meta,sbx_dirent_meta,size); SAME(k_dirent_meta,sbx_dirent_meta,modified); SAME(k_dirent_meta,sbx_dirent_meta,created); SAME(k_dirent_meta,sbx_dirent_meta,identity); SAME(k_dirent_meta,sbx_dirent_meta,reserved);
 SIZE(k_seek,sbx_seek_rec); SAME(k_seek,sbx_seek_rec,fd); SAME(k_seek,sbx_seek_rec,offset); SAME(k_seek,sbx_seek_rec,whence); SAME(k_seek,sbx_seek_rec,position);
 SIZE(k_ioctl,sbx_ioctl_rec); SAME(k_ioctl,sbx_ioctl_rec,fd); SAME(k_ioctl,sbx_ioctl_rec,request); SAME(k_ioctl,sbx_ioctl_rec,buffer); SAME(k_ioctl,sbx_ioctl_rec,bytes);
 SIZE(k_exit,sbx_exit_rec); SAME(k_exit,sbx_exit_rec,status);
@@ -34,6 +36,7 @@ int32_t use_all(uint64_t fd,char *b) {
  sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
  uint64_t ns=0; s|=sbx_clock_ns(&ns); s|=sbx_sleep_until(ns+1000000u);
  s|=sbx_seek(fd,0,&n);
+ s|=sbx_fsync(fd);s|=sbx_getdents_meta(fd,b,64,&n);s|=sbx_rename("/sd/OS/CACHE/A.TMP",18,"/sd/OS/CACHE/A.IDX",18);
  if(s==-1) sbx_exit(1);
  return s;
 }

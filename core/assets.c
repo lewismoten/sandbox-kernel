@@ -11,7 +11,7 @@ struct cursor {uint32_t cluster,index,hops,limit;bool done;};
  * bytes across asset calls, remounts, file reads or installer operations. */
 struct dir_sector {uint32_t lba;uint8_t bytes[512];};
 static struct handle {
- bool used,dir; uint16_t gen; int err;
+ bool used,dir,cache; uint16_t gen; int err;
  uint32_t first,size,pos,cluster;
  struct cursor c;
 } handles[ASSET_HANDLES];
@@ -163,6 +163,10 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
  }
  int id=new_handle(); if(id<0) return id;
  struct handle *h=get(id); h->dir=dir; h->first=cluster; h->size=dir?0:size; h->cluster=cluster;
+ if(n>=9&&(n==9||path[9]=='/')) {
+  const char *prefix="/OS/CACHE";h->cache=true;
+  for(unsigned i=0;i<9;i++) {char ch=path[i];if(ch>='a'&&ch<='z')ch-=32;if(ch!=prefix[i])h->cache=false;}
+ }
  if(dir) cursor_start(&h->c,cluster);
  return id;
 }
@@ -213,7 +217,7 @@ static void format_name(const uint8_t *e,char out[13]) {
  if(e[8]!=' ') {out[k++]='.';for(unsigned i=8;i<11&&e[i]!=' ';i++) out[k++]=(char)e[i];}
  out[k]=0;
 }
-int asset_readdir(int id,struct asset_dirent *d) {
+int asset_readdir_meta(int id,struct asset_dirent *d,uint32_t meta[3]) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(!h->dir) return fail("ASSET NOT DIR",ASSET_ENOTDIR);
  if(!d) return fail("ASSET BUFFER",ASSET_EINVAL);
@@ -223,10 +227,13 @@ int asset_readdir(int id,struct asset_dirent *d) {
   int r=cursor_next(&h->c,e,&s); if(r<=0) return r;
   if(e[0]=='.') continue; /* "." and ".." */
   memset(d,0,sizeof(*d)); format_name(e,d->name); d->attr=e[11]; d->is_dir=(e[11]&0x10)?1:0; d->size=d->is_dir?0:u32(e+28);
+  if(meta) {meta[0]=u32(e+22);meta[1]=u32(e+14);meta[2]=entry_cluster(e);}
   return 1;
  }
 }
+int asset_readdir(int id,struct asset_dirent *d) {return asset_readdir_meta(id,d,NULL);}
 int asset_size(int id,uint32_t *bytes) {struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF); *bytes=h->size; return 0;}
+int asset_cache_readers(void) {int n=0;for(unsigned i=0;i<ASSET_HANDLES;i++)n+=handles[i].used&&handles[i].cache;return n;}
 int asset_close(int id) {
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  h->used=false; h->gen=bump(h->gen); return 0;

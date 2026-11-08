@@ -16,3 +16,8 @@ int fatput_check(const char *path);
    then the directory entry, then free the replaced chain. Every written
    sector is read back. 0 or a negative errno. */
 int fatput(const char *path,const uint8_t *data,uint32_t bytes);
+/* ABI 1.4 backend: plain 8.3 names in /OS/CACHE only, not USB paths. */
+int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes);
+int fatcache_remove(const char *name);
+int fatcache_invalidate(void); /* unpublish before install; bad cache data cannot deny installs */
+int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap);

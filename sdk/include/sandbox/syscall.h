@@ -50,6 +50,18 @@ static inline int32_t sbx_close(uint64_t fd) {
   sbx_close_rec r = {SBX_HEADER(sbx_close_rec), fd};
   return sbx_syscall(SBX_CALL_CLOSE, &r, sizeof r);
 }
+/* Cache writes: one writer, <=1 MiB RAM, fsync commits by COW. Close/reset
+   abort unflushed bytes, never implicit sync. */
+static inline int32_t sbx_fsync(uint64_t fd) {
+  sbx_close_rec r = {SBX_HEADER(sbx_close_rec), fd};
+  return sbx_syscall(SBX_CALL_FSYNC, &r, sizeof r);
+}
+/* Cache-only copy/publish rename; temp may survive interrupted cleanup.
+   Destination is old/new, no shared chains. Close the writer first. */
+static inline int32_t sbx_rename(const char *from, uint32_t from_bytes, const char *to, uint32_t to_bytes) {
+  sbx_rename_rec r = {SBX_HEADER(sbx_rename_rec), (uint32_t)(uintptr_t)from, from_bytes, (uint32_t)(uintptr_t)to, to_bytes};
+  return sbx_syscall(SBX_CALL_RENAME, &r, sizeof r);
+}
 /* ABI 1.3: absolute [0,file size], including EOF. Failure preserves position. */
 static inline int32_t sbx_seek(uint64_t fd, int64_t offset, uint64_t *position) {
   sbx_seek_rec r = {SBX_HEADER(sbx_seek_rec), fd, offset, SBX_SEEK_SET, 0};
@@ -95,6 +107,12 @@ static inline int32_t sbx_fb_map(uint64_t fb_fd, uint64_t bytes, void **address)
 static inline int32_t sbx_getdents(uint64_t dir_fd, void *buffer, uint32_t bytes, uint64_t *done) {
   sbx_dirents_rec r = {SBX_HEADER(sbx_dirents_rec), dir_fd, (uint32_t)(uintptr_t)buffer, bytes, 0};
   int32_t s = sbx_syscall(SBX_CALL_GETDENTS, &r, sizeof r);
+  if (!s) *done = r.transferred;
+  return s;
+}
+static inline int32_t sbx_getdents_meta(uint64_t dir_fd, void *buffer, uint32_t bytes, uint64_t *done) {
+  sbx_dirents_rec r = {SBX_HEADER(sbx_dirents_rec), dir_fd, (uint32_t)(uintptr_t)buffer, bytes, 0};
+  int32_t s = sbx_syscall(SBX_CALL_GETDENTS_META, &r, sizeof r);
   if (!s) *done = r.transferred;
   return s;
 }

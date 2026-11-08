@@ -6,6 +6,7 @@
 #include "clock.h"
 #include "abi.h"
 #include "assets.h"
+#include "fatput.h"
 #include "fb.h"
 #include "input.h"
 #include "sys.h"
@@ -25,10 +26,20 @@
 #define ENAMETOOLONG 36
 #define ENOSYS 38
 #define ENOTDIR 20
-enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT};
+enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE};
+/* One bounded write transaction; never a general filesystem writer. */
+static uint8_t cache_bytes[FATPUT_MAX];
+static char cache_name[13];static uint32_t cache_used;static bool cache_dirty;
+static bool cache_writing(void);
+static int cache_path(const char *p,uint32_t n,char out[13]) {
+ if(n<14||n>25||memcmp(p,"/sd/OS/CACHE/",13))return -30;
+ for(unsigned i=0;i<n;i++)if(!p[i])return -EINVAL;
+ unsigned k=n-13;memset(out,0,13);memcpy(out,p+13,k);
+ uint8_t nm[11];return fatput_name(out,nm);
+}
 /* inst: the input instance an input handle was opened on; pend: a directory
    entry that did not fit the last getdents buffer. */
-static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_dirent pend;} fds[SYS_HANDLES];
+static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_dirent pend; uint32_t meta[3];} fds[SYS_HANDLES];
 static bool surface_mapped; static uint32_t surface_bytes;
 int64_t sys_exit_status; uint32_t sys_calls,sys_presents,sys_healths; uint64_t sys_health_seq,sys_wake_us;
 extern uint32_t boot_generation;
@@ -37,6 +48,7 @@ static void release(unsigned i) {
  if(fds[i].kind==K_INPUT) input_close(fds[i].inst);
  fds[i].kind=K_FREE;fds[i].has_pend=false;fds[i].gen=(uint16_t)(fds[i].gen==0xffffu?1:fds[i].gen+1);
 }
+static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
 void sys_reset(void) {
  for(unsigned i=0;i<SYS_HANDLES;i++) release(i);
  surface_mapped=false;surface_bytes=0;sys_presents=0;sys_healths=0;sys_health_seq=0;sys_wake_us=0;
@@ -51,6 +63,8 @@ static int lookup(uint64_t fd) {
 static uint32_t fb_surface_bytes(void) {return FB_SURFACE_MAX;} /* the same in every mode */
 static uint32_t fb_bpp(void) {return fb0.depth/8u;}
 static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
+ if((flags&0x600u)&&flags!=0x601u)return -EINVAL;
+ if((flags&0x600u)&&(n<13||memcmp(p,"/sd/OS/CACHE/",13)))return -30;
  unsigned i=0; while(i<SYS_HANDLES&&fds[i].kind!=K_FREE) i++;
  if(i==SYS_HANDLES) return -EMFILE;
  uint32_t access=flags&3u;
@@ -67,6 +81,13 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
   fds[i].kind=K_INPUT;fds[i].inst=inst;
  }
  else if(n>=3&&!memcmp(p,"/sd",3)&&(n==3||p[3]=='/')) {
+  if(flags&0x600u) {
+   if(flags!=0x601u)return -EINVAL; /* WRONLY|CREAT|TRUNC, no append/update */
+   char name[13];int e=cache_path(p,n,name);if(e)return e;
+   if(cache_writing()||asset_cache_readers())return -EBUSY;
+   memcpy(cache_name,name,13);cache_used=0;cache_dirty=true;fds[i].kind=K_CACHE;
+   goto opened;
+  }
   if(access==3) return -EINVAL;
   int h=n==3?asset_open("/",1,access):asset_open(p+3,n-3,access);
   if(h<0) return h;
@@ -74,6 +95,7 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
  }
  else if(n>=5&&!memcmp(p,"/dev/",5)) return -ENODEV;
  else return -ENOENT;
+opened:
  if(!fds[i].gen) fds[i].gen=1;
  *fd=((uint64_t)fds[i].gen<<8)|i; return 0;
 }
@@ -100,6 +122,12 @@ static int io(struct k_io *r,bool write) {
   int got=input_read(fds[i].inst,ev,max); if(got<0) return got;
   if(us_copy_out(va,ev,(uint32_t)got*16u)) return -EFAULT;
   r->transferred=(uint32_t)got*16u; return 0;
+ }
+ if(fds[i].kind==K_CACHE) {
+  if(!write)return -EBADF;
+  if(count>FATPUT_MAX-cache_used)return -28;
+  if(us_copy_in(cache_bytes+cache_used,va,count))return -EFAULT;
+  cache_used+=count;cache_dirty=true;r->transferred=count;return 0;
  }
  if(fds[i].kind!=K_ASSET) return -EINVAL;
  if(write) return -EBADF;
@@ -184,7 +212,7 @@ static int ioctl_input(unsigned i,const struct k_ioctl *r) {
 /* getdents: whole entries {u16 length, u8 type, u8 name bytes, u32 size, name,
    zero padding to 8}; "." and ".." are left out. An entry that does not fit
    waits for the next call; a buffer too small for it is EINVAL. */
-static int getdents(struct k_io *r) {
+static int getdents(struct k_io *r,bool metadata) {
  int i=lookup(r->fd); if(i<0) return i;
  if(fds[i].kind!=K_ASSET) return -ENOTDIR;
  if(r->count>(1u<<20)) return -EINVAL;
@@ -192,15 +220,17 @@ static int getdents(struct k_io *r) {
  uint32_t va=(uint32_t)r->buffer,count=(uint32_t)r->count,done=0;
  if(us_check(va,count,U_W)) return -EFAULT;
  for(;;) {
-  struct asset_dirent d;
-  if(fds[i].has_pend) {d=fds[i].pend;fds[i].has_pend=false;}
-  else {int e=asset_readdir(fds[i].asset,&d); if(e<0) {if(done) break; return e;} if(!e) break;}
+  struct asset_dirent d;uint32_t meta[3];
+  if(fds[i].has_pend) {d=fds[i].pend;memcpy(meta,fds[i].meta,sizeof meta);fds[i].has_pend=false;}
+  else {int e=asset_readdir_meta(fds[i].asset,&d,meta); if(e<0) {if(done) break; return e;} if(!e) break;}
   uint32_t nb=(uint32_t)strlen(d.name);
   if((nb==1&&d.name[0]=='.')||(nb==2&&d.name[0]=='.'&&d.name[1]=='.')) continue;
-  uint32_t len=(8u+nb+7u)&~7u;
-  if(len>count-done) {fds[i].pend=d;fds[i].has_pend=true; if(!done) return -EINVAL; break;}
-  uint8_t e[24]; memset(e,0,sizeof e);
-  struct k_dirent h={(uint16_t)len,(uint8_t)(d.is_dir?2:1),(uint8_t)nb,d.size}; memcpy(e,&h,8); memcpy(e+8,d.name,nb);
+  uint32_t head=metadata?24u:8u,len=(head+nb+7u)&~7u;
+  if(len>count-done) {fds[i].pend=d;memcpy(fds[i].meta,meta,sizeof meta);fds[i].has_pend=true; if(!done) return -EINVAL; break;}
+  uint8_t e[40]; memset(e,0,sizeof e);
+  struct k_dirent h={(uint16_t)len,(uint8_t)(d.is_dir?2:1),(uint8_t)nb,d.size}; memcpy(e,&h,8);
+  if(metadata)memcpy(e+8,meta,sizeof meta);
+  memcpy(e+head,d.name,nb);
   if(us_copy_out(va+done,e,len)) return -EFAULT;
   done+=len;
  }
@@ -235,11 +265,11 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[18]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[13]=32,[14]=24,[16]=24,[17]=32};
+static const uint32_t sizes[20]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
- if(call>17||!sizes[call]) return -ENOSYS;
+ if(call>19||!sizes[call]) return -ENOSYS;
  if(reg[3]|reg[4]|reg[5]|reg[6]) return -EINVAL;
  if(reg[2]!=K_ABI_MAJOR) return -93;
  if(bytes<16||bytes>4096||bytes%8) return -EINVAL;
@@ -251,17 +281,17 @@ int32_t sys_call(const uint32_t reg[8]) {
  /* outputs must be zero on entry; the record must be writable if it has any */
  switch(call) {
   case 1: if(((struct k_open *)rec)->fd) return -EINVAL; break;
-  case 2: case 3: case 11: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
+  case 2: case 3: case 11: case 18: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
   case 9: if(((struct k_seek *)rec)->position) return -EINVAL; break;
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==9||call==11||call==13)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
    if(r->mode) return -EINVAL;
-   if(r->flags&~0x103ull) return -EINVAL;
+   if(r->flags&~0x703ull) return -EINVAL;
    if(r->path>>32) return -EFAULT;
    if(!r->path_bytes) return -EINVAL;
    if(r->path_bytes>255) return -ENAMETOOLONG;
@@ -289,7 +319,25 @@ int32_t sys_call(const uint32_t reg[8]) {
    if((e=asset_seek(fds[i].asset,(uint64_t)r->offset))) return e;
    r->position=(uint64_t)r->offset;break;
   }
-  case 11: if((e=getdents((struct k_io *)rec))) return e; break;
+  case 11: case 18: if((e=getdents((struct k_io *)rec,call==18))) return e; break;
+  case 12: {
+   int i=lookup(((struct k_close *)rec)->fd);if(i<0)return i;
+   if(fds[i].kind!=K_CACHE)return -EINVAL;
+   if(!cache_dirty)return 0;
+   e=fatcache_put(cache_name,cache_bytes,cache_used);
+   if(!e)cache_dirty=false;
+   return e; /* sd_write waits for card programming and readback at each sector */
+  }
+  case 19: {
+   const struct k_rename *r=(const struct k_rename *)rec;
+   if(r->from>>32||r->to>>32)return -EFAULT;
+   if(r->from_bytes>255||r->to_bytes>255)return -ENAMETOOLONG;
+   char a[256],b[256],na[13],nb[13];
+   if(us_copy_in(a,r->from,(uint32_t)r->from_bytes)||us_copy_in(b,r->to,(uint32_t)r->to_bytes))return -EFAULT;
+   if((e=cache_path(a,(uint32_t)r->from_bytes,na))||(e=cache_path(b,(uint32_t)r->to_bytes,nb)))return e;
+   if(cache_writing()||asset_cache_readers())return -EBUSY;
+   return fatcache_rename(na,nb,cache_bytes,sizeof cache_bytes);
+  }
   case 13: if((e=clock_get((struct k_clock *)rec))) return e; break;
   case 14: return sleep_until((const struct k_sleep *)rec);
   case 17: return health((const struct k_health *)rec);
