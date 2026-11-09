@@ -166,6 +166,12 @@ static inline int32_t sbx_input_state_get(uint64_t input_fd, sbx_input_state *st
   *state = (sbx_input_state){SBX_HEADER(sbx_input_state), {0}, {0}};
   return sbx_ioctl(input_fd, SBX_IOC_INPUT_STATE, state, sizeof *state);
 }
+/* /dev/serial0 (ABI 1.10): open it with SBX_O_NONBLOCK (read, write or both), then sbx_read and
+   sbx_write as usual (read returns SBX_EAGAIN when empty; write always takes every byte). */
+static inline int32_t sbx_serial_query(uint64_t serial_fd, sbx_serial_info *info) {
+  *info = (sbx_serial_info){SBX_HEADER(sbx_serial_info), 0, 0, 0, 0, 0, 0, 0};
+  return sbx_ioctl(serial_fd, SBX_IOC_SERIAL_QUERY, info, sizeof *info);
+}
 __attribute__((noreturn)) static inline void sbx_exit(int64_t status) {
   sbx_exit_rec r = {SBX_HEADER(sbx_exit_rec), status};
   sbx_syscall(SBX_CALL_EXIT, &r, sizeof r);

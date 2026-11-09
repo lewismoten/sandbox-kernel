@@ -237,6 +237,9 @@ described in `docs/design.md`.)
 | 1.5 | `getdents_long_meta` (call 20): validated VFAT long names as UTF-8; use a buffer of at least 280 bytes. Calls 11 and 18 keep returning 8.3 aliases. |
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
+| 1.8 | Reserved for sound, in review; not in this kernel yet. |
+| 1.9 | Reserved for e-ink, in review; not in this kernel yet. |
+| 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
 
 **Not yet:** sound (no `/dev/audio`; a PCM host core exists in `docs/audio-host-core.md`
 but is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic

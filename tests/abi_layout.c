@@ -28,6 +28,7 @@ SIZE(k_clock,sbx_clock_rec); SAME(k_clock,sbx_clock_rec,clock); SAME(k_clock,sbx
 SIZE(k_sleep,sbx_sleep_rec); SAME(k_sleep,sbx_sleep_rec,deadline);
 SIZE(k_input_event,sbx_input_event); SAME(k_input_event,sbx_input_event,ns); SAME(k_input_event,sbx_input_event,type); SAME(k_input_event,sbx_input_event,code); SAME(k_input_event,sbx_input_event,value);
 SIZE(k_input_info,sbx_input_info); SAME(k_input_info,sbx_input_info,flags); SAME(k_input_info,sbx_input_info,instance); SAME(k_input_info,sbx_input_info,queue_records); SAME(k_input_info,sbx_input_info,keys); SAME(k_input_info,sbx_input_info,axes); SAME(k_input_info,sbx_input_info,axis_min); SAME(k_input_info,sbx_input_info,axis_max);
+SIZE(k_serial_info,sbx_serial_info); SAME(k_serial_info,sbx_serial_info,transport); SAME(k_serial_info,sbx_serial_info,rx_pending);
 SIZE(k_input_state,sbx_input_state); SAME(k_input_state,sbx_input_state,keys); SAME(k_input_state,sbx_input_state,axes);
 _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI version");
 #ifdef __arm__
@@ -36,7 +37,7 @@ _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI versi
 int32_t use_all(uint64_t fd,char *b) {
  uint64_t n,f; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
  s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd); void *a; s|=sbx_fb_map(fd,4096,&a);
- sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
+ sbx_serial_info si; sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_serial_query(fd,&si); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
  uint64_t ns=0; s|=sbx_clock_ns(&ns); s|=sbx_sleep_until(ns+1000000u);
  s|=sbx_seek(fd,0,&n);
  s|=sbx_fsync(fd);s|=sbx_getdents_meta(fd,b,64,&n);s|=sbx_rename("/sd/OS/CACHE/A.TMP",18,"/sd/OS/CACHE/A.IDX",18);

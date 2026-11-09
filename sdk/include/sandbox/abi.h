@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 7u /* 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -71,6 +71,11 @@ enum {
 #define SBX_EV_ABS 3u
 #define SBX_SYN_REPORT 0u
 #define SBX_SYN_DROPPED 3u /* events were lost: read the state, then go on */
+/* Class 6 is the serial channel (1.10): /dev/serial0, nonblocking, one owner, a byte stream to the
+   host on the USB link. See docs/serial.md. Bytes that do not fit, or that have no reader, are dropped and counted. */
+#define SBX_IOC_SERIAL_QUERY SBX_IOC(6, 0)
+#define SBX_SERIAL_NONE 0u /* sbx_serial_info.transport: no host has the port open */
+#define SBX_SERIAL_USB 1u  /* the USB CDC link */
 #define SBX_KEY_ESC 1u
 #define SBX_KEY_Q 16u
 #define SBX_KEY_ENTER 28u
@@ -214,6 +219,10 @@ typedef struct sbx_input_state { /* SBX_IOC_INPUT_STATE output */
   uint64_t keys[SBX_INPUT_KEYS / 64]; /* bit (code % 64) of word (code / 64) is set while down */
   int64_t axes[SBX_INPUT_AXES];
 } sbx_input_state;
+typedef struct sbx_serial_info { /* SBX_IOC_SERIAL_QUERY output (1.10) */
+  sbx_header h;
+  uint64_t transport, tx_bytes, tx_dropped, rx_bytes, rx_dropped, tx_pending, rx_pending;
+} sbx_serial_info;
 /* Read-only record whose address is in r0 at entry. Returning from the entry
    point ends the program with r0 as its exit status. */
 typedef struct sbx_startup {
@@ -281,6 +290,7 @@ SBX_CHECK(sbx_input_event, 16); SBX_AT(sbx_input_event, type, 8); SBX_AT(sbx_inp
 SBX_CHECK(sbx_input_info, 72);
 SBX_AT(sbx_input_info, flags, 16); SBX_AT(sbx_input_info, instance, 24); SBX_AT(sbx_input_info, queue_records, 32);
 SBX_AT(sbx_input_info, keys, 40); SBX_AT(sbx_input_info, axes, 48); SBX_AT(sbx_input_info, axis_min, 56); SBX_AT(sbx_input_info, axis_max, 64);
+SBX_CHECK(sbx_serial_info, 72); SBX_AT(sbx_serial_info, transport, 16); SBX_AT(sbx_serial_info, rx_pending, 64);
 SBX_CHECK(sbx_input_state, 368); SBX_AT(sbx_input_state, keys, 16); SBX_AT(sbx_input_state, axes, 112);
 #undef SBX_CHECK
 #undef SBX_AT

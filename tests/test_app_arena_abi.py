@@ -63,7 +63,7 @@ class ArenaABI(CallsBase):
             self.assertEqual(d&~4095,0x04000000+before+p*4096)
     def test_startup_extension(self):
         s=peek(self.c,START_VA,48)
-        self.assertEqual(struct.unpack_from('<IHH',s),(48,1,7))
+        self.assertEqual(struct.unpack_from('<IHH',s),(48,1,10))
         self.assertEqual(struct.unpack_from('<Q',s,40)[0],self.c.probe_epoch())
         self.assertEqual(struct.unpack_from('<3Q',s,16),(8<<20,1<<20,16))
         self.assertEqual(self.c.us_check(START_VA,48,W),-14)
