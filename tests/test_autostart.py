@@ -90,6 +90,7 @@ class Autostart(Work):
         c.fb_setup(0,True);c.take_log()
         self.assertFalse(c.boot_storage_policy(False));log=c.take_log().decode()   # first pass, no card
         self.assertIn('SD card not readable; recovery console',log);self.assertFalse(c.os_running())
+        c.eink_page_shown.restype=C.c_bool;self.assertFalse(c.eink_page_shown())   # the panel stays the kernel's
     def test_boot_healthy_storage_without_os_keeps_recovery_rule(self):
         c=self.c;c.boot_storage_policy.argtypes=[C.c_bool];c.boot_storage_policy.restype=C.c_bool
         self.card({})
