@@ -1,4 +1,6 @@
-# Per-game save folders: `/sd/OS/SAVES/<GAME>/`
+# ABI 1.7: per-game save folders, `/sd/OS/SAVES/<GAME>/`
+
+ABI minor 1.7: `/OS/SAVES/<GAME>/` write scope. Major stays 1; both independent headers (`include/abi.h`, `sdk/include/sandbox/abi.h`) say minor 7, and the startup record reports 1.7. No new call numbers or records. Older applications are unaffected.
 
 Applications get a second, narrow write scope next to the cache (`docs/cache-storage.md`).
 It is **not general SD write access**. The same calls apply (open `0x601`, write, `sbx_fsync`,
@@ -17,6 +19,12 @@ close, `sbx_rename`); only the accepted path grows.
 - Any open read handle on `/OS/CACHE` or `/OS/SAVES` (a file or a directory) blocks
   mutation with EBUSY, so a rewrite never moves a chain under a reader.
 
+## Limits
+
+At most **64 game folders** under `/OS/SAVES` and **32 files** in one game's folder. Creating a
+new folder or file past a cap fails at `sbx_fsync` with `-122` (quota) and writes nothing;
+existing games and files keep saving. The caps keep a runaway app from filling the card.
+
 ## Power-cut behavior
 
 The write path is the cache's: data into free clusters, both FAT copies, then one directory
@@ -29,9 +37,10 @@ and leaked clusters; fsck cleans them. This is not a journal and proves nothing 
 physical SD behavior; the Pi has not been written.
 
 Unlike the cache, a save folder is **strict**: a file with a read-only, hidden or system
-attribute is not replaced (EEXIST-class refusal, `PUT NOT FILE`), and a file whose cluster
-chain does not validate is an error, not something to overwrite. Saves are the player's data,
-not expendable.
+attribute is not replaced (`PUT NOT FILE`). A save whose cluster chain does not validate
+**can** be replaced by a new save, and the kernel can remove it: the directory entry is
+replaced or unpublished and the unvalidated chain is never freed (it leaks until fsck), so a
+bad card never blocks saving or frees clusters that may belong to something else.
 
 ## Kernel pieces
 

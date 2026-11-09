@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 6u
+#define K_ABI_MINOR 7u /* 1.7: /OS/SAVES/<GAME>/ write scope */
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};

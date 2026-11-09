@@ -90,6 +90,26 @@ static int scan(uint32_t dir,const uint8_t name[11],struct slot *hit,struct slot
  }
  return fail("PUT DIR LOOP",5);
 }
+/* Real entries in a directory chain: not free, not long-name pieces, not "." or "..". */
+static int count_entries(uint32_t dir,uint32_t *count) {
+ uint32_t c=dir,n=0;
+ for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
+  if(!cluster_ok(c)) return fail("PUT DIR CLUSTER",5);
+  for(uint32_t i=0;i<v.spc;i++) {
+   int r=rd(lba_of(c,i),s); if(r) return r;
+   for(uint32_t o=0;o<512;o+=32) {
+    const uint8_t *e=s+o;
+    if(!e[0]) {*count=n;return 0;}
+    if(e[0]==0xe5||(e[11]&0x3f)==0x0f||e[0]=='.') continue;
+    n++;
+   }
+  }
+  uint32_t nx; int r=fat_get(c,&nx); if(r) return r;
+  if(nx>=0x0ffffff8u) {*count=n;return 0;}
+  c=nx;
+ }
+ return fail("PUT DIR LOOP",5);
+}
 static int alloc(uint32_t n) {
  uint32_t got=0;
  for(uint32_t c=2;c<v.clusters+2&&got<n;c++) {uint32_t x; int r=fat_get(c,&x); if(r) return r; if(!x) chain[got++]=c; if(!(c&0xfff)) watchdog_feed();}
@@ -202,15 +222,26 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  if(u16(s+48)&&u16(s+48)!=0xffff&&u16(s+48)>=v.fat-v.base)return fail("PUT FSINFO RANGE",5);
  uint32_t fsinfo=v.base+u16(s+48); if(u16(s+48)==0||u16(s+48)==0xffff) fsinfo=0;
  struct slot hit,free_slot; uint32_t dir=v.root;
- for(unsigned i=0;i<ndirs;i++) if((r=ensure_dir(dir,i==0,dirs[i],&dir))) return r;
+ for(unsigned i=0;i<ndirs;i++) {
+  if(game&&i==2) { /* a new game folder counts against the cap on /OS/SAVES */
+   uint8_t de[32]; struct slot dh,df; uint32_t folders=0;
+   if((r=scan(dir,dirs[2],&dh,&df,de))) return r;
+   if(!dh.found) {if((r=count_entries(dir,&folders))) return r; if(folders>=FATSAVE_MAX_GAMES) return fail("SAVE GAMES FULL",FATSAVE_EQUOTA);}
+  }
+  if((r=ensure_dir(dir,i==0,dirs[i],&dir))) return r;
+ }
  if((r=scan(dir,nm,&hit,&free_slot,e))) return r;
  uint32_t olds=0;
+ if(game&&!hit.found) { /* a new save file counts against the cap on this game's folder */
+  uint32_t files=0; if((r=count_entries(dir,&files))) return r;
+  if(files>=FATSAVE_MAX_FILES) return fail("SAVE FILES FULL",FATSAVE_EQUOTA);
+  if((r=scan(dir,nm,&hit,&free_slot,e))) return r; /* count_entries reused the sector buffer */
+ }
  if(hit.found) {
   if(e[11]&(cache&&!game?0x18:0x1f)) return fail("PUT NOT FILE",21); /* cache capability owns regular files, including R/O attributes */
   uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26);
   if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) {
-   if(!cache||game)return r;
-   olds=0; /* malformed expendable cache: don't reclaim an unvalidated chain */
+   olds=0; /* malformed cache or save: replace it, but never reclaim an unvalidated chain (it leaks for fsck) */
   }
  } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;
@@ -271,7 +302,7 @@ static int remove_cache(const char *name,bool discard,const char *game) {
  if((r=scan(dir,nm,&hit,&free_slot,e)))return r;
  if(!hit.found)return -2;
  if(e[11]&(discard?0x18:0x1f))return discard?0:-21;
- if(!discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n)))return r;
+ if(!discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n))) {if(!game)return r;n=0;} /* a corrupt save can still be removed: unpublished, chain left for fsck */
  /* Unpublish before freeing. A cut can leak, never reuse a live chain. */
  if((r=rd(hit.lba,s)))return r;
  s[hit.off]=0xe5;

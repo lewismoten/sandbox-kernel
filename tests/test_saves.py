@@ -7,6 +7,16 @@ import unittest
 from test_m1_user import InstallBase, CallsBase, poke, peek, fsck
 from test_cache import sparse_copy
 
+class AbiMinor(unittest.TestCase):
+    def test_both_headers_say_1_7(self):
+        import re, pathlib
+        root = pathlib.Path(__file__).resolve().parents[1]
+        for path, name in (('include/abi.h', 'K_ABI'), ('sdk/include/sandbox/abi.h', 'SBX_ABI')):
+            text = (root / path).read_text()
+            self.assertEqual(re.search(name + r'_MAJOR (\d+)u', text).group(1), '1')
+            self.assertEqual(re.search(name + r'_MINOR (\d+)u', text).group(1), '7', path)
+        self.assertIn('1.7', (root / 'docs/saves-storage.md').read_text())
+
 class SaveStorage(InstallBase):
     def put(self, game, name, data):
         self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
@@ -83,6 +93,38 @@ class SaveStorage(InstallBase):
         self.assertNotEqual(self.put(b'DICE', b'DICE.HIS', b'lose'), 0)
         self.assertEqual(self.read('/OS/SAVES/DICE/DICE.HIS'), b'keep')
 
+    def test_folder_and_file_caps_return_a_clear_error_and_change_nothing(self):
+        for i in range(64): self.assertEqual(self.put(b'G%d' % i, b'A.HIS', b'x'), 0, i)
+        before = self.c.write_count()
+        self.assertEqual(self.put(b'ONEMORE', b'A.HIS', b'x'), -122)
+        self.assertEqual(self.c.write_count(), before)
+        self.assertEqual(self.put(b'G3', b'A.HIS', b'new'), 0)  # an existing game still saves
+        for i in range(31): self.assertEqual(self.put(b'G0', b'F%d.SAV' % i, b'x'), 0, i)
+        before = self.c.write_count()
+        self.assertEqual(self.put(b'G0', b'LAST.SAV', b'x'), -122)
+        self.assertEqual(self.c.write_count(), before)
+        self.assertEqual(self.put(b'G0', b'F5.SAV', b'again'), 0)  # replacing one is not a new file
+        self.assertEqual(self.read('/OS/SAVES/G0/F5.SAV'), b'again')
+
+    def corrupt(self, name):
+        import mmap
+        with open(self.disk, 'r+b') as f, mmap.mmap(f.fileno(), 0) as m:
+            at = m.find(name); self.assertGreater(at, 0)
+            m[at+28:at+32] = struct.pack('<I', (1 << 20) + 1)  # size no chain can hold
+        self.c.close_disk(); self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+
+    def test_a_save_with_a_corrupt_chain_can_be_replaced_or_removed(self):
+        self.assertEqual(self.put(b'DICE', b'DICE.HIS', b'old'), 0)
+        self.corrupt(b'DICE    HIS')
+        self.assertEqual(self.put(b'DICE', b'DICE.HIS', b'fresh'), 0)  # the bad chain is left for fsck, never freed
+        self.assertEqual(self.read('/OS/SAVES/DICE/DICE.HIS'), b'fresh')
+        self.assertEqual(self.put(b'DICE', b'GAME0.SAV', b'old'), 0)
+        self.corrupt(b'GAME0   SAV')
+        self.c.fatsave_remove.argtypes = [C.c_char_p, C.c_char_p]
+        self.assertEqual(self.c.fatsave_remove(b'DICE', b'GAME0.SAV'), 0)
+        self.assertEqual(self.c.asset_open(b'/OS/SAVES/DICE/GAME0.SAV', 24, 0), -2)
+        self.assertEqual(self.read('/OS/SAVES/DICE/DICE.HIS'), b'fresh')
+
 class SaveCalls(CallsBase):
     def test_app_can_write_only_inside_one_game_folder(self):
         for name in ('/sd/OS/SAVES/DICE', '/sd/OS/SAVES/DICE/', '/sd/OS/SAVES/DICE/A/B', '/sd/OS/SAVES//X.HIS',
@@ -126,5 +168,20 @@ class SaveCalls(CallsBase):
         r, fd = self.open('/sd/OS/SAVES/DICE/A.HIS', 0x601); self.assertEqual(r, 0)
         self.assertEqual(self.open('/sd/OS/SAVES/OTHER/B.HIS', 0x601)[0], -16)
         self.assertEqual(self.open('/sd/OS/CACHE/B.IDX', 0x601)[0], -16)
+
+    def test_cache_reader_blocks_a_save_and_a_save_reader_blocks_the_cache(self):
+        self.c.fatcache_put.argtypes = [C.c_char_p, C.c_char_p, C.c_uint32]
+        self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatcache_put(b'GAMES.IDX', b'c', 1), 0)
+        self.assertEqual(self.c.fatsave_put(b'DICE', b'DICE.HIS', b's', 1), 0)
+        r, rd = self.open('/sd/OS/CACHE/GAMES.IDX'); self.assertEqual(r, 0)
+        self.assertEqual(self.open('/sd/OS/SAVES/DICE/NEW.HIS', 0x601)[0], -16)
+        self.assertEqual(self.c.fatsave_put(b'DICE', b'DICE.HIS', b'z', 1), -16)
+        self.assertEqual(self.close(rd), 0)
+        r, rd = self.open('/sd/OS/SAVES/DICE/DICE.HIS'); self.assertEqual(r, 0)
+        self.assertEqual(self.open('/sd/OS/CACHE/NEW.IDX', 0x601)[0], -16)
+        self.assertEqual(self.c.fatcache_put(b'GAMES.IDX', b'z', 1), -16)
+        self.assertEqual(self.close(rd), 0)
+        self.assertEqual(self.open('/sd/OS/CACHE/NEW.IDX', 0x601)[0], 0)
 
 if __name__ == '__main__': unittest.main()

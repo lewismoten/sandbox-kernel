@@ -357,7 +357,7 @@ class Supervisor(SupervisorBase,Calls):
     def test_entry_state(self):
         f=self.frame();self.assertEqual((f.pc,f.sp,f.lr,f.r[0],f.cpsr),(IMAGE,STACK_TOP,EXIT_VA,START_VA,0x10))
         size,major,minor,gen,trial,img,stack,handles=struct.unpack('<IHHIIQQQ',peek(self.c,START_VA,40))
-        self.assertEqual((size,major,minor,img,stack,handles),(48,1,6,8<<20,1<<20,16))
+        self.assertEqual((size,major,minor,img,stack,handles),(48,1,7,8<<20,1<<20,16))
         self.assertEqual(self.c.us_check(START_VA,40,W),-EFAULT)       # startup record is read-only
         self.assertIn(b'OS start /OS/DIAG.ELF entry 0x08000000 pages 3',self.c.take_log())
     def test_svc_paths(self):
