@@ -165,7 +165,8 @@ sees only that. The art is in `art/boot/` (with its layout notes), baked into
   stopped it) the kernel shows a header and a 60 by 12 box with its own log lines, newest
   at the bottom, redrawn as lines arrive. A program that exits on its own leaves its last
   frame up, as before. The console is 960x540 only.
-- **E-ink:** the starting and status screens below.
+- **E-ink:** the starting and status screens below; a running OS can change the title and
+  mark or show its own page (`docs/eink.md`, section "Show your OS on the e-ink").
 
 `scripts/render_screen.py OUTDIR` renders all of them on the host to PNG.
 
@@ -187,6 +188,32 @@ start, and `OS autostart rejected; trying DIAG.ELF`. In `core/protocol.c`, `fail
 last USB command that was refused because the device was not ready for it** (for example
 `PUTF` while an OS program was running). It does not mean the kernel is broken.
 The panel redraws only when its content changes, and a full refresh takes seconds.
+
+### Show your OS on the e-ink (ABI 1.9)
+
+While your program runs it can put its own name and mark on the panel, or draw a whole
+250x122 page, through `/dev/eink` (write-only; full rules and limits in `docs/eink.md`):
+
+```c
+#include <sandbox/syscall.h>
+extern const uint8_t my_page[SBX_EINK_PAGE_BYTES]; /* 250x122, 32-byte rows, bit 7 = leftmost, 1 = black */
+
+uint64_t eink;
+if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
+  sbx_eink_title_rec t;
+  sbx_eink_title(eink, &t, "MY OS", 5, NULL);   /* name up to 16 characters; a 200-byte 40x40 mark is optional */
+  /* a page replaces the status screen; call again for the next frame, at most once a second */
+  while (sbx_eink_page(eink, my_page) == -SBX_EAGAIN) { /* too soon: wait and try again */ }
+}
+```
+
+- **Limits:** one accepted update per second at most and 30 a minute; a refused one returns
+  `-SBX_EAGAIN` and changes nothing. The OS cannot ask for a full refresh; the kernel does a
+  ghost-clearing one itself.
+- **The kernel wins:** when your program exits, faults or is stopped, the panel goes back to
+  the kernel's status screen. If a kernel error appears while your page is up, the panel shows
+  the kernel screen at its next update; your next page returns with a small black square in
+  the top-right corner (8x8) for as long as `ERR:` is not `none`. Leave that corner white.
 
 ## 3. Writing a program
 

@@ -2,6 +2,8 @@
  * register sequence adapted from Waveshare team, permission in licenses/. */
 #include "kernel.h"
 #include "render.h"
+#include "eink.h"
+#include "clock.h"
 #define SPI (PERIPH+0x204000)
 static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos;
@@ -53,7 +55,8 @@ void panel_task(const char *state,uint32_t seconds) {
  default:break;
  }
  if(phase)return;
- render_status(desired,BUILD_ID,state,last_error,seconds);
+ eink_compose(desired,BUILD_ID,state,last_error,seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
  if(!memcmp(desired,shown,4000))return;
+ {uint64_t now=clock_us();full=eink_full_due(now);eink_note_refresh(full,now);} /* ghost-clearing full refresh: VERIFY on the board */
  memcpy(frame,desired,4000);gpio_set(17,false);wait_phase(12,1000);
 }

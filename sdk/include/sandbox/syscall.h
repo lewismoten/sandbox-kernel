@@ -112,6 +112,27 @@ static inline int32_t sbx_fb_palette(uint64_t fb_fd, sbx_fb_palette_rec *r, uint
   r->h = (sbx_header)SBX_HEADER(sbx_fb_palette_rec); r->first = first; r->count = count;
   return sbx_ioctl(fb_fd, SBX_IOC_FB_PALETTE, r, sizeof *r);
 }
+/* ABI 1.9: /dev/eink (open it write-only). Limits and rules: docs/eink.md; -SBX_EAGAIN means too soon. */
+static inline int32_t sbx_eink_query(uint64_t fd, sbx_eink_info *info) {
+  *info = (sbx_eink_info){SBX_HEADER(sbx_eink_info), 0, 0, 0, 0, 0, 0, 0, 0};
+  return sbx_ioctl(fd, SBX_IOC_EINK_QUERY, info, sizeof *info);
+}
+/* name: 1-16 characters; mark: 200 bytes (40x40) or NULL. r is scratch for the record. */
+static inline int32_t sbx_eink_title(uint64_t fd, sbx_eink_title_rec *r, const char *name, uint32_t name_bytes, const uint8_t *mark) {
+  *r = (sbx_eink_title_rec){SBX_HEADER(sbx_eink_title_rec), mark ? SBX_EINK_TITLE_MARK : 0, name_bytes, {0}, {0}};
+  for (uint32_t i = 0; i < name_bytes && i < 16; i++) r->name[i] = name[i];
+  if (mark) for (uint32_t i = 0; i < 200; i++) r->mark[i] = mark[i];
+  return sbx_ioctl(fd, SBX_IOC_EINK_TITLE, r, sizeof *r);
+}
+static inline int32_t sbx_eink_clear(uint64_t fd) {
+  sbx_header h = SBX_HEADER(sbx_header);
+  return sbx_ioctl(fd, SBX_IOC_EINK_CLEAR, &h, sizeof h);
+}
+/* A whole page: SBX_EINK_PAGE_BYTES bytes. */
+static inline int32_t sbx_eink_page(uint64_t fd, const uint8_t *bits) {
+  uint64_t done;
+  return sbx_write(fd, bits, SBX_EINK_PAGE_BYTES, &done);
+}
 /* Map the open /dev/fb0 surface (read/write, shared); *address gets its start. */
 static inline int32_t sbx_fb_map(uint64_t fb_fd, uint64_t bytes, void **address) {
   sbx_mmap_rec r = {SBX_HEADER(sbx_mmap_rec), fb_fd, 0, bytes, SBX_PROT_READ | SBX_PROT_WRITE, SBX_MAP_SHARED, 0};
