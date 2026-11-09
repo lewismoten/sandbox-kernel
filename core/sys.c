@@ -30,13 +30,30 @@
 enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE};
 /* One bounded write transaction; never a general filesystem writer. */
 static uint8_t cache_bytes[FATPUT_MAX];
-static char cache_name[13];static uint32_t cache_used;static bool cache_dirty;
+static char cache_name[13],cache_game[9];static uint32_t cache_used;static bool cache_dirty; /* cache_game "" = /OS/CACHE */
 static bool cache_writing(void);
 static int cache_path(const char *p,uint32_t n,char out[13]) {
  if(n<14||n>25||memcmp(p,"/sd/OS/CACHE/",13))return -30;
  for(unsigned i=0;i<n;i++)if(!p[i])return -EINVAL;
  unsigned k=n-13;memset(out,0,13);memcpy(out,p+13,k);
  uint8_t nm[11];return fatput_name(out,nm);
+}
+/* /sd/OS/SAVES/<GAME>/<NAME>: GAME 1-8 of A-Z 0-9 _ - (no dot), NAME a plain 8.3 name. */
+static int save_path(const char *p,uint32_t n,char game[9],char out[13]) {
+ if(n<15||n>34||memcmp(p,"/sd/OS/SAVES/",13))return -30;
+ for(unsigned i=0;i<n;i++)if(!p[i])return -EINVAL;
+ uint32_t g=13;while(g<n&&p[g]!='/')g++;
+ if(g==13||g-13>8||g+1>=n||n-g-1>12)return -EINVAL;
+ memset(game,0,9);memcpy(game,p+13,g-13);memset(out,0,13);memcpy(out,p+g+1,n-g-1);
+ uint8_t nm[11];int e=fatput_name(game,nm);if(e)return e;
+ for(const char *c=game;*c;c++)if(*c=='.')return -EINVAL;
+ return fatput_name(out,nm);
+}
+/* Either writable folder: the cache (game "") or one game's saves. */
+static int write_path(const char *p,uint32_t n,char game[9],char out[13]) {
+ game[0]=0;
+ if(n>=13&&!memcmp(p,"/sd/OS/SAVES/",13))return save_path(p,n,game,out);
+ return cache_path(p,n,out);
 }
 /* inst: the input instance an input handle was opened on; pend: a directory
    entry that did not fit the last getdents buffer. */
@@ -65,7 +82,7 @@ static uint32_t fb_surface_bytes(void) {return FB_SURFACE_MAX;} /* the same in e
 static uint32_t fb_bpp(void) {return fb0.depth/8u;}
 static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
  if((flags&0x600u)&&flags!=0x601u)return -EINVAL;
- if((flags&0x600u)&&(n<13||memcmp(p,"/sd/OS/CACHE/",13)))return -30;
+ if((flags&0x600u)&&(n<13||(memcmp(p,"/sd/OS/CACHE/",13)&&memcmp(p,"/sd/OS/SAVES/",13))))return -30;
  unsigned i=0; while(i<SYS_HANDLES&&fds[i].kind!=K_FREE) i++;
  if(i==SYS_HANDLES) return -EMFILE;
  uint32_t access=flags&3u;
@@ -84,9 +101,9 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
  else if(n>=3&&!memcmp(p,"/sd",3)&&(n==3||p[3]=='/')) {
   if(flags&0x600u) {
    if(flags!=0x601u)return -EINVAL; /* WRONLY|CREAT|TRUNC, no append/update */
-   char name[13];int e=cache_path(p,n,name);if(e)return e;
+   char name[13],game[9];int e=write_path(p,n,game,name);if(e)return e;
    if(cache_writing()||asset_cache_readers())return -EBUSY;
-   memcpy(cache_name,name,13);cache_used=0;cache_dirty=true;fds[i].kind=K_CACHE;
+   memcpy(cache_name,name,13);memcpy(cache_game,game,9);cache_used=0;cache_dirty=true;fds[i].kind=K_CACHE;
    goto opened;
   }
   if(access==3) return -EINVAL;
@@ -329,7 +346,7 @@ int32_t sys_call(const uint32_t reg[8]) {
    int i=lookup(((struct k_close *)rec)->fd);if(i<0)return i;
    if(fds[i].kind!=K_CACHE)return -EINVAL;
    if(!cache_dirty)return 0;
-   e=fatcache_put(cache_name,cache_bytes,cache_used);
+   e=cache_game[0]?fatsave_put(cache_game,cache_name,cache_bytes,cache_used):fatcache_put(cache_name,cache_bytes,cache_used);
    if(!e)cache_dirty=false;
    return e; /* sd_write waits for card programming and readback at each sector */
   }
@@ -337,11 +354,12 @@ int32_t sys_call(const uint32_t reg[8]) {
    const struct k_rename *r=(const struct k_rename *)rec;
    if(r->from>>32||r->to>>32)return -EFAULT;
    if(r->from_bytes>255||r->to_bytes>255)return -ENAMETOOLONG;
-   char a[256],b[256],na[13],nb[13];
+   char a[256],b[256],na[13],nb[13],ga[9],gb[9];
    if(us_copy_in(a,r->from,(uint32_t)r->from_bytes)||us_copy_in(b,r->to,(uint32_t)r->to_bytes))return -EFAULT;
-   if((e=cache_path(a,(uint32_t)r->from_bytes,na))||(e=cache_path(b,(uint32_t)r->to_bytes,nb)))return e;
+   if((e=write_path(a,(uint32_t)r->from_bytes,ga,na))||(e=write_path(b,(uint32_t)r->to_bytes,gb,nb)))return e;
+   if(strcmp(ga,gb))return -EINVAL; /* never across folders */
    if(cache_writing()||asset_cache_readers())return -EBUSY;
-   return fatcache_rename(na,nb,cache_bytes,sizeof cache_bytes);
+   return ga[0]?fatsave_rename(ga,na,nb,cache_bytes,sizeof cache_bytes):fatcache_rename(na,nb,cache_bytes,sizeof cache_bytes);
   }
   case 13: if((e=clock_get((struct k_clock *)rec))) return e; break;
   case 14: return sleep_until((const struct k_sleep *)rec);

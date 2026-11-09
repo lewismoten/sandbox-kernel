@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 6u /* 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 7u /* 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -28,14 +28,15 @@ enum {
   SBX_EEXIST = 17, SBX_ENODEV = 19, SBX_ENOTDIR = 20, SBX_EINVAL = 22,
   SBX_EMFILE = 24, SBX_ENOTTY = 25, SBX_ENOSPC = 28, SBX_ESPIPE = 29,
   SBX_EROFS = 30, SBX_EPIPE = 32, SBX_ENAMETOOLONG = 36, SBX_ENOSYS = 38,
-  SBX_EOVERFLOW = 75, SBX_EPROTONOSUPPORT = 93, SBX_ETIMEDOUT = 110
+  SBX_EOVERFLOW = 75, SBX_EPROTONOSUPPORT = 93, SBX_ETIMEDOUT = 110,
+  SBX_EDQUOT = 122 /* 1.7: save folder or file count limit */
 };
 
 #define SBX_O_RDONLY 0u
 #define SBX_O_WRONLY 1u
 #define SBX_O_RDWR 2u
 #define SBX_O_NONBLOCK 0x100u
-#define SBX_O_CREAT 0x200u /* only WRONLY|CREAT|TRUNC, canonical /sd/OS/CACHE/NAME */
+#define SBX_O_CREAT 0x200u /* only WRONLY|CREAT|TRUNC, canonical /sd/OS/CACHE/NAME or /sd/OS/SAVES/GAME/NAME */
 #define SBX_O_TRUNC 0x400u
 #define SBX_MAX_TRANSFER (1024u * 1024u)
 #define SBX_MAX_PATH 255u
