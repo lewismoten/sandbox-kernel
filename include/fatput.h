@@ -21,3 +21,7 @@ int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes);
 int fatcache_remove(const char *name);
 int fatcache_invalidate(void); /* unpublish before install; bad cache data cannot deny installs */
 int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap);
+/* Saves backend: plain 8.3 names in /OS/SAVES/<GAME> only (GAME has no dot). */
+int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t bytes);
+int fatsave_remove(const char *game,const char *name);
+int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scratch,uint32_t cap);

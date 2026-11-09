@@ -163,7 +163,7 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
   if(!vfat_component(path+at,end-at))return fail("PATH CHAR",ASSET_EINVAL);
   if((r=find(cluster,path+at,end-at,e))) return r;
   if(depth==1)os_dir=!memcmp(e,"OS         ",11);
-  if(depth==2)cache=os_dir&&!memcmp(e,"CACHE      ",11);
+  if(depth==2)cache=os_dir&&(!memcmp(e,"CACHE      ",11)||!memcmp(e,"SAVES      ",11)); /* both are writable by apps: reads block mutation */
   dir=(e[11]&0x10)!=0; cluster=entry_cluster(e); size=u32(e+28);
   if(dir) {
    if(!cluster_ok(cluster)) /* cluster 0 is only valid in "..", never reached by a path */ return fail("DIR ENTRY CLUSTER",ASSET_EIO);

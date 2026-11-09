@@ -180,12 +180,20 @@ static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm
  *ndirs=d; return fatput_name(part[2],nm);
 }
 int fatput_check(const char *path) {uint8_t d[3][11],nm[11];unsigned n;return split(path,d,&n,nm);}
-static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cache) {
+/* game: NULL for the cache; else a save folder /OS/SAVES/<game> (strict: no read-only files, no unvalidated chains). */
+/* A save folder name: 1 to 8 of A-Z 0-9 _ -, no dot. */
+static int save_dir_name(const char *game,uint8_t out[11]) {
+ for(const char *c=game;*c;c++) if(*c=='.') return fail("PUT NAME",22);
+ return fatput_name(game,out);
+}
+static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cache,const char *game) {
  uint8_t nm[11],e[32],dirs[3][11]; unsigned ndirs;
  int r;
  if(cache) {
   if((r=fatput_name(path,nm))) return r;
-  memcpy(dirs[0],"OS         ",11);memcpy(dirs[1],"CACHE      ",11);ndirs=2;
+  memcpy(dirs[0],"OS         ",11);ndirs=2;
+  if(game) {memcpy(dirs[1],"SAVES      ",11);if((r=save_dir_name(game,dirs[2])))return r;ndirs=3;}
+  else memcpy(dirs[1],"CACHE      ",11);
  } else if((r=split(path,dirs,&ndirs,nm))) return r;
  if(bytes>FATPUT_MAX) return fail("PUT SIZE",27);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
@@ -198,10 +206,10 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  if((r=scan(dir,nm,&hit,&free_slot,e))) return r;
  uint32_t olds=0;
  if(hit.found) {
-  if(e[11]&(cache?0x18:0x1f)) return fail("PUT NOT FILE",21); /* cache capability owns regular files, including R/O attributes */
+  if(e[11]&(cache&&!game?0x18:0x1f)) return fail("PUT NOT FILE",21); /* cache capability owns regular files, including R/O attributes */
   uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26);
   if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) {
-   if(!cache)return r;
+   if(!cache||game)return r;
    olds=0; /* malformed expendable cache: don't reclaim an unvalidated chain */
   }
  } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
@@ -229,21 +237,23 @@ int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
  /* Installer timestamps are fixed. Unpublish BEFORE any content mutation,
     including a same-name/same-size update or an interrupted install. */
  r=fatcache_invalidate();if(r&&r!=-2)return r;
- return put_file(path,data,bytes,false);
+ return put_file(path,data,bytes,false,0);
 }
 /* Names, never paths: this entry cannot escape /OS/CACHE. */
 int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes) {
  if(asset_cache_readers())return -16;
- return put_file(name,data,bytes,true);
+ return put_file(name,data,bytes,true,0);
 }
 /* Find an existing cache directory, never create it during removal. */
-static int cache_dir(uint32_t *dir) {
+static int cache_dir(uint32_t *dir,const char *game) {
  int r=asset_volume(&v);if(r)return r;
  fc_sec=~0u;*dir=v.root;
- const char *names[]={"OS         ","CACHE      "};
- for(unsigned i=0;i<2;i++) {
+ uint8_t gm[11];
+ if(game&&(r=save_dir_name(game,gm)))return r;
+ const uint8_t *names[3]={(const uint8_t *)"OS         ",(const uint8_t *)(game?"SAVES      ":"CACHE      "),gm};
+ for(unsigned i=0;i<(game?3u:2u);i++) {
   struct slot hit,free_slot;uint8_t e[32];
-  if((r=scan(*dir,(const uint8_t *)names[i],&hit,&free_slot,e)))return r;
+  if((r=scan(*dir,names[i],&hit,&free_slot,e)))return r;
   if(!hit.found)return -2;
   if((e[11]&0x1e)!=0x10)return fail("PUT NOT DIR",20);
   *dir=((uint32_t)u16(e+20)<<16)|u16(e+26);
@@ -251,11 +261,11 @@ static int cache_dir(uint32_t *dir) {
  }
  return 0;
 }
-static int remove_cache(const char *name,bool discard) {
+static int remove_cache(const char *name,bool discard,const char *game) {
  if(asset_cache_readers())return -16;
  uint8_t nm[11],e[32];uint32_t dir,n=0;struct slot hit,free_slot;
  int r=fatput_name(name,nm);if(r)return r;
- if((r=cache_dir(&dir)))return r;
+ if((r=cache_dir(&dir,game)))return r;
  if((r=rd(v.base,s)))return r;
  if(u16(s+48)&&u16(s+48)!=0xffff&&u16(s+48)>=v.fat-v.base)return fail("PUT FSINFO RANGE",5);
  if((r=scan(dir,nm,&hit,&free_slot,e)))return r;
@@ -282,8 +292,8 @@ static int remove_cache(const char *name,bool discard) {
  }
  return 0;
 }
-int fatcache_remove(const char *name) {return remove_cache(name,false);}
-int fatcache_invalidate(void) {return remove_cache("GAMES.IDX",true);}
+int fatcache_remove(const char *name) {return remove_cache(name,false,0);}
+int fatcache_invalidate(void) {return remove_cache("GAMES.IDX",true,0);}
 int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
  uint8_t a[11],b[11];int r=fatput_name(from,a);if(r)return r;
  if((r=fatput_name(to,b)))return r;
@@ -300,4 +310,26 @@ int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t ca
     rename both names may remain, with INDEPENDENT chains. Readers use only
     the destination. No two-entry FAT rename or cross-link crash window. */
  return fatcache_remove(from);
+}
+/* ABI 1.7: /OS/SAVES/<GAME>/<NAME> only; plain 8.3 names, never paths. Same
+   copy-on-write publication as the cache, but strict about what it replaces. */
+int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t bytes) {
+ if(asset_cache_readers())return -16;
+ return put_file(name,data,bytes,true,game);
+}
+int fatsave_remove(const char *game,const char *name) {return remove_cache(name,false,game);}
+int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
+ uint8_t a[11],b[11],g[11];int r=fatput_name(from,a);if(r)return r;
+ if((r=fatput_name(to,b)))return r;
+ if((r=save_dir_name(game,g)))return r;
+ if(!memcmp(a,b,11))return -22;
+ char path[40]="/OS/SAVES/";size_t gl=strlen(game),n=strlen(from);
+ memcpy(path+10,game,gl);path[10+gl]='/';memcpy(path+11+gl,from,n+1);
+ int h=asset_open(path,(uint32_t)(11+gl+n),0);if(h<0)return h;
+ uint32_t bytes=0;if((r=asset_size(h,&bytes))||bytes>cap) {asset_close(h);return r?r:-27;}
+ uint32_t at=0;
+ while(at<bytes) {r=asset_read(h,scratch+at,bytes-at);if(r<=0){asset_close(h);return r?r:-5;}at+=(uint32_t)r;}
+ asset_close(h);
+ if((r=fatsave_put(game,to,scratch,bytes)))return r;
+ return fatsave_remove(game,from);
 }
