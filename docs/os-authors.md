@@ -256,6 +256,8 @@ described in `docs/design.md`.)
 | 1.5 | `getdents_long_meta` (call 20): validated VFAT long names as UTF-8; use a buffer of at least 280 bytes. Calls 11 and 18 keep returning 8.3 aliases. |
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
+| 1.8 | Reserved for audio (`/dev/audio`, in review on its own branch; this row is replaced by its text when it merges). |
+| 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 
 **Not yet:** sound (no `/dev/audio`; a PCM host core exists in `docs/audio-host-core.md`
 but is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
