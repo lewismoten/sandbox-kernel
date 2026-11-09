@@ -5,6 +5,7 @@
 #include "os.h"
 #include "autostart.h"
 #include "input.h"
+#include "audio_null.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
 extern uint32_t boot_slot,boot_generation;
@@ -91,6 +92,7 @@ static void command_line(void) {
   if(!session) {usb_reply("ERR not-ready\n");return;}
   os_request_stop();waiting_stop=true;return;
  }
+ {char r[160];if(audio_command(line,r,sizeof r)){if(!session)usb_reply("ERR not-ready\n");else usb_reply(r);return;}}
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
