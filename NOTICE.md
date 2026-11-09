@@ -26,6 +26,7 @@ AI models used on this repository:
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 4: clock_gettime and sleep_until (ABI 1.1), SDK records and wrappers, host tests, board run (2026-11-07) |
 | Claude Sonnet 5.5 (Anthropic) | Claude Code | JS spike: PUTF to 1 MiB and /OS/APPS folders, ABI 1.2 screen modes and palettes, the boot clock, branch prediction and write-back user pages, host tests, board benchmarks, docs/js-spike.md (2026-11-07) |
 | GPT-6.1 Sol (OpenAI) | ChatGPT | The social preview image (docs/images/social-preview-640x320.png), made from the maintainer's directions (2026-11-09) |
+| GPT-6.1 Sol (OpenAI) | ChatGPT | The 1280x640 social preview (docs/images/social-preview-1280x640.png) and the chip mark cropped from it (docs/images/chip-mark.png), for the site in docs/, made from the maintainer's directions (2026-11-09) |
 
 The initial design was documentation only. M0 now fetches the pinned dependencies
 listed below into gitignored third_party/ and generates boot artifacts. The dependency
@@ -137,3 +138,5 @@ script `scripts/unicode_fold.py`; the generated data remains Unicode-3.0 license
 The full Unicode License V3 is in [licenses/Unicode.txt](licenses/Unicode.txt),
 copied to `UNICODE.TXT` in boot distributions. The original VFAT parser imports
 no FatFs or other filesystem implementation.
+
+**Silkscreen** (The Silkscreen Project Authors, SIL Open Font License 1.1) is bundled as WOFF2 in `docs/fonts/` (from the `@fontsource/silkscreen` 5.1.0 package) for the site's headings; the license text is `docs/fonts/OFL-Silkscreen.txt`.
