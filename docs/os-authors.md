@@ -171,6 +171,8 @@ The panel redraws only when its content changes, and a full refresh takes second
 
 ## 3. Writing a program
 
+Short on time? Copy [`examples/hello/`](../examples/hello/README.md): a complete program (screen, arrow keys, heartbeat, clean exit) in about 110 lines, with a Makefile that uses only the SDK.
+
 ### The ELF rules (`core/elf.c`, `include/uspace.h`)
 
 The loader rejects anything else, with a short code in the log:
@@ -299,6 +301,8 @@ first**, then install, then `run`. If you are fast, you can also install during 
 10 s after boot, before autostart. Install a new `JS.ELF` or `GMOS.ELF` the same way.
 
 ## 7. Make your own JavaScript OS
+
+(For a native C starting point instead, see [`examples/hello/`](../examples/hello/README.md).)
 
 The shortest path needs no C. The `gamemaker-os` repository builds `JS.ELF`, a native
 program that runs a web-page-like app written in JavaScript (QuickJS-ng). Its API (DOM

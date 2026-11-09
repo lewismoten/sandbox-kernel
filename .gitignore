@@ -1,3 +1,4 @@
 /build/
 /third_party/
 __pycache__/
+/examples/*/*.ELF

@@ -7,7 +7,7 @@ CDC, and take verified A/B kernel updates with trial, confirmation and automatic
 fallback, all on the board. M1 adds the HDMI framebuffer, read-only FAT32 assets,
 the SDK, a User-mode OS program loaded from the card with fault recovery, an
 input event queue (synthetic USB source first) and a health heartbeat
-([docs/m1.md](docs/m1.md)). [docs/js-spike.md](docs/js-spike.md) measures a JavaScript layer for building your own OS shell on it (2026-11-07).
+([docs/m1.md](docs/m1.md)). [docs/js-spike.md](docs/js-spike.md) measures a JavaScript layer for building your own OS shell on it (2026-11-07). [examples/](examples/README.md) has small OS programs to copy, starting with a "Hello, world!" you can build and run in minutes.
 **Making your own OS?** Start with the [OS author's guide](docs/os-authors.md): boot, what a program may do, what each ABI version adds, and how to develop over USB.
 
 The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
