@@ -37,11 +37,14 @@ retains a user pointer, executes user code, maps an intervening object or calls
 an external borrower. It zeroes all new pages before publishing PTEs. After
 prepare, queued STOP cancels and rolls back before copy-out. A failed copy-out
 validates the complete destination before any store, then rolls back the new
-append. With stable mappings the successful span loop cannot newly fail.
-After successful copy-out, finish publishes the lease; its bounded descriptor
-validation is infallible for the untouched canonical frontier. Corrupt-frontier
-behavior is the inherited fail-closed transaction contract, not a recoverable
-hardware-partial-store atomicity claim. No concurrent/IRQ ownership is added.
+append. A read-only validation of the full append frontier precedes any output
+store; finish repeats that validation before publishing the lease. If an owned
+frontier is corrupt, the actual supervisor revokes the epoch and saved frame,
+closes handles, and leaves sticky quarantine rather than rewinding unknown
+mappings or returning to user mode. The SVC return path honors that revocation.
+The final check is infallible for the untouched serialized canonical frontier;
+corruption after the first output store is a kernel-fault gate, not a claim of
+recoverable hardware-partial-store atomicity. No concurrent/IRQ ownership is added.
 A STOP arriving after commit is handled at the main-loop boundary before user
 re-entry, through the accepted Slice B teardown path.
 

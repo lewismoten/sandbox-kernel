@@ -105,7 +105,7 @@ int aa_prepare(struct aa_owner *o,struct aa_space *s,uint64_t epoch,
  s->regions[s->region_count++]=(struct uregion){AA_BASE,AA_BYTES,U_POOL_PA+s->used,U_R|U_W};
  s->used+=AA_BYTES;s->l2_count+=3;o->state|=AA_PENDING;return 0;
 }
-int aa_finish(struct aa_owner *o,struct aa_space *s,const struct aa_checkpoint *cp,bool publish) {
+int aa_validate_finish(const struct aa_owner *o,const struct aa_space *s,const struct aa_checkpoint *cp) {
  if(bounds(s) || o->state!=(AA_RUNNING|AA_PENDING) || !o->active ||
     cp->state!=AA_RUNNING || cp->used>U_POOL_BYTES-AA_BYTES || (cp->used&4095u) ||
     cp->l2_count>U_L2-3 || cp->region_count>=U_REGIONS ||
@@ -122,6 +122,11 @@ int aa_finish(struct aa_owner *o,struct aa_space *s,const struct aa_checkpoint *
    if(s->l2[n][p]!=want) return -16;
   }
  }
+ return 0;
+}
+int aa_finish(struct aa_owner *o,struct aa_space *s,const struct aa_checkpoint *cp,bool publish) {
+ int e=aa_validate_finish(o,s,cp);if(e) return e;
+ const struct uregion expected={AA_BASE,AA_BYTES,U_POOL_PA+cp->used,U_R|U_W};
  if(publish) {
   o->pa=expected.pa;o->bytes=AA_BYTES;o->state=AA_RUNNING|AA_MAPPED;
  } else {

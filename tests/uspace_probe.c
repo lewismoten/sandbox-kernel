@@ -8,7 +8,8 @@
 #undef us_arena_prepare
 #undef us_copy_out
 #include "os.h"
-static bool late_copy_failure,stop_after_prepare;
+static bool late_copy_failure,stop_after_prepare,corrupt_after_prepare;
+void probe_corrupt_after_prepare(void) {corrupt_after_prepare=true;}
 void probe_late_copy_failure(void) {late_copy_failure=true;}
 void probe_stop_after_prepare(void) {stop_after_prepare=true;}
 int us_copy_out(uint64_t va,const void *src,uint32_t bytes) {
@@ -17,6 +18,7 @@ int us_copy_out(uint64_t va,const void *src,uint32_t bytes) {
 }
 int us_arena_prepare(struct aa_owner *o,uint64_t epoch,uint64_t requested,struct aa_checkpoint *cp) {
  int r=probe_real_arena_prepare(o,epoch,requested,cp);
+ if(corrupt_after_prepare&&r==0) {corrupt_after_prepare=false;us_table[AA_BASE>>20]^=0x400;}
  if(stop_after_prepare) {stop_after_prepare=false;os_request_stop();}
  return r;
 }

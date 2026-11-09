@@ -49,6 +49,7 @@ struct aa_checkpoint;
    prepare and finish. 1 means an existing lease, requiring no finish. */
 int us_arena_prepare(struct aa_owner *owner,uint64_t epoch,uint64_t requested,struct aa_checkpoint *checkpoint);
 int us_arena_finish(struct aa_owner *owner,const struct aa_checkpoint *checkpoint,bool publish);
+int us_arena_validate(const struct aa_owner *owner,const struct aa_checkpoint *checkpoint);
 /* Privileged main-loop only: borrow the canonical counters exclusively. No
    callbacks or user entry until cleanup completes; never reset before scrub. */
 int us_quiesce(struct aa_owner *owner,struct aa_cleanup *cleanup);

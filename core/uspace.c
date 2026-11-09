@@ -32,6 +32,9 @@ int us_arena_prepare(struct aa_owner *o,uint64_t epoch,uint64_t requested,struct
  struct aa_space s=cleanup_view();int r=aa_prepare(o,&s,epoch,requested,cp);
  used=s.used;l2_used=s.l2_count;us_count=s.region_count;return r;
 }
+int us_arena_validate(const struct aa_owner *o,const struct aa_checkpoint *cp) {
+ struct aa_space s=cleanup_view();return aa_validate_finish(o,&s,cp);
+}
 int us_arena_finish(struct aa_owner *o,const struct aa_checkpoint *cp,bool publish) {
  struct aa_space s=cleanup_view();int r=aa_finish(o,&s,cp,publish);
  used=s.used;l2_used=s.l2_count;us_count=s.region_count;return r;

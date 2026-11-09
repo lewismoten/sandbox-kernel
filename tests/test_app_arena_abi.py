@@ -117,6 +117,20 @@ class ArenaABI(CallsBase):
         c.us_pool.restype=C.c_void_p
         self.assertEqual(C.string_at(c.us_pool()+c.us_used(),CAP),bytes(CAP))
         self.assertEqual(self.call(21,r),0)
+    def test_corrupt_frontier_never_returns_to_user(self):
+        c=self.c;r=self.arena();poke(c,self.REC,r)
+        c.probe_corrupt_after_prepare()
+        f=Frame.in_dll(c,'os_frame');f.r[0]=self.REC;f.r[1]=48;f.r[2]=1;f.r[7]=21;f.pc=IMAGE+4
+        c.os_handle(1,0,0)
+        self.assertFalse(c.os_running())
+        self.assertEqual(c.probe_epoch(),0)
+        self.assertEqual(c.probe_phase(),3)
+        self.assertEqual(peek(c,self.REC,48),r)
+        self.assertEqual(bytes(Frame.in_dll(c,'os_frame')),bytes(C.sizeof(Frame)))
+        used=c.us_used();self.assertGreater(used,CAP)
+        for _ in range(3):
+            c.os_task();self.assertEqual(c.us_used(),used)
+            self.assertEqual(c.os_start(b'/OS/DIAG.ELF'),-16)
     def test_stop_after_prepare_rolls_back(self):
         c=self.c;r=self.arena();poke(c,self.REC,r);before=self.snapshot()
         c.probe_stop_after_prepare()

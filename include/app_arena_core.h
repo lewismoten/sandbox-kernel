@@ -45,6 +45,10 @@ int aa_prepare(struct aa_owner *o,struct aa_space *s,uint64_t epoch,
  */
 int aa_finish(struct aa_owner *o,struct aa_space *s,
               const struct aa_checkpoint *cp,bool publish);
+/* Read-only frontier validation before any caller output store. Finish repeats
+ * it defensively; neither operation may call out or admit another mapper. */
+int aa_validate_finish(const struct aa_owner *o,const struct aa_space *s,
+                       const struct aa_checkpoint *cp);
 int aa_quiesce(struct aa_owner *o,const struct aa_space *s,struct aa_cleanup *c);
 /* One <=4096-byte scrub step. 1=done, 0=more, negative=quarantined failure.
  * Only after completion may backing storage be reused or a new launch begin.

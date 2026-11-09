@@ -9,6 +9,7 @@
 #define BASE SBX_APP_ARENA_ADDRESS
 #define CAP SBX_APP_ARENA_BYTES
 extern void probe_late_copy_failure(void),probe_stop_after_prepare(void);
+extern void probe_corrupt_after_prepare(void);
 extern unsigned probe_l2_count(void);
 static unsigned transport_calls;
 static bool skew;
@@ -119,5 +120,17 @@ int main(int argc,char **argv) {
  assert(us_used()==used);stopped();start(path);
  r=request(probe_epoch(),CAP);assert(!dispatch(&r));assert(us_span(BASE,CAP,U_R,&p)==CAP);
  for(unsigned i=0;i<CAP;i++)assert(!p[i]);
- stopped();close_disk();puts("NON-AUDIO SDK/short startup/skew/real dispatcher/rollback/STOP/epoch/PTE charge PASS");return 0;
+ stopped();
+ if(!strcmp(path,"/OS/DIAG.ELF")) {
+  start(path);r=request(probe_epoch(),1);assert(!us_copy_out(REC,&r,48));
+  probe_corrupt_after_prepare();os_frame.r[0]=REC;os_frame.r[1]=48;
+  os_frame.r[2]=1;os_frame.r[7]=21;os_frame.pc=U_IMAGE_BASE+4;
+  os_handle(OS_SVC,0,0);
+  assert(!os_running()&&!probe_epoch()&&probe_phase()==3);
+  assert(!us_copy_in(&unchanged,REC,48)&&!memcmp(&r,&unchanged,48));
+  struct uframe zero={0};assert(!memcmp(&os_frame,&zero,sizeof zero));
+  used=us_used();for(unsigned i=0;i<3;i++) {os_task();assert(us_used()==used&&!os_can_start());}
+  puts("corrupt append frontier: pre-output validation, revoked epoch/frame, sticky quarantine PASS");
+ }
+ close_disk();puts("NON-AUDIO SDK/short startup/skew/real dispatcher/rollback/STOP/epoch/PTE charge PASS");return 0;
 }
