@@ -60,6 +60,34 @@ static int reject(const char *why,int e) {
  append(&p,"OS reject ");append(&p,os_path);append(&p," ");append(&p,why);log_line(line);
  return e;
 }
+static int arena_quarantine(int e) {
+ /* A corrupt append frontier must never become an ordinary user return or a
+    rewind across unknown maps. Keep the privileged console, not user entry. */
+ running=false;memset(&os_frame,0,sizeof os_frame);sys_reset();
+ owner.active=0;owner.pa=0;owner.bytes=0;owner.state=AA_QUIESCING;
+ cleanup=(struct aa_cleanup){.extent=us_used(),.error=(uint32_t)-e};
+ os_fail="APP ARENA COMMIT";return e;
+}
+int os_app_arena(uint32_t va,struct k_app_arena *r,uint32_t bytes) {
+ /* Single foreground owner: neither transaction nor copy_out services I/O. */
+ if(!running||stop_requested) return -16;
+ struct aa_checkpoint cp;
+ int e=us_arena_prepare(&owner,r->owner_generation,r->requested_bytes,&cp);
+ if(e<0) return e;
+ bool fresh=e==0;
+ if(fresh&&(e=us_arena_validate(&owner,&cp))) return arena_quarantine(e);
+ if(stop_requested) {
+  if(fresh) {int rollback=us_arena_finish(&owner,&cp,false);if(rollback) return arena_quarantine(rollback);}
+  return -16;
+ }
+ r->address=AA_BASE;r->actual_bytes=AA_BYTES;
+ e=us_copy_out(va,r,bytes); /* validates whole range before first store */
+ if(fresh) {
+  int finish=us_arena_finish(&owner,&cp,!e);
+  if(finish) return arena_quarantine(finish); /* no user return on unexpected corruption */
+ }
+ return e;
+}
 int os_start(const char *path) {
  if(!os_can_start()) return -16;
  size_t n=strlen(path); if(n>=sizeof(os_path)) return -36;
@@ -80,7 +108,7 @@ int os_start(const char *path) {
  sys_reset();
  if((r=us_reset(mmu_table()))||(r=elf_load(file,&plan))||(r=us_map(U_STACK_TOP-U_STACK_BYTES,U_STACK_BYTES,U_R|U_W))||(r=us_map(U_START_VA,4096,U_R))) return reject(us_fail,r);
  uint8_t *page; us_span(U_START_VA,4096,U_R,&page);
- struct k_startup s={sizeof s,K_ABI_MAJOR,K_ABI_MINOR,boot_generation,boot_trial,U_IMAGE_QUOTA,U_STACK_BYTES,SYS_HANDLES};
+ struct k_startup_ext s={{sizeof s,K_ABI_MAJOR,K_ABI_MINOR,boot_generation,boot_trial,U_IMAGE_QUOTA,U_STACK_BYTES,SYS_HANDLES},owner.active};
  memcpy(page,&s,sizeof s);
  sync_caches();
  memset(&os_frame,0,sizeof os_frame);
@@ -139,6 +167,7 @@ void os_handle(unsigned reason,uint32_t fsr,uint32_t far) {
    if(us_copy_in(&insn,(uint64_t)os_frame.pc-4u,4)) {fault("svc fetch",0,os_frame.pc-4u);return;}
    if((insn&0x0fffffffu)!=0x0f000000u) {os_frame.r[0]=(uint32_t)-38;overdue(t);return;} /* svc with a nonzero number */
    int32_t r=sys_call(os_frame.r);
+   if(!running) return; /* arena commit quarantine revoked the saved frame */
    if(r==SYS_EXITED) {if(sys_exit_status) stop(true,NULL,sys_exit_status); else stop(false,NULL,0);return;}
    os_frame.r[0]=(uint32_t)r;overdue(t);return;
   }

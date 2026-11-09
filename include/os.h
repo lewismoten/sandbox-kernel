@@ -20,6 +20,9 @@ extern char os_path[32];
 int os_start(const char *path); /* load and prepare; 0 or a negative errno */
 bool os_running(void);
 bool os_can_start(void); /* same admission gate as os_start; no command-side mutation */
+struct k_app_arena;
+/* Dispatcher-owned validated kernel record, no retained user pointer. */
+int os_app_arena(uint32_t va,struct k_app_arena *record,uint32_t bytes);
 bool os_cleanup_pending(void); /* progressing main-loop quarantine, not an app ABI */
 bool os_defer_fallback(void); /* failed autostart's DIAG intent after partial rollback */
 /* USB recovery is queued, never torn down inside a syscall/SD service_io.

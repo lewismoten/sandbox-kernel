@@ -7,6 +7,7 @@ AI models used on this repository:
 
 | Model | Tool | What it did |
 | --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Slice C ABI 1.6/call 21, distinct startup app epoch, original kernel SDK wrapper and synthetic non-audio qualification, production dispatcher/transaction rollback and compatibility tests (2026-11-09). No audio wiring, GMOS SDK refresh or physical acceptance. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Framebuffer probe HOST_TEST compilation and Darwin/Linux linker-flag selection with regression coverage (2026-11-09). No production code changes; macOS execution remains a separate acceptance gate. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Production framebuffer pattern span inversion from the independently reviewed MIT proposal, exact 587-surface oracle/sanitizer and floor-mutation host tests, ARM stack evidence (2026-11-09). No mapping, USB or hardware qualification changes. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | Slice B supervisor epoch/revocation, failed-launch rollback, incremental pool scrub, restart/STOP integration and recovery-protocol launch admission; real supervisor/loader/protocol native/sanitizer tests and ARM qualification (2026-11-09); no arena syscall, ABI/SDK/app change or physical acceptance |

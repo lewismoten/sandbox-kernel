@@ -4,6 +4,9 @@
 #include <sandbox/abi.h>
 #define SAME(k,s,f) _Static_assert(offsetof(struct k,f)==offsetof(s,f)&&sizeof(((struct k *)0)->f)==sizeof(((s *)0)->f),#s "." #f)
 #define SIZE(k,s) _Static_assert(sizeof(struct k)==sizeof(s),#s)
+SIZE(k_startup_ext,sbx_startup_ext); SAME(k_startup_ext,sbx_startup_ext,prefix); SAME(k_startup_ext,sbx_startup_ext,app_generation);
+SIZE(k_app_arena,sbx_app_arena_rec); SAME(k_app_arena,sbx_app_arena_rec,h); SAME(k_app_arena,sbx_app_arena_rec,owner_generation); SAME(k_app_arena,sbx_app_arena_rec,requested_bytes); SAME(k_app_arena,sbx_app_arena_rec,address); SAME(k_app_arena,sbx_app_arena_rec,actual_bytes);
+_Static_assert(SBX_CALL_APP_ARENA==21 && SBX_EOVERFLOW==75,"arena constants");
 SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_header,flags); SAME(k_header,sbx_header,reserved0); SAME(k_header,sbx_header,reserved1);
 SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
 SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);
@@ -38,6 +41,8 @@ int32_t use_all(uint64_t fd,char *b) {
  s|=sbx_seek(fd,0,&n);
  s|=sbx_fsync(fd);s|=sbx_getdents_meta(fd,b,64,&n);s|=sbx_rename("/sd/OS/CACHE/A.TMP",18,"/sd/OS/CACHE/A.IDX",18);
  s|=sbx_getdents_long_meta(fd,b,280,&n);
+ sbx_startup_ext startup={{48,1,6,1,0,0,0,0},1};
+ s|=sbx_app_arena(&startup.prefix,1,&a,&n);
  if(s==-1) sbx_exit(1);
  return s;
 }

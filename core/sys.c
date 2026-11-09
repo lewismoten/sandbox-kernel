@@ -11,6 +11,7 @@
 #include "input.h"
 #include "sys.h"
 #include "uspace.h"
+#include "os.h"
 #define EPERM 1
 #define EBADF 9
 #define ENOMEM 12
@@ -268,11 +269,11 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[21]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48};
+static const uint32_t sizes[22]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
- if(call>20||!sizes[call]) return -ENOSYS;
+ if(call>21||!sizes[call]) return -ENOSYS;
  if(reg[3]|reg[4]|reg[5]|reg[6]) return -EINVAL;
  if(reg[2]!=K_ABI_MAJOR) return -93;
  if(bytes<16||bytes>4096||bytes%8) return -EINVAL;
@@ -288,8 +289,9 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
   case 9: if(((struct k_seek *)rec)->position) return -EINVAL; break;
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
+  case 21: if(((struct k_app_arena *)rec)->address|((struct k_app_arena *)rec)->actual_bytes) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20||call==21)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -345,6 +347,7 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 14: return sleep_until((const struct k_sleep *)rec);
   case 17: return health((const struct k_health *)rec);
   case 16: sys_exit_status=((struct k_exit *)rec)->status; return SYS_EXITED;
+  case 21: return os_app_arena(va,(struct k_app_arena *)rec,bytes);
  }
  return us_copy_out(va,rec,bytes)?-EFAULT:0;
 }

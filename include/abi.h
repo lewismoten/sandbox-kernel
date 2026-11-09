@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 5u
+#define K_ABI_MINOR 6u
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};
@@ -19,6 +19,8 @@ struct k_fb_present {struct k_header h; uint64_t x,y,width,height;};
 struct k_fb_set {struct k_header h; uint64_t width,height,format;}; /* ABI 1.2: format 1 XRGB8888, 2 RGB565, 3 8-bit indices */
 struct k_fb_palette {struct k_header h; uint64_t first,count; uint32_t rgb[256];}; /* ABI 1.2: 0x00RRGGBB */
 struct k_mmap {struct k_header h; uint64_t fd,offset,length,protection,flags,address;};
+struct k_app_arena {struct k_header h; uint64_t owner_generation,requested_bytes,address,actual_bytes;};
+_Static_assert(sizeof(struct k_app_arena)==48,"arena record");
 struct k_health {struct k_header h; uint64_t generation,sequence;};
 struct k_clock {struct k_header h; uint64_t clock,ns;}; /* clock_gettime (13): clock 0 is monotonic; ns out */
 struct k_sleep {struct k_header h; uint64_t deadline;}; /* sleep_until (14): absolute monotonic ns */
@@ -28,6 +30,9 @@ struct k_input_event {uint64_t ns; uint16_t type,code; int32_t value;};
 struct k_dirent {uint16_t length; uint8_t type,name_bytes; uint32_t size;}; /* then the name, padded to 8 bytes */
 struct k_dirent_meta {uint16_t length;uint8_t type,name_bytes;uint32_t size,modified,created,identity,reserved;};
 struct k_startup {uint32_t size; uint16_t major,minor; uint32_t generation,trial; uint64_t image_bytes,stack_bytes,handles;};
+struct k_startup_ext {struct k_startup prefix; uint64_t app_generation;};
+_Static_assert(sizeof(struct k_startup_ext)==48,"startup extension");
+_Static_assert(offsetof(struct k_startup_ext,app_generation)==40,"app epoch offset");
 #define K_SIZE(t,n) _Static_assert(sizeof(struct t)==(n),#t)
 K_SIZE(k_header,16); K_SIZE(k_open,56); K_SIZE(k_io,48); K_SIZE(k_close,24);
 K_SIZE(k_seek,48);
