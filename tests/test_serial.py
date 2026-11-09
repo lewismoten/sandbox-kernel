@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: MIT
 """The OS serial channel (core/serial.c): wire framing, buffer overflow counting,
 transport switching, and that OS data is only ever whole lines. Real code, no hardware."""
-import ctypes as C, pathlib, subprocess, tempfile, unittest
+import ctypes as C, pathlib, subprocess, sys, tempfile, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import usb_kernel
 class Counters(C.Structure): _fields_=[(n,C.c_uint32) for n in ('transport','tx_bytes','tx_dropped','rx_bytes','rx_dropped','tx_pending','rx_pending')]
 def load():
     out=pathlib.Path(tempfile.mkdtemp())/'serial.so'
@@ -68,4 +70,16 @@ class Serial(unittest.TestCase):
         self.assertEqual(self.c.serial_open(),-16);self.c.serial_rx_put(b'q',1);self.c.serial_close()
         self.assertEqual(self.c.serial_rx_put(b'q',1),0);self.assertEqual(self.c.serial_open(),0)
         self.assertEqual(self.counters().rx_pending,0)
+class Host(unittest.TestCase):
+    def test_console_decodes_what_the_kernel_frames(self):
+        c=load();c.serial_open();c.serial_set_reader(True);data=bytes(range(1,256)).replace(b'\n',b'')[:60]
+        c.serial_write(data+b'\n',61);buf=C.create_string_buffer(272);n=c.serial_tx_line(buf)
+        self.assertEqual(usb_kernel.unescape_os(buf.raw[:n].decode()[:-1]),(data,True))
+    def test_console_commands(self):
+        k=usb_kernel.console_commands
+        self.assertEqual(k(b'\x1b[A'),b'KEY 103 down\nKEY 103 up\n')
+        self.assertEqual(k(b'\x1b'),b'KEY 1 down\nKEY 1 up\n')
+        self.assertEqual(k(b'hi\r'),b'KEY 28 down\nKEY 28 up\nTX 3\nhi\n')
+        self.assertEqual(k(b'\x01'),b'')
+        self.assertTrue(k(b'x'*130).count(b'TX 64\n')==2)
 if __name__=='__main__': unittest.main()

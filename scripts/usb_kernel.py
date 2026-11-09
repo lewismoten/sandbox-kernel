@@ -125,6 +125,61 @@ def send_keys(port,names,gap,seconds):
         except TimeoutError: break
     return 0
 
+# Serial console (docs/serial.md): typed keys go to the OS as synthetic input and as /dev/serial0 text,
+# OS output ("OS <text>", "OS~ <text>" when the line continues) is shown live, kernel LOG lines dimmed.
+ESCAPES={b'\x1b[A':103,b'\x1b[B':108,b'\x1b[C':106,b'\x1b[D':105}
+CHAR_KEYS={b'\r':28,b'\n':28,b' ':57,b'q':16}
+def unescape_os(line):
+    """The bytes of one wire line "OS <text>" or "OS~ <text>", and whether the OS ended the line there."""
+    whole=line.startswith('OS ');body=line[3:] if whole else line[4:];out=bytearray();i=0
+    while i<len(body):
+        if body[i]=='\\':
+            if body[i+1:i+2]=='\\':out.append(92);i+=2
+            else:out.append(int(body[i+2:i+4],16));i+=4
+        else:out.append(ord(body[i]));i+=1
+    return bytes(out),whole
+def console_commands(data):
+    """Wire commands (bytes) for typed input: arrows, Enter, Space, Q and Esc press the matching key; every
+    printable key, Enter and Space also go to the OS as TX text. A lone Esc is KEY esc."""
+    out=bytearray();text=bytearray();i=0
+    def key(code):out.extend(f'KEY {code} down\nKEY {code} up\n'.encode())
+    while i<len(data):
+        seq=data[i:i+3]
+        if seq in ESCAPES:key(ESCAPES[seq]);i+=3;continue
+        if data[i:i+1]==b'\x1b':key(1);i+=1;continue
+        ch=data[i:i+1];i+=1
+        if ch in CHAR_KEYS:key(CHAR_KEYS[ch])
+        if ch==b'\r':ch=b'\n'
+        if ch==b'\n' or 32<=ch[0]<127:text+=ch
+    for k in range(0,len(text),64):
+        chunk=bytes(text[k:k+64]);out.extend(f'TX {len(chunk)}\n'.encode()+chunk)
+    return bytes(out)
+def console(port):
+    """Two-way session: Ctrl-] ends it."""
+    print(handshake(port),flush=True);print('console: arrows, Enter, Space, Q, Esc are keys; typing is text to the OS; Ctrl-] quits',file=sys.stderr)
+    old=termios.tcgetattr(sys.stdin.fileno());tty.setcbreak(sys.stdin.fileno());open_line=False
+    try:
+        while True:
+            ready=select.select([port.fd,sys.stdin.fileno()],[],[],1)[0]
+            if sys.stdin.fileno() in ready:
+                data=os.read(sys.stdin.fileno(),256)
+                if not data or b'\x1d' in data:return 0
+                port.send(console_commands(data))
+            if port.fd in ready:
+                try:data=os.read(port.fd,4096)
+                except BlockingIOError:continue
+                if not data:raise OSError('CDC disconnected')
+                port.buf.extend(data)
+                while b'\n' in port.buf:
+                    raw,_,tail=port.buf.partition(b'\n');port.buf=bytearray(tail);line=raw.rstrip(b'\r').decode('ascii',errors='replace')
+                    if line.startswith(('OS ','OS~ ')):
+                        text,whole=unescape_os(line);sys.stdout.write(text.decode('utf-8',errors='replace')+('\n' if whole else ''));sys.stdout.flush();open_line=not whole
+                    elif line.startswith(('OK key','OK tx')):pass
+                    else:
+                        if open_line:sys.stdout.write('\n');open_line=False
+                        print(f'\x1b[2m{line}\x1b[0m' if sys.stdout.isatty() else '# '+line,flush=True)
+    finally:termios.tcsetattr(sys.stdin.fileno(),termios.TCSADRAIN,old)
+
 def send_command(port,command):
     """One line command (AXIS <code> <value>, INPUT add|remove) and its reply."""
     print(handshake(port));port.send((command+'\n').encode());line=port.reply(5)
@@ -162,6 +217,7 @@ def main():
     p.add_argument('keys',nargs='+');p.add_argument('--gap',type=float,default=0.3);p.add_argument('--seconds',type=float,default=2)
     p=sub.add_parser('axis',help='AXIS <code> <value> on the synthetic device');p.add_argument('code',type=int);p.add_argument('value',type=int)
     p=sub.add_parser('input',help='add or remove the synthetic device');p.add_argument('state',choices=('add','remove'))
+    sub.add_parser('console',help='two-way session: typed keys and arrows go to the OS as input, OS serial output shows live, LOG lines dimmed')
     a=ap.parse_args();port=Serial(a.port)
     try:
         if a.action=='send': return send_kernel(port,a.kernel)
@@ -172,6 +228,7 @@ def main():
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
         if a.action=='key': return send_keys(port,a.keys,a.gap,a.seconds)
         if a.action=='axis': return send_command(port,f'AXIS {a.code} {a.value}')
+        if a.action=='console': return console(port)
         if a.action=='input': return send_command(port,f'INPUT {a.state}')
         print(handshake(port),flush=True)
         if a.action=='tail':
