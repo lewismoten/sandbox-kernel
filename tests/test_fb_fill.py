@@ -4,25 +4,55 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_probe(directory, source=None, sanitize=False):
     binary = Path(directory) / 'fb-fill'
-    command = ['cc', '-std=c11', '-Os', '-g', '-fno-builtin',
+    command = ['cc', '-std=c11', '-Os', '-g', '-fno-builtin', '-DHOST_TEST',
                '-ffunction-sections', '-fdata-sections', '-Wall', '-Wextra',
                '-Werror', '-Wno-misleading-indentation', '-I' + str(ROOT / 'include')]
     if sanitize:
         command += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']
+    # Match the repo's HOST_TEST path; Apple ld uses -dead_strip, not GNU --gc-sections.
+    link = '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections'
     command += [str(ROOT / 'tests/fb_fill_probe.c'),
-                str(source or ROOT / 'core/fb.c'), '-Wl,--gc-sections', '-o', str(binary)]
+                str(source or ROOT / 'core/fb.c'), link, '-o', str(binary)]
     subprocess.run(command, check=True)
     env = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:halt_on_error=1',
                UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
     return subprocess.run([str(binary)], capture_output=True, text=True, env=env)
+
+
+class ProbeBuild(unittest.TestCase):
+    def test_linker_selection_normal_and_sanitizer(self):
+        for platform, selected, rejected in (
+                ('darwin', '-Wl,-dead_strip', '-Wl,--gc-sections'),
+                ('linux', '-Wl,--gc-sections', '-Wl,-dead_strip')):
+            for sanitize in (False, True):
+                with self.subTest(platform=platform, sanitize=sanitize):
+                    with tempfile.TemporaryDirectory() as directory:
+                        with patch('sys.platform', platform), patch.object(subprocess, 'run') as run:
+                            run_probe(directory, sanitize=sanitize)
+                    command = run.call_args_list[0].args[0]
+                    self.assertIn(selected, command)
+                    self.assertNotIn(rejected, command)
+
+    def test_normal_and_sanitizer_use_host_test_path(self):
+        for sanitize in (False, True):
+            with self.subTest(sanitize=sanitize), tempfile.TemporaryDirectory() as directory:
+                with patch.object(subprocess, 'run') as run:
+                    run_probe(directory, sanitize=sanitize)
+                command = run.call_args_list[0].args[0]
+                self.assertIn('-DHOST_TEST', command)
+                self.assertIn('-Werror', command)
+                self.assertEqual('-fsanitize=address,undefined' in command, sanitize)
+                self.assertFalse(any(flag.startswith('-Wno-asm') for flag in command))
 
 
 class Fill(unittest.TestCase):
