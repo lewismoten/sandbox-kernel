@@ -16,7 +16,7 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(p.sent,[b'INFO\n']*3)
     def test_exact_multiple_final_uses_verify(self):
         b=image.pack(b'X'*1792,'sender') # 2048-byte transport, two full blocks
-        info='INFO 2 test confirmed=1 features=kernel,no-os'
+        info='INFO 2 test confirmed=1 updates=ready os=none features=kernel-update'
         p=FakePort([info,info,'READY 1024','ACK 1024','VERIFY','OK pending rebooting'])
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
@@ -24,7 +24,7 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(p.sent[2:], [b[:1024],b[1024:]])
     def test_lost_final_never_repeats_put(self):
         b=image.pack(b'X'*4,'unknown')
-        p=FakePort(['INFO 2 test confirmed=1 features=kernel,no-os','READY 1024','VERIFY',TimeoutError()])
+        p=FakePort(['INFO 2 test confirmed=1 updates=ready os=none features=kernel-update','READY 1024','VERIFY',TimeoutError()])
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
             self.assertEqual(usb_kernel.send_kernel(p,f),2)

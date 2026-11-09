@@ -64,7 +64,9 @@ def expect(port,wanted,timeout):
 
 def send_kernel(port,path):
     image=validate(path.read_bytes());info=handshake(port);print(info)
-    if 'features=kernel,no-os' not in info: raise ValueError('Device updates locked; inspect logs')
+    fields=info.split()
+    # New kernels say updates=ready; old ones said features=kernel,no-os.
+    if 'updates=ready' not in fields and not ('updates=' not in info and 'features=kernel,no-os' in fields): raise ValueError('Device updates locked; inspect logs')
     before=dict(item.split('=',1) for item in info.split() if '=' in item)
     port.send(f'PUT2 kernel zero-w-armv6 {len(image)} {zlib.crc32(image):08x}\n'.encode())
     expect(port,'READY 1024',5)

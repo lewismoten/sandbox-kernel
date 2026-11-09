@@ -21,7 +21,13 @@ static char put_name[32];static uint8_t put_hash[32];
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
 bool protocol_busy(void) {return phase!=0;}
 void protocol_reset(void) {if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;} }
-static void fail(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");error(s);phase=0;used=0;overflow=false;putf=false;}
+static void refuse(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");phase=0;used=0;overflow=false;putf=false;}
+/* ERR rule: a real error (bad command, storage, CRC, fault) goes through fail(),
+   which also sets the e-ink "ERR:" line (sticky). A flow-control refusal, "not-ready"
+   because no INFO session or an OS is running, goes through refuse(): the reply only,
+   so a normal refusal never reads as a fault on the panel. PUTF, RUN, PUT2, STOP and
+   INPUT/KEY/AXIS all follow this rule. */
+static void fail(const char *s) {error(s);refuse(s);}
 static void field(uint32_t n) {char b[12];number(b,n);usb_reply(b);}
 static bool token(const char **p,const char *s) {size_t n=strlen(s);if(memcmp(*p,s,n)||(*p)[n]!=' ')return false;*p+=n+1;return true;}
 static bool decimal(const char **p,uint32_t *v) {
@@ -50,14 +56,16 @@ static void file_command(const char *p) {
  uint32_t size;uint8_t crc[4]={0};
  if(!path_token(&p,put_name)||*p++!=' '||!decimal(&p,&size)||*p++!=' '||!hex(&p,crc,4)||*p++!=' '||!hex(&p,put_hash,32)||*p) {fail("command");return;}
  if(!size||size>FATPUT_MAX) {fail("size");return;}
- if(!session||!storage_ready||control[4]!=NO_SLOT||os_running()) {fail("not-ready");return;}
+ if(!storage_ready) {fail("not-ready");return;}
+ if(!session||control[4]!=NO_SLOT||os_running()) {refuse("not-ready");return;}
  expected=size;transport_crc=((uint32_t)crc[0]<<24)|((uint32_t)crc[1]<<16)|((uint32_t)crc[2]<<8)|crc[3];received=0;block_end=size<1024?size:1024;activity=micros();
  putf=true;phase=1;usb_reply("READY 1024\n");
 }
 static void run_command(const char *p) {
  char name[13],path[20]="/OS/";
  if(!name_token(&p,name)||*p) {fail("command");return;}
- if(!session||!storage_ready||!os_can_start()) {fail("not-ready");return;}
+ if(!storage_ready) {fail("not-ready");return;}
+ if(!session||!os_can_start()) {refuse("not-ready");return;}
  memcpy(path+4,name,strlen(name)+1);
  os_policy_state.faults=0; /* a fresh request starts a fresh restart budget */
  autostart_cancel(); /* a program started over USB never falls back to DIAG.ELF */
@@ -69,7 +77,7 @@ static void run_command(const char *p) {
    SYN_REPORT) for /dev/input/event0. */
 static void input_command(const char *p,bool axis) {
  uint32_t code,mag=0;bool neg=false;struct input_change c;
- if(!session) {usb_reply("ERR not-ready\n");return;}
+ if(!session) {refuse("not-ready");return;}
  if(!decimal(&p,&code)||*p++!=' '||code>0xffff) {usb_reply("ERR input command\n");return;}
  c.type=(uint16_t)(axis?EV_ABS:EV_KEY);c.code=(uint16_t)code;
  if(axis) {
@@ -88,7 +96,7 @@ static void input_command(const char *p,bool axis) {
 static void command_line(void) {
  line[used]=0;
  if(!strcmp(line,"STOP")) {
-  if(!session) {usb_reply("ERR not-ready\n");return;}
+  if(!session) {refuse("not-ready");return;}
   os_request_stop();waiting_stop=true;return;
  }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
@@ -96,7 +104,7 @@ static void command_line(void) {
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
  if(used>5&&!memcmp(line,"AXIS ",5)) {input_command(line+5,true);return;}
  if(!strcmp(line,"INPUT add")||!strcmp(line,"INPUT remove")) {
-  if(!session) {usb_reply("ERR not-ready\n");return;}
+  if(!session) {refuse("not-ready");return;}
   if(line[6]=='a') input_add(); else input_remove();
   log_line(line[6]=='a'?"INPUT event0 added (synthetic)":"INPUT event0 removed");
   usb_reply(line[6]=='a'?"OK input add\n":"OK input remove\n");return;
@@ -107,14 +115,17 @@ static void command_line(void) {
   usb_reply(" confirmed=");field(control[0]==CONTROL_MAGIC?control[6]:0);
   usb_reply(" pending=");field(control[0]==CONTROL_MAGIC&&control[4]!=NO_SLOT?control[7]:0);
   usb_reply(" active_generation=");field(boot_generation);
-  usb_reply(updates_ready?" features=kernel,no-os":" features=locked");
+  usb_reply(updates_ready?" updates=ready":" updates=locked");
+  usb_reply(os_running()?" os=running":os_starts?" os=stopped":" os=none");
+  usb_reply(updates_ready?" features=kernel-update":" features=locked");
   usb_reply(" install_timeout=120\n");return;
  }
  const char *p=line;uint32_t size,crc=0;
  if(used<10||!token(&p,"PUT2")||!token(&p,"kernel")||!token(&p,"zero-w-armv6")||!decimal(&p,&size)||*p++!=' ') {fail("command");return;}
  for(unsigned i=0;i<8;i++) {unsigned c=(uint8_t)*p++;if(c>='0'&&c<='9')c-='0';else if(c>='a'&&c<='f')c=c-'a'+10;else {fail("crc-format");return;}crc=(crc<<4)|c;}
  if(*p||size<64||size>MAX_IMAGE) {fail("size");return;}
- if(!session||!storage_ready||!updates_ready||control[4]!=NO_SLOT) {fail("not-ready");return;}
+ if(!storage_ready) {fail("not-ready");return;}
+ if(!session||!updates_ready||control[4]!=NO_SLOT) {refuse("not-ready");return;}
  expected=size;transport_crc=crc;received=0;block_end=size<1024?size:1024;activity=micros();inactive=1-control[3];
  phase=1;usb_reply("READY 1024\n"); /* no panel, hashing or storage here */
 }
