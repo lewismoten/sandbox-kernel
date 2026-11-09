@@ -22,3 +22,7 @@ bool autostart_cancelled(void);
 /* From the supervisor once the restart policy gives up: true if DIAG.ELF
    was started in place of the autostarted program. */
 bool autostart_fallback(void);
+/* Right after display init: false (and the recovery console, with the reason in its log box) when storage failed, so no autostart will run. */
+bool boot_storage_policy(bool storage_ready);
+/* The 10 s autostart step: starts the picked program; recovery console if none starts. A clean OS exit leaves its last frame (the supervisor, not this). */
+void autostart_launch(void);

@@ -49,7 +49,7 @@ void kernel_main(void) {
     the kernel down can still be replaced over USB (PUTF) before it runs.
     GMOS.ELF if present (or AUTORUN.TXT's choice), else DIAG.ELF; a rejected
     file falls back to DIAG.ELF, and a missing DIAG keeps the recovery console. */
- bool autostart=storage_ready;
+ bool autostart=boot_storage_policy(storage_ready);
  if(autostart) {char t[48]="OS autostart in 10 s: ";const char *a=autostart_pick();memcpy(t+22,a,strlen(a)+1);log_line(t);}
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
@@ -60,7 +60,7 @@ void kernel_main(void) {
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
-   if(!os_running()&&autostart_run(autostart_pick())) {log_line("OS none; recovery console (USB PUTF and RUN available)");fb_recovery();}
+   autostart_launch();
   }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
   panel_task(usb_state(),seconds);fb_recovery_task();
