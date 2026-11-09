@@ -21,7 +21,7 @@ struct k_fb_palette {struct k_header h; uint64_t first,count; uint32_t rgb[256];
 struct k_mmap {struct k_header h; uint64_t fd,offset,length,protection,flags,address;};
 struct k_app_arena {struct k_header h; uint64_t owner_generation,requested_bytes,address,actual_bytes;};
 _Static_assert(sizeof(struct k_app_arena)==48,"arena record");
-struct k_audio_info {struct k_header h; uint64_t flags,rate,capacity_frames,queued_frames,played_frames,underruns,overruns,overrun_frames;}; /* ABI 1.7 /dev/audio */
+struct k_audio_info {struct k_header h; uint64_t flags,rate,capacity_frames,queued_frames,played_frames,underruns,overruns,overrun_frames;}; /* ABI 1.8 /dev/audio */
 struct k_health {struct k_header h; uint64_t generation,sequence;};
 struct k_clock {struct k_header h; uint64_t clock,ns;}; /* clock_gettime (13): clock 0 is monotonic; ns out */
 struct k_sleep {struct k_header h; uint64_t deadline;}; /* sleep_until (14): absolute monotonic ns */

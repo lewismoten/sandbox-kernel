@@ -62,7 +62,7 @@ enum {
    at SBX_AUDIO_RATE, takes what fits and returns that many bytes, or EAGAIN when
    none fit (wait a little, retry). It never blocks and never overwrites queued audio.
    When the ring runs dry the device plays silence and counts an underrun. close()
-   drops whatever is still queued. Check sbx_startup.minor >= 7 first. */
+   drops whatever is still queued. Check sbx_startup.minor >= 8 first. */
 #define SBX_IOC_AUDIO_QUERY SBX_IOC(2, 0)
 #define SBX_AUDIO_RATE 48000u
 #define SBX_FB_XRGB8888 1u /* sbx_fb_mode.format: 32-bit words 0x00RRGGBB */
