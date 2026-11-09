@@ -35,7 +35,7 @@ enum {
 #define SBX_O_WRONLY 1u
 #define SBX_O_RDWR 2u
 #define SBX_O_NONBLOCK 0x100u
-#define SBX_O_CREAT 0x200u /* only WRONLY|CREAT|TRUNC, canonical /sd/OS/CACHE/NAME */
+#define SBX_O_CREAT 0x200u /* only WRONLY|CREAT|TRUNC, canonical /sd/OS/CACHE/NAME or /sd/OS/SAVES/GAME/NAME */
 #define SBX_O_TRUNC 0x400u
 #define SBX_MAX_TRANSFER (1024u * 1024u)
 #define SBX_MAX_PATH 255u

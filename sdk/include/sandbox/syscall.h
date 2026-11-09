@@ -72,7 +72,7 @@ static inline int32_t sbx_fsync(uint64_t fd) {
   sbx_close_rec r = {SBX_HEADER(sbx_close_rec), fd};
   return sbx_syscall(SBX_CALL_FSYNC, &r, sizeof r);
 }
-/* Cache-only copy/publish rename; temp may survive interrupted cleanup.
+/* Cache or one save folder: copy/publish rename (same folder only); temp may survive interrupted cleanup.
    Destination is old/new, no shared chains. Close the writer first. */
 static inline int32_t sbx_rename(const char *from, uint32_t from_bytes, const char *to, uint32_t to_bytes) {
   sbx_rename_rec r = {SBX_HEADER(sbx_rename_rec), (uint32_t)(uintptr_t)from, from_bytes, (uint32_t)(uintptr_t)to, to_bytes};
