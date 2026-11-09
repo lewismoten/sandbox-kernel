@@ -8,6 +8,7 @@
  * views hit the same lines, and nothing here uses DMA. */
 #include "kernel.h"
 #include "uspace.h"
+#include "app_arena_core.h"
 struct uregion us_regions[U_REGIONS];
 unsigned us_count;
 uint32_t us_table[4096] __attribute__((aligned(16384)));
@@ -23,6 +24,17 @@ uint8_t *us_pool(void) {return (uint8_t *)(uintptr_t)U_POOL_PA;}
 uint32_t us_l2_pa(unsigned i) {return (uint32_t)(uintptr_t)us_l2[i];}
 #endif
 uint32_t us_used(void) {return used;}
+static struct aa_space cleanup_view(void) {
+ return (struct aa_space){us_pool(),us_table,us_l2,us_regions,l2_section,
+                         used,l2_used,us_count,us_l2_pa(0)};
+}
+int us_quiesce(struct aa_owner *o,struct aa_cleanup *c) {
+ struct aa_space s=cleanup_view();return aa_quiesce(o,&s,c);
+}
+int us_clean_step(struct aa_owner *o,struct aa_cleanup *c) {
+ struct aa_space s=cleanup_view();int r=aa_clean_step(o,&s,c);
+ used=s.used;l2_used=s.l2_count;us_count=s.region_count;return r;
+}
 static int fail(const char *s,int e) {us_fail=s;return -e;}
 static bool user_section(uint32_t s) { /* MiB sections a user mapping may use */
  uint32_t a=s<<20;

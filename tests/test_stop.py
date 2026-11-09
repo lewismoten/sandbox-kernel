@@ -16,6 +16,10 @@ class Stop(ProtocolBase):
 
     def boundary(self):
         self.c.os_task()
+        for _ in range(4097):
+            if not self.c.os_stop_pending(): break
+            self.c.os_task()
+        self.assertFalse(self.c.os_stop_pending())
         self.c.protocol_task()
         return self.c.take_output().decode()
 
