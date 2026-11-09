@@ -91,7 +91,8 @@ class Reclaim(CallsBase):
         c.os_handle(5,1,IMAGE);self.drain();c.os_handle(5,1,IMAGE);self.drain()
         self.assertFalse(c.os_running())
     def test_protocol_stop_pending_run_preserves_policy(self):
-        self.autostart();c=self.c;c.os_request_stop()
+        self.autostart();c=self.c;self.finish()
+        self.assertFalse(c.os_running());c.os_request_stop()
         C.c_uint32.in_dll(c,'os_policy_state').value=1
         self.assertEqual(self.protocol(b'RUN GMOS.ELF\n'),b'ERR not-ready\n')
         self.assertEqual(C.c_uint32.in_dll(c,'os_policy_state').value,1)
