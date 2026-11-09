@@ -4,6 +4,7 @@
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 from typing import Any
 import fatgen
@@ -31,7 +32,7 @@ def main():
                  '/GAMES/MYGAME~1/FILE.GAM': 'Long game filename.gam'}
         card = work/'card.img'
         v = fatlfn.build(card, tree, names, fragment=True)
-        env = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:halt_on_error=1',
+        env = dict(os.environ, ASAN_OPTIONS=('detect_leaks=0' if sys.platform == 'darwin' else 'detect_leaks=1') + ':halt_on_error=1',
                    UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
         subprocess.run([str(executable), str(card)], env=env, check=True)
         # Each field-corruption image is scanned by the instrumented real reader
