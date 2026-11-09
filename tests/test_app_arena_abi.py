@@ -39,6 +39,8 @@ class ArenaABI(CallsBase):
     def test_acquire_fixed_charge_and_idempotence(self):
         before=self.c.us_used();tables=self.c.probe_l2_count()
         regions=C.c_uint.in_dll(self.c,'us_count').value
+        self.c.us_pool.restype=C.c_void_p
+        C.memset(self.c.us_pool()+before,0xc7,CAP) # dirty unexposed backing, not a live user mapping
         self.assertEqual(self.call(21,self.arena()),0)
         self.assertEqual(struct.unpack_from('<2Q',peek(self.c,self.REC,48),32),(BASE,CAP))
         self.assertEqual(self.c.us_used()-before,CAP)
@@ -99,6 +101,14 @@ class ArenaABI(CallsBase):
         before=self.snapshot()
         self.assertEqual(self.call(21,None,size=48,va=self.BUF+4096-24),-14)
         self.assertEqual(self.snapshot(),before)
+    def test_readonly_prevalidation_never_touches_unused_pool(self):
+        c=self.c;c.us_pool.restype=C.c_void_p;used=c.us_used()
+        C.memset(c.us_pool()+used,0x91,CAP)
+        poke(c,IMAGE+256,self.arena()) # privileged test alias writes a valid read-only user record
+        before=self.snapshot()
+        self.assertEqual(self.call(21,None,size=48,va=IMAGE+256),-14)
+        self.assertEqual(self.snapshot(),before)
+        self.assertEqual(C.string_at(c.us_pool()+used,CAP),bytes([0x91])*CAP)
     def test_late_copy_failure_rolls_back_then_reuses(self):
         c=self.c;r=self.arena();poke(c,self.REC,r);before=self.snapshot()
         c.probe_late_copy_failure()

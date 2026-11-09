@@ -69,10 +69,10 @@ static void envelope(uint64_t epoch) {
   else {va=U_START_VA;want=-14;}
   assert(!us_copy_out(REC,in,4096));
   uint8_t saved[48],*ro=NULL;
-  if(kind==16) {assert(us_span(U_START_VA,48,U_R,&ro)==48);memcpy(saved,ro,48);memcpy(ro,in,48);}
+  if(kind==16) {assert(us_span(U_START_VA,48,U_R,&ro)==48);memcpy(saved,ro,48);memcpy(ro,in,48);memset(us_pool()+used,0x91,CAP);}
   uint32_t regs[8]={va,bytes,major,extra,0,0,0,21};
   assert(sys_call(regs)==want);
-  if(ro)memcpy(ro,saved,48);
+  if(ro) {memcpy(ro,saved,48);for(unsigned i=0;i<CAP;i++)assert(us_pool()[used+i]==0x91);}
   assert(!us_copy_in(out,REC,4096)&&!memcmp(in,out,4096));
   assert(us_used()==used&&probe_l2_count()==tables&&us_count==regions);
   assert(!memcmp(l1,us_table,sizeof l1)&&!memcmp(l2,us_l2,sizeof l2));
@@ -94,6 +94,7 @@ int main(int argc,char **argv) {
  assert(us_used()==used&&probe_l2_count()==tables&&us_count==regions);
  struct k_app_arena unchanged;assert(!us_copy_in(&unchanged,REC,48));assert(!memcmp(&original,&unchanged,48));
  for(unsigned i=0;i<CAP;i++)assert(!us_pool()[used+i]);
+ memset(us_pool()+used,0xc7,CAP); /* first successful exposure must erase dirty free backing */
  void *address=NULL;uint64_t actual=0;
  assert(!sbx_app_arena(&startup.prefix,1,&address,&actual));
  assert((uintptr_t)address==BASE&&actual==CAP);
