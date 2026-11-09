@@ -24,9 +24,10 @@ int main(void) {
     assert(hdmi_rational(355, 113, 1000, 1000, &n, &m) == 0 && n == 355 && m == 113);
     assert(hdmi_rational(355, 113, 1000, 10, &n, &m) == 0 && n == 22 && m == 7); /* best with m <= 10 */
     assert(hdmi_rational(0, 1, 1, 1, &n, &m) == -1);
-    /* HSM from CM words: oscillator / 4 = 4.8 MHz; PLLD 2 GHz / 12.5 = 160 MHz; unknown source 0 */
+    /* HSM from CM words: oscillator / 4 = 4.8 MHz; PLLD_PER 500 MHz / 3.125 = 160 MHz; unknown source 0 */
     assert(hdmi_hsm_hz(0x11, 4u << 12) == 4800000u);
-    assert(hdmi_hsm_hz(0x16, (12u << 12) | 2048) == 160000000u);
+    assert(hdmi_hsm_hz(0x16, (3u << 12) | 512) == 160000000u);
+    assert(hdmi_hsm_hz(0x2d6, 0x30e0) > 163600000u && hdmi_hsm_hz(0x2d6, 0x30e0) < 163700000u);
     assert(hdmi_hsm_hz(0x15, 4u << 12) == 0 && hdmi_hsm_hz(0x16, 0) == 0);
     /* audio infoframe: type, version, length, checksum; the 14 bytes sum to 0 mod 256 */
     uint8_t f[AUDIO_INFOFRAME_BYTES]; hdmi_audio_infoframe(f);

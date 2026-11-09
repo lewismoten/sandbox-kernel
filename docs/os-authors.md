@@ -258,8 +258,8 @@ described in `docs/design.md`.)
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 4,096-frame ring (about 85 ms) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. A gap plays silence and counts an underrun. **Today a null backend drains the ring; no sound reaches a speaker or HDMI yet.** See `docs/audio-device.md`. |
 
-**Not yet:** sound you can hear (`/dev/audio` exists, but only a null backend drains it; the PCM host core in `docs/audio-host-core.md` is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
-only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI audio and HDMI-CEC, and the
+**Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Not yet:** a real USB keyboard or gamepad (input is synthetic
+only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
 general SD writing are not supported either.
 

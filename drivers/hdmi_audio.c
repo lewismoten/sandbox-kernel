@@ -45,11 +45,11 @@ static void say(const char *a, uint32_t n, const char *b) {
  for (s = a; *s;) *p++ = *s++;
  number(t, n); for (char *q = t; *q;) *p++ = *q++;
  for (s = b; *s;) *p++ = *s++;
- *p = 0; log_line(l);
+ *p = 0; boot_note(l);
 }
 static void hex(char *o, uint32_t v) { for (int i = 7; i >= 0; i--) *o++ = "0123456789abcdef"[(v >> (4 * i)) & 15]; *o = 0; }
-static void sayhex(const char *a, uint32_t v) { char l[80], h[9], *p = l; const char *s; hex(h, v); for (s = "AUDIO hdmi: "; *s;) *p++ = *s++; for (s = a; *s;) *p++ = *s++; for (char *q = h; *q;) *p++ = *q++; *p = 0; log_line(l); }
-static int fail(const char *w) { why = w; log_line("AUDIO hdmi: unavailable, null backend stays:"); log_line(w); return -1; }
+static void sayhex(const char *a, uint32_t v) { char l[80], h[9], *p = l; const char *s; hex(h, v); for (s = "AUDIO hdmi: "; *s;) *p++ = *s++; for (s = a; *s;) *p++ = *s++; for (char *q = h; *q;) *p++ = *q++; *p = 0; boot_note(l); }
+static int fail(const char *w) { why = w; boot_note("AUDIO hdmi: unavailable, null backend stays:"); boot_note(w); return -1; }
 
 static void fill(uint32_t seg) {
  uint32_t q = audio_ring_queued(&audio0.ring), n = audio0.open ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
@@ -61,6 +61,7 @@ static void fill(uint32_t seg) {
 
 int hdmi_audio_init(void) {
  if (hw.active) return 0;
+ audio_hw.report = hdmi_audio_report;
  uint32_t m[1] = {0};
  if (!property(0x60001, m, 1)) return fail("DMA channel mask unavailable");
  hw.ch = -1; for (int c = 1; c <= 6; c++) if (m[0] & (1u << c)) { hw.ch = c; break; }
@@ -99,6 +100,8 @@ int hdmi_audio_init(void) {
  dma_build_ring(cbs, HDMI_DMA_SEGS, bus(cbs), bus(buf), SEG_WORDS * 4u, 0x7e000000u | (HDMI_HD_BASE - PERIPH + HD_MAI_DATA));
  drain();
  hd(HD_MAI_CTL, hdmi_mai_ctl_run());
+ sayhex("MAI_CTL after write ", REG(HDMI_HD_BASE + HD_MAI_CTL));
+ {char l[80]; char a[9],b[9],c[9],d[9]; hex(a,REG(HDMI_HD_BASE+HD_MAI_THR)); hex(b,REG(HDMI_HD_BASE+HD_MAI_FMT)); hex(c,REG(HDMI_HD_BASE+HD_MAI_SMP)); hex(d,REG(HDMI_HD_BASE+HD_M_CTL)); char *p=l; const char *s="AUDIO hdmi: THR/FMT/SMP/M_CTL "; while(*s)*p++=*s++; for(int k=0;k<4;k++){const char *z=k==0?a:k==1?b:k==2?c:d; while(*z)*p++=*z++; *p++=' ';} *p=0; boot_note(l);}
  REG(DMA_ENABLE) |= 1u << hw.ch; barrier();
  dmaw(DMA_CS, 0x80000000u); for (uint32_t s = micros(); dma(DMA_CS) & 0x80000000u; ) if (expired(s, 10000)) break;
  dmaw(DMA_CS, 0x6u); /* clear END and INT */
@@ -113,8 +116,8 @@ int hdmi_audio_init(void) {
   return fail((dma(DMA_CS) & 0x100u) ? "DMA error" : "DMA is not draining (DREQ or MAI not running)");
  }
  hw.active = 1; why = "ok";
- audio_hw.task = hdmi_audio_task; audio_hw.tone = hdmi_audio_tone; audio_hw.report = hdmi_audio_report;
- log_line("AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)");
+ audio_hw.task = hdmi_audio_task; audio_hw.tone = hdmi_audio_tone;
+ boot_note("AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)");
  return 0;
 }
 int hdmi_audio_active(void) { return hw.active; }
@@ -137,6 +140,7 @@ int hdmi_audio_tone(uint32_t hz, uint32_t ms) {
 }
 void hdmi_audio_report(char *out, size_t cap) {
  char t[12]; size_t n = 0; while (out[n]) n++;
+ if (!hw.active) { const char *a = "backend=null hdmi_unavailable: "; for (; *a && n + 1 < cap;) out[n++] = *a++; for (const char *b = why; *b && n + 1 < cap;) out[n++] = *b++; out[n] = 0; return; }
  uint32_t el = (micros() - started_us) / 1000u; /* ms */
  uint32_t frames = segs_played * HDMI_DMA_SEG_FRAMES;
  uint32_t fps = el ? (frames / el) * 1000u + (frames % el) * 1000u / el : 0;

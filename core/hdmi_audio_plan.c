@@ -42,7 +42,7 @@ int hdmi_audio_clocks(uint32_t rate, uint32_t pixel_hz, uint32_t hsm_hz, struct 
 
 uint32_t hdmi_hsm_hz(uint32_t ctl, uint32_t div) {
     uint32_t src = ctl & 0xf, divi = (div >> 12) & 0xfff, divf = div & 0xfff, hz;
-    if (src == 1) hz = 19200000u; else if (src == 6) hz = 2000000000u; else return 0;
+    if (src == 1) hz = 19200000u; else if (src == 6) hz = 500000000u; else return 0; /* PLLD_PER: the 2 GHz PLLD through its /4 channel; the board's HSM divider 3.0547 gave 163.68 MHz */
     if (!divi) return 0;
     uint32_t den = divi * 4096u + divf, q = hz / den, r = hz % den, sh = 0; /* hz * 4096 / den */
     while ((den >> sh) > 0xfffffu) sh++;

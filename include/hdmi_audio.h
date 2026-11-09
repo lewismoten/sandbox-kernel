@@ -70,7 +70,7 @@ int hdmi_rational(uint32_t num, uint32_t den, uint32_t max_n, uint32_t max_m, ui
  * HSM clock that feeds the MAI sample divider. Returns 0 or -1. */
 int hdmi_audio_clocks(uint32_t rate, uint32_t pixel_hz, uint32_t hsm_hz, struct hdmi_audio_clocks *out);
 /* HSM clock rate from its Clock Manager CTL and DIV words. src: 1 oscillator
- * (19.2 MHz), 6 PLLD (assumed 2000 MHz; VERIFY by the log); other sources
+ * (19.2 MHz), 6 PLLD_PER (500 MHz: hardware log 2026-11-09 read CTL 0x2d6, DIV 0x30e0 = 163.68 MHz); other sources
  * unknown (0). Integer divider only plus the 12-bit fraction. */
 uint32_t hdmi_hsm_hz(uint32_t ctl, uint32_t div);
 /* Audio InfoFrame for 2-channel LPCM: 4 header bytes (type, version, length,
