@@ -86,7 +86,8 @@ itself with `usb_kernel.py send`.
 
 In order:
 
-1. **E-ink "starting" screen**, drawn before USB or the SD card is set up.
+1. **E-ink "starting" screen** (the mark, `SANDBOX KERNEL`, `STARTING...`), drawn before USB or
+   the SD card is set up.
 2. MMU, UART, interrupts and USB are initialized. The log prints the build ID, the reset
    cause, the selected slot and the generation.
 3. **Card scan:** the SD card is initialized (`store_init`), the fallback slot is
@@ -150,10 +151,28 @@ loop (`core/protocol.c`) keeps answering `INFO`, `PUTF`, `RUN`, `STOP` and the i
 commands. Log lines say `OS none; recovery console (USB PUTF and RUN available)` or
 `OS stopped; kernel recovery console kept`.
 
+### The kernel's own screens
+
+The kernel carries its own generic branding (the chip-with-K mark and the name
+`sandbox-kernel`); it never shows the name of any OS program. Anyone running an OS on it
+sees only that. The art is in `art/boot/` (with its layout notes), baked into
+`core/logo_data.c` by `scripts/make_boot_art.py`.
+
+- **HDMI boot screen:** color bars over a 16-step gray ramp, with a small panel in the
+  middle (the mark, `sandbox-kernel`, `bare-metal boot`). It is drawn at 960x540 (the
+  kernel's own mode) and 640x480, and again whenever a fault puts the kernel's screen back.
+- **HDMI recovery console:** when no OS program is running (none was found at boot, or USB
+  stopped it) the kernel shows a header and a 60 by 12 box with its own log lines, newest
+  at the bottom, redrawn as lines arrive. A program that exits on its own leaves its last
+  frame up, as before. The console is 960x540 only.
+- **E-ink:** the starting and status screens below.
+
+`scripts/render_screen.py OUTDIR` renders all of them on the host to PNG.
+
 ### Reading the e-ink panel
 
-The 250x122 panel (`core/render.c`, `render_status`) shows the logo, `GAME-MAKER`, the
-build ID, and three lines:
+The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark, the title
+`SANDBOX KERNEL`, the build ID, and three lines (values are clipped at 16 characters):
 
 | Line | Meaning |
 | --- | --- |

@@ -5,11 +5,12 @@
 #include "autostart.h"
 #include "clock.h"
 #include "input.h"
+#include "fb_art.h"
 void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
-void log_line(const char *s) {uart_puts(s);uart_puts("\r\n");usb_log(s);}
+void log_line(const char *s) {console_log(s);uart_puts(s);uart_puts("\r\n");usb_log(s);}
 void error(const char *s) {last_error=s;log_line(s);}
 extern bool panel_boot_done(void),verify_confirmed(void),protocol_busy(void),usb_healthy(void),control_healthy(void);
 void kernel_main(void) {
@@ -59,10 +60,10 @@ void kernel_main(void) {
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
-   if(!os_running()&&autostart_run(autostart_pick()))log_line("OS none; recovery console (USB PUTF and RUN available)");
+   if(!os_running()&&autostart_run(autostart_pick())) {log_line("OS none; recovery console (USB PUTF and RUN available)");fb_recovery();}
   }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
-  panel_task(usb_state(),seconds);
+  panel_task(usb_state(),seconds);fb_recovery_task();
   if(expired(start,100000)) {
    if(ticks==old_ticks) {error("Timer progress lost");for(;;)service_io();}
    old_ticks=ticks;start=micros();watchdog_feed();
