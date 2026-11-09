@@ -158,7 +158,7 @@ build ID, and three lines:
 | Line | Meaning |
 | --- | --- |
 | `UP:` | uptime since the kernel started |
-| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (an OTG adapter's ID pin has been grounded for 500 ms and no computer enumerates; nothing enters host mode and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
+| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
 | `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,

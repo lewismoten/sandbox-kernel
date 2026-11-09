@@ -1,11 +1,13 @@
 # USB host keyboard: plan after ID detection
 
-Slice 1 (done): read the OTG ID pin once at boot and show `USB: OTG (KEYBOARD NEXT)`
-when the ID pin is grounded and no Mac enumerates. Nothing enters host mode yet.
+Slice 1 (done): read the OTG ID pin once at boot, latch the result, and show
+`USB: OTG (KEYBOARD NEXT)` when that latched ID was grounded and no Mac has enumerated for
+500 ms. The role intent is not re-sampled (hot-plug is not implemented yet; slice 2). The
+kernel does not start host mode in this slice.
 
 ## Trigger (Lewis's choice)
-Host mode only when ID is grounded (OTG adapter) and no Mac data link. Otherwise the
-gadget stays as is. `core/usbrole.c` holds the debounced decision (tests/usbrole.c).
+Planned: host mode only when ID is grounded (OTG adapter) and no Mac data link; today the
+kernel only reports that state. Otherwise the gadget stays as is. `core/usbrole.c` holds the debounced decision (tests/usbrole.c).
 
 ## Register facts
 - GOTGCTL at 0x20980000 (base 0x20980000, GUSBCFG at +0x0C as used in drivers/usb.c).
@@ -33,12 +35,15 @@ The window (`usb_init`) clears both force bits for 100 ms, once, at boot, then f
 device. During it the code:
 - opens the window only if HPRT0.PrtPwr (bit 12) is clear, else it skips it and stays
   device;
-- does not touch HPRT0, GHWCFG or any host register, never sets ForceHstMode, never
-  starts host init or a soft reset, and the core interrupt handler is not enabled yet
+- reads HPRT0 (once, to decide) and GOTGCTL (once, after the 100 ms); it writes only GUSBCFG
+  (clears both force bits, then forces device). It does not write HPRT0, GHWCFG or any
+  host register, never sets ForceHstMode, never starts host init or a soft reset, and the core interrupt handler is not enabled yet
   (`usb_irq` returns until `initialized`);
 - forces device straight after (`usbrole_device_gusbcfg`; tested in tests/usbrole.c).
 
-Guarantee, precisely: the kernel never sets host mode or powers the host port. For about
+Guarantee, precisely: the kernel code never sets ForceHstMode and never writes HPRT0 (so it never
+sets the port power bit or starts host init). The role is not "device for every
+microsecond": for about
 100 ms at boot the core is in OTG mode, not forced device, so a grounded ID could make the
 core report A-device on its own. The kernel does nothing in that state that would drive VBUS:
 the port power bit is the software control and it is never set. Whether the core itself
@@ -54,7 +59,9 @@ every microsecond.
 debounce at the wrap. Tests cover the wrap and exactly 500 ms across it. (TinyUSB's own
 `tusb_time_millis_api` still does `micros()/1000`, so its millisecond counter jumps at the
 wrap; not changed here.)
-- Live hot-plug sampling needs a brief un-force window (or the A/B-device change
+- Hot-plug is not implemented: the ID level is sampled once at boot and latched; only the
+  "no computer enumerated" half of the decision is live (500 ms debounce, `usbrole_step`).
+  Live hot-plug sampling needs a brief un-force window (or the A/B-device change
   interrupt); that disturbs a gadget link, so it is slice 2.
 
 ## Next slices
