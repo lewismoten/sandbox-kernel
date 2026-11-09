@@ -23,6 +23,7 @@ int fatcache_invalidate(void); /* unpublish before install; bad cache data canno
 int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap);
 #define FATSAVE_MAX_GAMES 64u /* folders under /OS/SAVES */
 #define FATSAVE_MAX_FILES 32u /* files in one game's folder */
+#define FATSAVE_MAX_BYTES (1024u*1024u) /* all files in one game's folder */
 #define FATSAVE_EQUOTA 122    /* returned as -122 when a cap is hit */
 /* Saves backend: plain 8.3 names in /OS/SAVES/<GAME> only (GAME has no dot). */
 int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t bytes);
