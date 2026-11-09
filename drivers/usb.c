@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT; descriptors and original TinyUSB board glue. */
 #include "kernel.h"
+#include "serial.h"
 #include "tusb.h"
 #include "device/dcd.h"
 extern volatile bool usb_reset_seen;
