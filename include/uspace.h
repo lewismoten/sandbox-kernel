@@ -44,6 +44,11 @@ uint8_t *us_pool(void); /* kernel pointer to the pool's first byte */
 uint32_t us_l2_pa(unsigned i); /* physical address of us_l2[i] */
 uint32_t us_used(void); /* pool bytes in use */
 struct aa_owner; struct aa_cleanup;
+struct aa_checkpoint;
+/* Exclusive append-only transaction; no callbacks/maps/user entry between
+   prepare and finish. 1 means an existing lease, requiring no finish. */
+int us_arena_prepare(struct aa_owner *owner,uint64_t epoch,uint64_t requested,struct aa_checkpoint *checkpoint);
+int us_arena_finish(struct aa_owner *owner,const struct aa_checkpoint *checkpoint,bool publish);
 /* Privileged main-loop only: borrow the canonical counters exclusively. No
    callbacks or user entry until cleanup completes; never reset before scrub. */
 int us_quiesce(struct aa_owner *owner,struct aa_cleanup *cleanup);

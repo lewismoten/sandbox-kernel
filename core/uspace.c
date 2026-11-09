@@ -28,6 +28,14 @@ static struct aa_space cleanup_view(void) {
  return (struct aa_space){us_pool(),us_table,us_l2,us_regions,l2_section,
                          used,l2_used,us_count,us_l2_pa(0)};
 }
+int us_arena_prepare(struct aa_owner *o,uint64_t epoch,uint64_t requested,struct aa_checkpoint *cp) {
+ struct aa_space s=cleanup_view();int r=aa_prepare(o,&s,epoch,requested,cp);
+ used=s.used;l2_used=s.l2_count;us_count=s.region_count;return r;
+}
+int us_arena_finish(struct aa_owner *o,const struct aa_checkpoint *cp,bool publish) {
+ struct aa_space s=cleanup_view();int r=aa_finish(o,&s,cp,publish);
+ used=s.used;l2_used=s.l2_count;us_count=s.region_count;return r;
+}
 int us_quiesce(struct aa_owner *o,struct aa_cleanup *c) {
  struct aa_space s=cleanup_view();return aa_quiesce(o,&s,c);
 }
@@ -44,7 +52,7 @@ int us_reset(const uint32_t *k) {
  memset(us_regions,0,sizeof(us_regions));us_count=0;used=0;l2_used=0;
  memset(us_l2,0,sizeof(us_l2));
  for(unsigned i=0;i<4096;i++) {
-  if(user_section(i)&&k[i]) {memset(us_table,0,sizeof(us_table));return fail("USER MAP CONFLICT",22);}
+  if((user_section(i)||(i>=AA_BASE>>20&&i<=(AA_BASE+AA_BYTES-1u)>>20))&&k[i]) {memset(us_table,0,sizeof(us_table));return fail("USER MAP CONFLICT",22);}
   us_table[i]=k[i];
  }
  us_fail="none";return 0;

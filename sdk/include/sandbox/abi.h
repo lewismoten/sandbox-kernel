@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 5u /* 1.5: opt-in UTF-8 VFAT metadata enumeration */
+#define SBX_ABI_MINOR 6u /* 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -18,7 +18,7 @@ enum {
   SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_SEEK = 9, SBX_CALL_GETDENTS = 11,
   SBX_CALL_FSYNC = 12, SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17,
   SBX_CALL_GETDENTS_META = 18, SBX_CALL_RENAME = 19,
-  SBX_CALL_GETDENTS_LONG_META = 20
+  SBX_CALL_GETDENTS_LONG_META = 20, SBX_CALL_APP_ARENA = 21
 };
 
 /* Negative return values. */
@@ -28,7 +28,7 @@ enum {
   SBX_EEXIST = 17, SBX_ENODEV = 19, SBX_ENOTDIR = 20, SBX_EINVAL = 22,
   SBX_EMFILE = 24, SBX_ENOTTY = 25, SBX_ENOSPC = 28, SBX_ESPIPE = 29,
   SBX_EROFS = 30, SBX_EPIPE = 32, SBX_ENAMETOOLONG = 36, SBX_ENOSYS = 38,
-  SBX_EPROTONOSUPPORT = 93, SBX_ETIMEDOUT = 110
+  SBX_EOVERFLOW = 75, SBX_EPROTONOSUPPORT = 93, SBX_ETIMEDOUT = 110
 };
 
 #define SBX_O_RDONLY 0u
@@ -153,6 +153,14 @@ typedef struct sbx_mmap_rec {
   uint64_t fd, offset, length, protection, flags;
   uint64_t address; /* out */
 } sbx_mmap_rec;
+/* Fixed singleton; requested is a minimum, not the charged size. No free/resize.
+   Outputs are zero on entry. Epoch is NOT the boot-health generation. */
+#define SBX_APP_ARENA_ADDRESS 0x30000000u
+#define SBX_APP_ARENA_BYTES 2195456u
+typedef struct sbx_app_arena_rec {
+  sbx_header h;
+  uint64_t owner_generation, requested_bytes, address, actual_bytes;
+} sbx_app_arena_rec;
 
 typedef struct sbx_dirents_rec { /* getdents: whole sbx_dirent entries into buffer */
   sbx_header h;
@@ -213,10 +221,23 @@ typedef struct sbx_startup {
   uint32_t generation, trial; /* kernel boot generation; 1 while it is on trial */
   uint64_t image_bytes, stack_bytes, handles; /* quotas */
 } sbx_startup;
+typedef struct sbx_startup_ext {
+  sbx_startup prefix;
+  uint64_t app_generation;
+} sbx_startup_ext;
+/* Short legacy records are valid: never access the extension before all gates. */
+static inline uint64_t sbx_app_generation(const sbx_startup *s) {
+  if (!s || s->major != 1 || s->minor < 6 || s->size < sizeof(sbx_startup_ext)) return 0;
+  return ((const sbx_startup_ext *)(const void *)s)->app_generation;
+}
 
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
+SBX_CHECK(sbx_startup_ext, 48); SBX_AT(sbx_startup_ext, prefix, 0); SBX_AT(sbx_startup_ext, app_generation, 40);
+SBX_CHECK(sbx_app_arena_rec, 48); SBX_AT(sbx_app_arena_rec, h, 0);
+SBX_AT(sbx_app_arena_rec, owner_generation, 16); SBX_AT(sbx_app_arena_rec, requested_bytes, 24);
+SBX_AT(sbx_app_arena_rec, address, 32); SBX_AT(sbx_app_arena_rec, actual_bytes, 40);
 SBX_AT(sbx_header, size, 0); SBX_AT(sbx_header, flags, 4);
 SBX_AT(sbx_header, reserved0, 8); SBX_AT(sbx_header, reserved1, 12);
 SBX_CHECK(sbx_open_rec, 56);
