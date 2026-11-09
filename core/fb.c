@@ -3,6 +3,7 @@
  * property interface documentation). No hardware access. */
 #include "kernel.h"
 #include "fb.h"
+#include "fb_art.h"
 /* Tag order and word offsets of each tag's value buffer in the message. */
 static const uint32_t tags[7][3]={ /* tag, value words, offset of first value */
  {0x48003,2,5},{0x48004,2,10},{0x48009,2,15},{0x48005,1,20},{0x48006,1,24},{0x40001,2,28},{0x40008,1,33}};
@@ -78,11 +79,27 @@ void fb_pattern(const struct fb_info *f,uint8_t *pixels) {
 /* Mode sets: a program's start mode, and the kernel's own screen. */
 uint32_t fb_mode_us;
 static bool fb_is(uint32_t w,uint32_t h,uint32_t d) {return fb0.width==w&&fb0.height==h&&fb0.depth==d;}
+static bool console_up;
+static uint32_t seen;
 void fb_program_mode(void) {
+ console_up=false;
  if(fb_pixels&&!fb_is(FB_WIDTH,FB_HEIGHT,FB_DEPTH)&&fb_set_mode(FB_WIDTH,FB_HEIGHT,FB_DEPTH)) {fb_pixels=NULL;log_line("FB program mode refused; screen off");}
 }
+void fb_boot_screen(const struct fb_info *f,uint8_t *pixels) {fb_pattern(f,pixels);fb_overlay(f,pixels);}
 void fb_home(void) {
+ console_up=false;
  if(!fb_pixels) return;
  if(!fb_is(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)&&fb_set_mode(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)) return; /* the mode it has keeps the pattern */
- fb_pattern(&fb0,fb_pixels);
+ fb_boot_screen(&fb0,fb_pixels);
+}
+/* No OS program is running: the log console in the kernel's own mode (the boot screen where the mode is not 960x540). */
+void fb_recovery(void) {
+ if(!fb_pixels) return;
+ if(!fb_is(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)&&fb_set_mode(FB_HOME_WIDTH,FB_HOME_HEIGHT,FB_HOME_DEPTH)) return;
+ console_up=fb_console(&fb0,fb_pixels);
+ seen=console_gen();
+}
+void fb_recovery_task(void) { /* redraws the log box when a line has been added since the last draw */
+ if(!console_up||!fb_pixels||console_gen()==seen) return;
+ seen=console_gen();fb_console_log(&fb0,fb_pixels);
 }
