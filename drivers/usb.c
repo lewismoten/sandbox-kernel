@@ -57,12 +57,23 @@ void usb_log(const char *s) {
  logs[lw++%sizeof(logs)]='\n';
 }
 extern bool protocol_busy(void);
+/* OS serial output (docs/serial.md): whole "OS ..." lines join the same ring as
+   LOG lines, so the two never mix inside a line. Lines that do not fit wait. */
+static void os_lines(void) {
+ char l[SERIAL_LINE_MAX];
+ while(sizeof(logs)-(lw-lr)>SERIAL_LINE_MAX) {
+  uint32_t n=serial_tx_line(l);if(!n)break;
+  for(uint32_t i=0;i<n;i++)logs[lw++%sizeof(logs)]=l[i];
+ }
+}
 void usb_task(void) {
  if(!initialized||inside)return;inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task();
+ serial_set_reader(tud_mounted()&&tud_cdc_connected());
  if(!tud_mounted()) {inside=false;return;}
  while(rp!=wp&&tud_cdc_write_available()) {tud_cdc_write_char(replies[rp++%sizeof(replies)]);}
  if(!protocol_busy()&&rp==wp&&tud_cdc_connected()) {
   if(summary_due&&expired(summary_at,1000000)) {summary_due=false;boot_summary();}
+  os_lines();
   while(lr!=lw&&tud_cdc_write_available())tud_cdc_write_char(logs[lr++%sizeof(logs)]);
   if(dropped&&lr==lw&&tud_cdc_write_available()>=26) {tud_cdc_write_str("LOG dropped (slow reader)\n");dropped=0;}
  }

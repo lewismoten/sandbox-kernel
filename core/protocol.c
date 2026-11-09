@@ -5,6 +5,7 @@
 #include "os.h"
 #include "autostart.h"
 #include "input.h"
+#include "serial.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
 extern uint32_t boot_slot,boot_generation;
@@ -16,11 +17,12 @@ static unsigned inactive;
 static uint8_t image_hash[32];
 static bool executing,overflow,session,putf;
 static bool waiting_stop;
+static unsigned tx_left,tx_took;
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
 bool protocol_busy(void) {return phase!=0;}
-void protocol_reset(void) {if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;} }
+void protocol_reset(void) {if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
 static void fail(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");error(s);phase=0;used=0;overflow=false;putf=false;}
 static void field(uint32_t n) {char b[12];number(b,n);usb_reply(b);}
 static bool token(const char **p,const char *s) {size_t n=strlen(s);if(memcmp(*p,s,n)||(*p)[n]!=' ')return false;*p+=n+1;return true;}
@@ -85,6 +87,13 @@ static void input_command(const char *p,bool axis) {
  if(axis) {if(neg)usb_reply("-");field(mag);} else usb_reply(p);
  usb_reply("\n");
 }
+/* TX <len>, then len raw bytes (1..64): input for the OS's /dev/serial0. */
+static void tx_command(const char *p) {
+ uint32_t n;
+ if(!session) {usb_reply("ERR not-ready\n");return;}
+ if(!decimal(&p,&n)||*p||n<1||n>SERIAL_CHUNK) {usb_reply("ERR tx length\n");return;}
+ tx_left=n;tx_took=0;
+}
 static void command_line(void) {
  line[used]=0;
  if(!strcmp(line,"STOP")) {
@@ -93,6 +102,7 @@ static void command_line(void) {
  }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
+ if(used>3&&!memcmp(line,"TX ",3)) {tx_command(line+3);return;}
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
  if(used>5&&!memcmp(line,"AXIS ",5)) {input_command(line+5,true);return;}
  if(!strcmp(line,"INPUT add")||!strcmp(line,"INPUT remove")) {
@@ -108,7 +118,7 @@ static void command_line(void) {
   usb_reply(" pending=");field(control[0]==CONTROL_MAGIC&&control[4]!=NO_SLOT?control[7]:0);
   usb_reply(" active_generation=");field(boot_generation);
   usb_reply(updates_ready?" features=kernel,no-os":" features=locked");
-  usb_reply(" install_timeout=120\n");return;
+  usb_reply(" install_timeout=120 serial=");usb_reply(serial_transport_name());usb_reply("\n");return;
  }
  const char *p=line;uint32_t size,crc=0;
  if(used<10||!token(&p,"PUT2")||!token(&p,"kernel")||!token(&p,"zero-w-armv6")||!decimal(&p,&size)||*p++!=' ') {fail("command");return;}
@@ -173,7 +183,10 @@ static void work(void) {
  unsigned budget=1024;
  while(budget--&&tud_cdc_available()) {
   uint8_t b;if(tud_cdc_read(&b,1)!=1)return;
-  if(phase==1) {
+  if(tx_left) {
+   tx_took+=serial_rx_put(&b,1);
+   if(--tx_left==0) {usb_reply("OK tx ");field(tx_took);usb_reply("\n");return;}
+  } else if(phase==1) {
    staging[received++]=b;activity=micros();
    if(received==expected) {phase=2;usb_reply("VERIFY\n");return;}
    if(received==block_end) {usb_reply("ACK ");field(received);usb_reply("\n");block_end+=1024;if(block_end>expected)block_end=expected;return;}
