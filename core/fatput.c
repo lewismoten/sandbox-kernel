@@ -110,6 +110,56 @@ static int count_entries(uint32_t dir,uint32_t *count) {
  }
  return fail("PUT DIR LOOP",5);
 }
+
+/* One pass over a folder's live entries other than `skip`: *bytes gets the
+   sizes of its files; and when n>0, 1 comes back if any entry's chain (or a
+   directory entry's first cluster, such as "." or "..") touches one of the n
+   clusters in ch, or if the folder cannot be read to its end (a cross-linked
+   or damaged card). Then the caller leaks the chain instead of freeing it. */
+static uint32_t srt[FATPUT_MAX/512+1];
+static bool in_set(uint32_t c,uint32_t n) {
+ uint32_t lo=0,hi=n; while(lo<hi) {uint32_t m=(lo+hi)/2; if(srt[m]<c) lo=m+1; else hi=m;}
+ return lo<n&&srt[lo]==c;
+}
+static int folder_pass(uint32_t dir,struct slot skip,const uint32_t *ch,uint32_t n,uint32_t *bytes) {
+ uint8_t b[512]; uint32_t cb=v.spc*512,c=dir; *bytes=0; int shared=0;
+ if(n) {
+  memcpy(srt,ch,n*4);
+  for(uint32_t g=n/2;g;g/=2) for(uint32_t i=g;i<n;i++) {uint32_t x=srt[i],j=i; while(j>=g&&srt[j-g]>x) {srt[j]=srt[j-g];j-=g;} srt[j]=x;}
+  if(in_set(v.root,n)||in_set(dir,n)) shared=1;
+ }
+ for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
+  if(!cluster_ok(c)) return n?1:fail("PUT DIR CLUSTER",5);
+  for(uint32_t i=0;i<v.spc;i++) {
+   int r=rd(lba_of(c,i),b); if(r) return n?1:r;
+   for(uint32_t o=0;o<512;o+=32) {
+    const uint8_t *e=b+o;
+    if(!e[0]) return shared;
+    if(e[0]==0xe5||(e[11]&0x3f)==0x0f||(e[11]&0x08)||(lba_of(c,i)==skip.lba&&o==skip.off&&skip.found)) continue;
+    uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26),size=u32(e+28);
+    if(e[11]&0x10) size=0; else *bytes+=size;
+    if(!n||!cluster_ok(first)) continue;
+    if(e[11]&0x10) {if(in_set(first,n)) shared=1; continue;}
+    uint32_t need=(size+cb-1)/cb,k=first;
+    for(uint32_t h=0;h<need&&h<v.clusters&&cluster_ok(k);h++) {
+     if(in_set(k,n)) {shared=1;break;}
+     uint32_t nx; if(fat_get(k,&nx)) return 1;
+     if(nx>=0x0ffffff8u) break;
+     k=nx;
+    }
+   }
+  }
+  uint32_t nx; if(fat_get(c,&nx)) return n?1:-5;
+  if(nx>=0x0ffffff8u) return shared;
+  c=nx; watchdog_feed();
+ }
+ return n?1:fail("PUT DIR LOOP",5);
+}
+/* Free a replaced chain only if nothing else in the folder uses it. */
+static void leak_if_shared(uint32_t dir,struct slot skip,uint32_t *n) {
+ uint32_t bytes; if(!*n||folder_pass(dir,skip,old,*n,&bytes)==0) return;
+ log_line("FAT CROSSLINK leaked"); *n=0;
+}
 static int alloc(uint32_t n) {
  uint32_t got=0;
  for(uint32_t c=2;c<v.clusters+2&&got<n;c++) {uint32_t x; int r=fat_get(c,&x); if(r) return r; if(!x) chain[got++]=c; if(!(c&0xfff)) watchdog_feed();}
@@ -243,7 +293,12 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
   if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) {
    olds=0; /* malformed cache or save: replace it, but never reclaim an unvalidated chain (it leaks for fsck) */
   }
+  leak_if_shared(dir,hit,&olds);
  } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
+ if(game) { /* a game's folder holds at most FATSAVE_MAX_BYTES, the replaced file not counted */
+  uint32_t used; if((r=folder_pass(dir,hit,0,0,&used))) return r;
+  if(used>FATSAVE_MAX_BYTES||bytes>FATSAVE_MAX_BYTES-used) return fail("SAVE BYTES FULL",FATSAVE_EQUOTA);
+ }
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;
  if((r=alloc(n))) return r;
  for(uint32_t i=0;i<n;i++) for(uint32_t j=0;j<v.spc;j++) {
@@ -303,12 +358,14 @@ static int remove_cache(const char *name,bool discard,const char *game) {
  if(!hit.found)return -2;
  if(e[11]&(discard?0x18:0x1f))return discard?0:-21;
  if(!discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n))) {if(!game)return r;n=0;} /* a corrupt save can still be removed: unpublished, chain left for fsck */
+ leak_if_shared(dir,hit,&n);
  /* Unpublish before freeing. A cut can leak, never reuse a live chain. */
  if((r=rd(hit.lba,s)))return r;
  s[hit.off]=0xe5;
  if((r=wr(hit.lba,s,0)))return r;
  /* Invalidation is committed. Bad cache data must not deny installs. */
  if(discard&&(r=walk(((uint32_t)u16(e+20)<<16)|u16(e+26),u32(e+28),old,sizeof old/4,&n)))return 0;
+ leak_if_shared(dir,hit,&n);
  for(uint32_t i=0;i<n;i++)if((r=fat_set(old[i],0)))return discard?0:r;
  /* Update FSInfo only after unpublication and release. Unknown stays unknown. */
  if((r=rd(v.base,s)))return discard?0:r;
