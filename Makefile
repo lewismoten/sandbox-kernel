@@ -56,5 +56,6 @@ test:
 	$(PYTHON) -m unittest discover -s tests -v
 test-asan: test
 	$(PYTHON) tests/lfn_asan.py
+	FB_FILL_SANITIZE=1 $(PYTHON) tests/test_fb_fill.py
 clean:
 	$(PYTHON) scripts/clean.py
