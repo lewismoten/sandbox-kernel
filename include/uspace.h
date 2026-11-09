@@ -43,3 +43,8 @@ int us_copy_out(uint64_t va,const void *src,uint32_t bytes);
 uint8_t *us_pool(void); /* kernel pointer to the pool's first byte */
 uint32_t us_l2_pa(unsigned i); /* physical address of us_l2[i] */
 uint32_t us_used(void); /* pool bytes in use */
+struct aa_owner; struct aa_cleanup;
+/* Privileged main-loop only: borrow the canonical counters exclusively. No
+   callbacks or user entry until cleanup completes; never reset before scrub. */
+int us_quiesce(struct aa_owner *owner,struct aa_cleanup *cleanup);
+int us_clean_step(struct aa_owner *owner,struct aa_cleanup *cleanup);

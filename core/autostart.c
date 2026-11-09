@@ -43,6 +43,7 @@ int autostart_run(const char *path) {
  int r=os_start(path);
  if(r&&strcmp(path,AUTOSTART_FALLBACK)) {
   error("OS autostart rejected; trying DIAG.ELF");
+  if(os_defer_fallback()) return r; /* never reuse partial launch pages */
   r=os_start(AUTOSTART_FALLBACK);return r;
  }
  armed=!r&&strcmp(path,AUTOSTART_FALLBACK);

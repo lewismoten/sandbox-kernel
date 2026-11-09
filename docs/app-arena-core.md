@@ -1,4 +1,9 @@
-# App arena slice A — UNLINKED, not an app facility
+# App arena slice A — historical unlinked qualification
+
+**Current status:** separately authorized Slice B now binds the lifecycle core
+to the supervisor/uspace and links that subset into the runtime. Allocation and
+the app interface remain unavailable. See [app-arena-supervisor.md](app-arena-supervisor.md).
+The remainder below records the original Slice A boundary, not the current link list.
 
 Original MIT implementation by Lewis Moten with Hermes Agent / OpenAI Codex
 GPT-6.1 Sol (`gpt-6.1-sol`, `openai-codex`). No third-party implementation was

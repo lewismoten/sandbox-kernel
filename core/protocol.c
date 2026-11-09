@@ -57,7 +57,7 @@ static void file_command(const char *p) {
 static void run_command(const char *p) {
  char name[13],path[20]="/OS/";
  if(!name_token(&p,name)||*p) {fail("command");return;}
- if(!session||!storage_ready||os_running()) {fail("not-ready");return;}
+ if(!session||!storage_ready||!os_can_start()) {fail("not-ready");return;}
  memcpy(path+4,name,strlen(name)+1);
  os_policy_state.faults=0; /* a fresh request starts a fresh restart budget */
  autostart_cancel(); /* a program started over USB never falls back to DIAG.ELF */

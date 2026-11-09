@@ -62,6 +62,12 @@ def lib(work):
     return c
 
 def text(c,name): return C.c_char_p.in_dll(c,name).value.decode()
+def drain(c):
+    """Explicit main-loop passes; never replace production event dispatch."""
+    for _ in range(4097):
+        if not c.os_cleanup_pending(): return
+        c.os_task()
+    raise AssertionError('cleanup did not finish within the full-pool bound')
 def span(c,va,n,need=R):
     p=C.c_void_p();got=c.us_span(va,n,need,C.byref(p));return got,p.value
 def poke(c,va,data):
@@ -322,17 +328,17 @@ class Calls(CallsBase):
             poke(self.c,q,self.hdr(1056)+struct.pack('<2Q',first,count)+bytes(1024))
             with self.subTest((first,count)): self.assertEqual(self.ioctl(fb,0x10003,q,1056),-EINVAL)
         f=C.c_uint32*3;mode=lambda:tuple(f.from_address(C.addressof(C.c_uint32.in_dll(self.c,'fb0'))))
-        self.c.os_handle(5,0,0);self.assertEqual(mode(),(640,480,32))   # a fault: the restart starts in 640x480x32
-        self.c.os_handle(5,0,0);self.assertEqual(mode(),(960,540,32))   # it stops: the kernel's own 16:9 screen ...
+        self.c.os_handle(5,0,0);drain(self.c);self.assertEqual(mode(),(640,480,32))   # a fault: the restart starts in 640x480x32
+        self.c.os_handle(5,0,0);drain(self.c);self.assertEqual(mode(),(960,540,32))   # it stops: the kernel's own 16:9 screen ...
         self.assertEqual(C.string_at(self.hw,4),b'\xff\xff\xff\x00')                  # ... with its test pattern (the white border)
         self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'),0);self.assertEqual(mode(),(640,480,32))   # the next program starts in 640x480x32
     def test_rgb_and_no_display(self):
-        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0)   # end the program from setUp
+        self.c.os_handle(5,0,0);drain(self.c);self.c.os_handle(5,0,0);drain(self.c)   # end the program from setUp
         self.c.close_disk();self.card(order=1)   # firmware kept RGB bytes: present swaps
         r,fb=self.open('/dev/fb0',2);self.mmap(fb,640*480*4);poke(self.c,FB_VA,struct.pack('<I',0x112233))
         q=self.BUF;poke(self.c,q,self.hdr(48)+struct.pack('<4Q',0,0,1,1));self.assertEqual(self.ioctl(fb,0x10001,q,48),0)
         self.assertEqual(C.string_at(self.hw,4),struct.pack('<I',0x332211))
-        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0);self.c.close_disk();self.card(fb=False)
+        self.c.os_handle(5,0,0);drain(self.c);self.c.os_handle(5,0,0);drain(self.c);self.c.close_disk();self.card(fb=False)
         self.assertEqual(self.open('/dev/fb0',2)[0],-ENODEV)
     def test_exit(self):
         self.assertEqual(self.call(16,self.hdr(24)+struct.pack('<q',-3)),1);self.assertEqual(C.c_int64.in_dll(self.c,'sys_exit_status').value,-3)
@@ -344,7 +350,7 @@ class SupervisorBase(CallsBase):
         for i in (3,4,5,6): f.r[i]=0
         f.pc=pc_after;self.c.os_handle(1,0,0);return C.c_int32(self.frame().r[0]).value
     def stop_kinds(self,reason,fsr,far,kind):
-        self.c.take_log();self.c.os_handle(reason,fsr,far);log=self.c.take_log().decode()
+        self.c.take_log();self.c.os_handle(reason,fsr,far);drain(self.c);log=self.c.take_log().decode()
         self.assertIn('OS fault '+kind,log);return log
 
 class Supervisor(SupervisorBase,Calls):
@@ -374,7 +380,7 @@ class Supervisor(SupervisorBase,Calls):
     def test_exits(self):
         f=self.frame();f.pc=EXIT_VA;f.r[0]=0;self.c.take_log();self.c.os_handle(4,0,EXIT_VA)
         self.assertIn(b'OS exit 0 /OS/DIAG.ELF; recovery console',self.c.take_log());self.assertFalse(self.c.os_running())
-        self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'),0)
+        drain(self.c);self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'),0)
         f=self.frame();poke(self.c,self.REC,self.hdr(24)+struct.pack('<q',7));f.r[0]=self.REC;f.r[1]=24;f.r[2]=1;f.r[7]=16;f.pc=IMAGE+4
         self.c.take_log();self.c.os_handle(1,0,0);log=self.c.take_log()
         self.assertIn(b'OS exit 7 counts as a fault',log);self.assertIn(b'OS restart',log)
@@ -386,9 +392,9 @@ class Supervisor(SupervisorBase,Calls):
         self.assertIn(f'OS screen crc {want}'.encode(),self.c.take_log())
         self.assertEqual(C.string_at(self.hw,4),bytes(px[:3])+b'\0')   # a clean exit leaves the program's last frame
     def test_rejected_files(self):
-        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0);self.c.close_disk()
+        self.c.os_handle(5,0,0);drain(self.c);self.c.os_handle(5,0,0);drain(self.c);self.c.close_disk()
         bad={'WX.ELF':elf([(IMAGE,7,TEXT,16)]),'E64.ELF':elf([(IMAGE,5,TEXT,16)],ident=b'\x7fELF\x02\x01\x01'+bytes(9))}
-        self.card(extra=bad);self.c.os_handle(5,0,0);self.c.os_handle(5,0,0);self.c.take_log()
+        self.card(extra=bad);self.c.os_handle(5,0,0);drain(self.c);self.c.os_handle(5,0,0);drain(self.c);self.c.take_log()
         self.assertEqual(self.c.os_start(b'/OS/WX.ELF'),-8);self.assertIn(b'OS reject /OS/WX.ELF ELF WX',self.c.take_log())
         self.assertEqual(self.c.os_start(b'/OS/E64.ELF'),-8);self.assertEqual(self.c.os_start(b'/OS/NONE.ELF'),-ENOENT)
         self.assertFalse(self.c.os_running())

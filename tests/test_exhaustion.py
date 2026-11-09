@@ -191,9 +191,9 @@ class Exhaustion(host.Work):
                 # Exclude only the syscall record we intentionally wrote.
                 host.poke(self.c, self.REC, saved_record)
                 self.assertEqual(self.memory_state(), before)
-            self.c.os_handle(5, 0, 0)
+            self.c.os_handle(5, 0, 0);host.drain(self.c)
             if self.c.os_running():  # first fault may auto-restart once
-                self.c.os_handle(5, 0, 0)
+                self.c.os_handle(5, 0, 0);host.drain(self.c)
             self.assertFalse(self.c.os_running())
             self.assertEqual(self.c.sys_open_handles(), 0)
             self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'), 0)
@@ -201,9 +201,9 @@ class Exhaustion(host.Work):
             rc, fb = self.open('/dev/fb0', 2)
             self.assertEqual(rc, 0)
             self.assertEqual(self.mmap(fb, 640 * 480 * 4), (0, host.FB_VA))
-            self.c.os_handle(5, 0, 0)
+            self.c.os_handle(5, 0, 0);host.drain(self.c)
             if self.c.os_running():
-                self.c.os_handle(5, 0, 0)
+                self.c.os_handle(5, 0, 0);host.drain(self.c)
             self.assertEqual(self.c.os_start(b'/OS/DIAG.ELF'), 0)
 
     def test_fault_recovery_after_simultaneous_pool_and_handle_exhaustion(self):
@@ -220,9 +220,9 @@ class Exhaustion(host.Work):
             # Inject a user fault, not a real ARM instruction. Recovery must
             # close both handle layers before opening/reloading the OS file.
             self.c.take_log()
-            self.c.os_handle(5, 0, 0)
+            self.c.os_handle(5, 0, 0);host.drain(self.c)
             if self.c.os_running():
-                self.c.os_handle(5, 0, 0)
+                self.c.os_handle(5, 0, 0);host.drain(self.c)
             self.assertFalse(self.c.os_running())
             self.assertEqual(self.c.sys_open_handles(), 0)
             self.assertIn(b'kernel recovery console kept', self.c.take_log())

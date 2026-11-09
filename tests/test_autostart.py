@@ -8,7 +8,7 @@ import os, pathlib, sys, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
 import fatgen
-from test_m1_user import Work, program
+from test_m1_user import Work, program, drain
 
 class Autostart(Work):
     def setUp(self):
@@ -26,7 +26,7 @@ class Autostart(Work):
         return out.value.decode() if self.c.autostart_name(text,len(text),out) else None
     def path(self): return (C.c_char*32).in_dll(self.c,'os_path').value.decode()
     def fault_twice(self):
-        self.c.os_handle(5,0,0);self.c.os_handle(5,0,0);return self.c.take_log().decode()
+        self.c.os_handle(5,0,0);drain(self.c);self.c.os_handle(5,0,0);drain(self.c);return self.c.take_log().decode()
 
     def test_names(self):
         good={b'GMOS.ELF':'/OS/GMOS.ELF',b'gmos.elf\r\n':'/OS/GMOS.ELF',b'  DIAG.ELF \n# a note':'/OS/DIAG.ELF',
@@ -64,8 +64,8 @@ class Autostart(Work):
     def test_repeated_faults_fall_back_to_diag(self):
         self.card({'DIAG.ELF':program(),'GMOS.ELF':program()})
         self.assertEqual(self.c.autostart_run(self.c.autostart_pick()),0);self.assertEqual(self.path(),'/OS/GMOS.ELF')
-        self.c.os_handle(5,0,0);self.assertIn(b'OS restart',self.c.take_log());self.assertEqual(self.path(),'/OS/GMOS.ELF')
-        self.c.advance(5_000_000);self.c.os_handle(5,0,0);log=self.c.take_log().decode()
+        self.c.os_handle(5,0,0);drain(self.c);self.assertIn(b'OS restart',self.c.take_log());self.assertEqual(self.path(),'/OS/GMOS.ELF')
+        self.c.advance(5_000_000);self.c.os_handle(5,0,0);drain(self.c);log=self.c.take_log().decode()
         self.assertIn('OS start /OS/DIAG.ELF',log)
         self.assertNotIn('recovery console kept',log);self.assertTrue(self.c.os_running());self.assertEqual(self.path(),'/OS/DIAG.ELF')
         self.assertEqual(C.c_char_p.in_dll(self.c,'last_error').value,b'OS fell back to DIAG.ELF after repeated faults')   # error(): the log and the status panel (the host harness only records it)

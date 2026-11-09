@@ -16,6 +16,10 @@ class Stop(ProtocolBase):
 
     def boundary(self):
         self.c.os_task()
+        for _ in range(4097):
+            if not self.c.os_stop_pending(): break
+            self.c.os_task()
+        self.assertFalse(self.c.os_stop_pending())
         self.c.protocol_task()
         return self.c.take_output().decode()
 
@@ -85,7 +89,11 @@ class Stop(ProtocolBase):
         self.assertEqual(self.boundary(),'ERR stop USER MAP CONFLICT\n')
         self.assertFalse(self.c.os_running())
         self.assertEqual(bytes(Frame.in_dll(self.c,'os_frame')),bytes(C.sizeof(Frame)))
-        self.assertIn('ERR run USER MAP CONFLICT',self.command('RUN DIAG.ELF'))
+        # RUN is rejected by lifecycle admission before attempting another load.
+        # Keep the original cleanup diagnosis and policy intact during quarantine.
+        before=C.c_uint32.in_dll(self.c,'os_policy_state').value
+        self.assertEqual(self.command('RUN DIAG.ELF'),'ERR not-ready\n')
+        self.assertEqual(C.c_uint32.in_dll(self.c,'os_policy_state').value,before)
         k[IMAGE>>20]=0
         self.command('STOP');self.assertEqual(self.boundary(),'OK stop idle\n')
         self.assertIn('OK run',self.command('RUN DIAG.ELF'))

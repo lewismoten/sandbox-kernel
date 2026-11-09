@@ -22,10 +22,14 @@ void set_media_sectors(uint32_t sectors) {media_sectors=sectors;}
 uint32_t sd_sectors(void) {return media_sectors;}
 static uint32_t reads;uint32_t read_count(void) {return reads;}
 static bool pump_read;
+static bool nested_run;static int nested_result;
+void probe_run_on_read(void) {nested_run=true;}
+int probe_run_result(void) {return nested_result;}
+extern int os_start(const char *path);
 static uint32_t read_fail_lba=~0u;
 void fail_read_sector(uint32_t lba) {read_fail_lba=lba;}
 void protocol_on_next_sd_read(void) {pump_read=true;}
-bool sd_read(uint32_t lba,void *p) {reads++;if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
@@ -58,7 +62,11 @@ uint8_t *fb_setup(uint32_t order,int present) {
 /* ABI 1.2 mode sets on the host: the fake buffer takes the mode (pitch padded
    as the board's is), and palettes are kept for the tests to read. */
 uint32_t fb_palette[256],fb_mode_sets;
+static bool stop_on_mode;
+void probe_stop_on_mode(void) {stop_on_mode=true;}
+extern void os_request_stop(void);
 int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
+ if(stop_on_mode) {stop_on_mode=false;os_request_stop();}
  if(!fb_pixels) return -19;
  uint32_t pitch=w*(d/8u)+60u; if(pitch*h>sizeof hw) return -5;
  fb0.width=w;fb0.height=h;fb0.depth=d;fb0.pitch=pitch;memset(hw,0,sizeof hw);fb_mode_sets++;return 0;
