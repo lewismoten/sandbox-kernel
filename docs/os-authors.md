@@ -256,9 +256,9 @@ described in `docs/design.md`.)
 | 1.5 | `getdents_long_meta` (call 20): validated VFAT long names as UTF-8; use a buffer of at least 280 bytes. Calls 11 and 18 keep returning 8.3 aliases. |
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
+| 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 4,096-frame ring (about 85 ms) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. A gap plays silence and counts an underrun. **Today a null backend drains the ring; no sound reaches a speaker or HDMI yet.** See `docs/audio-device.md`. |
 
-**Not yet:** sound (no `/dev/audio`; a PCM host core exists in `docs/audio-host-core.md`
-but is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
+**Not yet:** sound you can hear (`/dev/audio` exists, but only a null backend drains it; the PCM host core in `docs/audio-host-core.md` is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
 only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI audio and HDMI-CEC, and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
 general SD writing are not supported either.
@@ -351,7 +351,7 @@ as left out in `docs/js.md`).
   `fsync`. A writer open blocks other mutation (`EBUSY`); a read handle on those folders
   blocks writing too, so close directory handles first.
 - **Handles:** 16 at a time; one `/dev/fb0` handle.
-- **Check your minor version.** A kernel that is older than your SDK returns `ENOSYS`.
+- **Check your minor version.** A kernel that is older than your SDK returns `ENOSYS`. Check the startup `minor` (>= 7 before writing under `/sd/OS/SAVES/`, >= 8 before opening `/dev/audio`) and fall back to silence or no saves when it is lower.
 - **Framebuffer size:** a program starts in 640x480x32. A mode that does not fit the
   surface is refused.
 - **Transfers:** at most 1 MiB per read or write call.

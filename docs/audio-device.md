@@ -39,3 +39,8 @@ overrun, pacing, two-thread stress; `AUDIO_SANITIZE=1` adds ASan/UBSan) and
 underrun, overrun, one writer, close while playing, program end, bad records).
 The older `core/audio_core.c` (docs/audio-host-core.md) stays unlinked and is
 not used by this slice.
+
+**Sample word length (IEC 958, not yet on any wire).** The ring is 16-bit PCM. In a subframe it
+sits in bits 12-27 of the 24-bit sample slot (low 8 bits zero, `core/iec958.c`), and channel status
+byte 4 says the same: max length 20 bits, 16 used (`0x02`). The status bits, preambles and N/CTS
+values are marked VERIFY in the code and stay outside acceptance until a test on an HDMI TV.

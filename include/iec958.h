@@ -18,7 +18,8 @@
  * audio), 29 user data (0), 30 channel status bit, 31 parity (bits 4-31 even). */
 enum { IEC958_PRE_B = 0x1, IEC958_PRE_M = 0x2, IEC958_PRE_W = 0x3 }; /* tags: B/Z = left at frame 0 of a block, M/X = other left, W/Y = right; the biphase patterns are the backend's. VERIFY */
 /* Consumer channel status for 2-channel 16-bit PCM at `rate` (48000, 44100 or
- * 32000). Fills 24 bytes (192 bits): bit n of the block rides frame n.
+ * 32000). Byte 4 says 16-bit samples (max 20 bits, sample word length 16:
+ * 0x02; VERIFY) to match the 16-bit PCM in a 24-bit subframe slot. Fills 24 bytes (192 bits): bit n of the block rides frame n.
  * `right` sets the channel number (1 left, 2 right). Returns 0, or -1 for an
  * unsupported rate. */
 int iec958_status(uint32_t rate, int right, uint8_t out[24]);

@@ -10,7 +10,7 @@ int iec958_status(uint32_t rate, int right, uint8_t out[24]) {
     out[1] = 0x00; /* category: general */
     out[2] = (uint8_t)((right ? 2u : 1u) << 4); /* source 0; channel number 1 or 2 */
     out[3] = (uint8_t)fs; /* sampling frequency; clock accuracy level II (bits 4-5 = 0) */
-    out[4] = 0x04; /* max word length 20 bits (bit0 0), 16 bits used (bits 1-3 = 010). VERIFY */
+    out[4] = 0x02; /* byte 4: bit 0 = 0 max sample word length 20 bits; bits 1-3 = 001 sample word length 16 bits (for max 20). Recalled from Linux ALSA asoundef.h IEC958_AES4_CON_WORDLEN_20_16; VERIFY (no free primary source read) */
     return 0;
 }
 uint32_t iec958_parity(uint32_t w) {

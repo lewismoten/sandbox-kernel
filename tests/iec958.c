@@ -17,6 +17,7 @@ int main(void) {
     assert(iec958_status(22050, 0, l) == -1);
     assert(iec958_status(48000, 0, l) == 0);
     assert((l[3] & 0xf) == 0x2 && (l44[3] & 0xf) == 0x0 && (l[0] & 3) == 0 && l[2] >> 4 == 1 && r[2] >> 4 == 2);
+    assert(l[4] == 0x02 && r[4] == 0x02); /* 16-bit samples, max word length 20 (VERIFY on a TV) */
     for (unsigned i = 5; i < 24; i++) assert(l[i] == 0 && r[i] == 0);
     unsigned ones = 0; for (unsigned n = 0; n < 192; n++) ones += iec958_status_bit(l, n);
     assert(ones == pop(l[0]) + pop(l[2]) + pop(l[3]) + pop(l[4]));
