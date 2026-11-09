@@ -14,10 +14,46 @@ gadget stays as is. `core/usbrole.c` holds the debounced decision (tests/usbrole
 - GUSBCFG.ForceHstMode = bit 29, ForceDevMode = bit 30: same file.
 - Forced mode hides the real pin: Linux `dwc2_clear_force_mode()` comment says the
   connector ID status "is affected by the force mode" and allows up to 100 ms of IDDIG
-  filter delay after clearing the bits. So read it with both force bits clear, after a
-  wait, then force a role. Slice 1 does this once at boot. VERIFY on hardware.
+  filter delay after clearing the bits (Linux is a source of facts only; no code used).
 - VERIFY: whether the pin reads right before TinyUSB's core reset and PHY setup; the
   Zero W board routes the OTG connector ID pin to the core (believed, not checked).
+
+## The ID sampling window (review R1) and what is guaranteed
+Options considered for reading ID without leaving device mode:
+- (a) Read ConIDSts, GINTSTS.CurMod or a PHY/GPIO path while ForceDevMode is set. The
+  Linux comment above says forcing changes ConIDSts, so ConIDSts is not expected to show the
+  pin; CurMod reports the forced mode, not the pin. No GPIO path to the ID pin is known
+  (the BCM2835 ID pin is not a GPIO; not checked in the schematic: VERIFY). Rejected as
+  unproven.
+- (b) Keep ForceDevMode set and clear only ForceHstMode: ForceDevMode itself is what
+  changes ConIDSts, so this is not expected to help. Rejected as unproven.
+- (c) Chosen: keep the window, make it narrow and checked.
+
+The window (`usb_init`) clears both force bits for 100 ms, once, at boot, then forces
+device. During it the code:
+- opens the window only if HPRT0.PrtPwr (bit 12) is clear, else it skips it and stays
+  device;
+- does not touch HPRT0, GHWCFG or any host register, never sets ForceHstMode, never
+  starts host init or a soft reset, and the core interrupt handler is not enabled yet
+  (`usb_irq` returns until `initialized`);
+- forces device straight after (`usbrole_device_gusbcfg`; tested in tests/usbrole.c).
+
+Guarantee, precisely: the kernel never sets host mode or powers the host port. For about
+100 ms at boot the core is in OTG mode, not forced device, so a grounded ID could make the
+core report A-device on its own. The kernel does nothing in that state that would drive VBUS:
+the port power bit is the software control and it is never set. Whether the core itself
+could assert a VBUS-drive pin in that state is VERIFY on hardware. Whether the Pi Zero W's
+OTG VBUS is switched by the core or hard-wired to 5 V is also VERIFY: no schematic was
+found in this repository; check the Raspberry Pi Zero W schematic before relying on it.
+So "device-only" means no host-mode initialization, not that the core is in device mode for
+every microsecond.
+
+## Timing (review R2)
+`usbrole_step` takes the raw 32-bit `micros()` and compares unsigned microsecond deltas
+(500,000 us). `micros()` wraps at 2^32 us (71.6 min); dividing it by 1000 first broke the
+debounce at the wrap. Tests cover the wrap and exactly 500 ms across it. (TinyUSB's own
+`tusb_time_millis_api` still does `micros()/1000`, so its millisecond counter jumps at the
+wrap; not changed here.)
 - Live hot-plug sampling needs a brief un-force window (or the A/B-device change
   interrupt); that disturbs a gadget link, so it is slice 2.
 

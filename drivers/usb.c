@@ -44,18 +44,21 @@ static const char *init_fail="unavailable";
 static bool id_grounded;static struct usbrole role;
 static char fail_text[32];
 const char *usb_state(void) {if(!initialized)return init_fail;
- if(usbrole_step(&role,id_grounded,tud_mounted(),micros()/1000)==USB_ROLE_HOST_WANTED)return "OTG (KEYBOARD NEXT)";if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
+ if(usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED)return "OTG (KEYBOARD NEXT)";if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
 void usb_init(void) {
  uint32_t p[2]={3,3};if(!property(0x28001,p,2)) {{const char *a="USB POWER ",*b=property_fail;unsigned k=0;while(*a&&k<30)fail_text[k++]=*a++;while(*b&&k<30)fail_text[k++]=*b++;fail_text[k]=0;} init_fail=fail_text;error("USB POWER");log_line(property_fail);return;}
  /* Sample the OTG ID pin once, before forcing device: forced mode changes ConIDSts
-    (Linux dwc2 core.c, dwc2_clear_force_mode comment). Clear both force bits, give the
-    IDDIG filter up to 100 ms (same comment), read GOTGCTL bit 16. Timing and PHY power
-    needs: VERIFY on hardware. Detection only; this slice never enters host mode. */
- {uint32_t c=REG(0x2098000c)&~((1u<<29)|(1u<<30));REG(0x2098000c)=c;
-  uint32_t t=micros();while(micros()-t<100000){}
-  id_grounded=usbrole_id_grounded(REG(0x20980000));usbrole_init(&role);}
- /* Force device role; internal UTMI+ PHY selected by TinyUSB. */
- REG(0x2098000c)=(REG(0x2098000c)&~(1u<<29))|(1u<<30);
+    (Linux dwc2 core.c, dwc2_clear_force_mode comment). So both force bits are clear for up
+    to 100 ms (same comment). Guards: skipped if HPRT0.PrtPwr is already set; no host init,
+    no HPRT0 write, no host-force bit; GUSBCFG is forced to device straight after.
+    docs/usb-host-keyboard.md has the qualified guarantee. VERIFY on hardware. */
+ if(usbrole_window_may_open(REG(USBROLE_HPRT0)))
+ {REG(USBROLE_GUSBCFG)=usbrole_window_gusbcfg(REG(USBROLE_GUSBCFG));
+  uint32_t t=micros();while((uint32_t)(micros()-t)<100000u){}
+  id_grounded=usbrole_id_grounded(REG(USBROLE_GOTGCTL));}
+ usbrole_init(&role);
+ REG(USBROLE_GUSBCFG)=usbrole_device_gusbcfg(REG(USBROLE_GUSBCFG));
+ /* Device role is forced above; internal UTMI+ PHY selected by TinyUSB. */
  initialized=true;if(!tusb_init()) {initialized=false;init_fail="TUSB INIT";error("TUSB INIT");}
 }
 void usb_reply(const char *s) {while(*s) {if(wp-rp>=sizeof(replies)) {error("Reply queue full");return;}replies[wp++%sizeof(replies)]=*s++;}}
