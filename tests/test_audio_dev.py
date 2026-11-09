@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""ABI 1.7 /dev/audio: ring, syscall semantics and the null backend, through
+"""ABI 1.8 /dev/audio: ring, syscall semantics and the null backend, through
 the real dispatcher on the host harness. The null backend is driven by explicit
 timestamps (audio_null_tick), so pacing is exact. No ARM execution, no hardware."""
 import ctypes as C

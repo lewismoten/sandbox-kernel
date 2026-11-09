@@ -14,7 +14,7 @@ class AbiMinor(unittest.TestCase):
         for path, name in (('include/abi.h', 'K_ABI'), ('sdk/include/sandbox/abi.h', 'SBX_ABI')):
             text = (root / path).read_text()
             self.assertEqual(re.search(name + r'_MAJOR (\d+)u', text).group(1), '1')
-            self.assertEqual(re.search(name + r'_MINOR (\d+)u', text).group(1), '7', path)
+            self.assertEqual(re.search(name + r'_MINOR (\d+)u', text).group(1), '8', path)
         self.assertIn('1.7', (root / 'docs/saves-storage.md').read_text())
 
 class SaveStorage(InstallBase):

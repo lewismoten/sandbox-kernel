@@ -95,7 +95,7 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
   for(unsigned j=0;j<SYS_HANDLES;j++) if(fds[j].kind==K_FB) return -EBUSY;
   fds[i].kind=K_FB;
  }
- else if(n==10&&!memcmp(p,"/dev/audio",10)) { /* ABI 1.7: write-only, one writer */
+ else if(n==10&&!memcmp(p,"/dev/audio",10)) { /* ABI 1.8: write-only, one writer */
   if(access!=1) return -EACCES;
   int e=audio_dev_open(); if(e) return e;
   fds[i].kind=K_AUDIO;

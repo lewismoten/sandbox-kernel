@@ -158,7 +158,7 @@ static inline int32_t sbx_sleep_until(uint64_t deadline_ns) {
   sbx_sleep_rec r = {SBX_HEADER(sbx_sleep_rec), deadline_ns};
   return sbx_syscall(SBX_CALL_SLEEP_UNTIL, &r, sizeof r);
 }
-/* ABI 1.7: ring level and counters of an open /dev/audio. */
+/* ABI 1.8: ring level and counters of an open /dev/audio. */
 static inline int32_t sbx_audio_query(uint64_t audio_fd, sbx_audio_info *info) {
   *info = (sbx_audio_info){SBX_HEADER(sbx_audio_info), 0, 0, 0, 0, 0, 0, 0, 0};
   return sbx_ioctl(audio_fd, SBX_IOC_AUDIO_QUERY, info, sizeof *info);

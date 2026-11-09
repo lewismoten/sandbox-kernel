@@ -57,7 +57,7 @@ enum {
 #define SBX_IOC_FB_PRESENT SBX_IOC(1, 1)
 #define SBX_IOC_FB_SET_MODE SBX_IOC(1, 2) /* 1.2: sbx_fb_set_rec; the firmware scales the mode to HDMI */
 #define SBX_IOC_FB_PALETTE SBX_IOC(1, 3)  /* 1.2: sbx_fb_palette_rec, for SBX_FB_INDEX8 */
-/* 1.7: open "/dev/audio" write-only for the one writer (a second open is EBUSY).
+/* 1.8: open "/dev/audio" write-only for the one writer (a second open is EBUSY).
    write() takes whole stereo frames of signed 16-bit little-endian PCM (L,R,L,R...)
    at SBX_AUDIO_RATE, takes what fits and returns that many bytes, or EAGAIN when
    none fit (wait a little, retry). It never blocks and never overwrites queued audio.

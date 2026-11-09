@@ -1,4 +1,6 @@
-# ABI 1.7 `/dev/audio` (slice 1: ring and null backend)
+
+ABI minor 1.8 adds this device (and `SBX_IOC_AUDIO_QUERY`); the saves slice keeps 1.7 (`docs/saves-storage.md`). Both headers say minor 8.
+# ABI 1.8 `/dev/audio` (slice 1: ring and null backend)
 
 No sound hardware yet. This is the app-facing device and the ring behind it;
 a PWM or HDMI backend later replaces `audio_null_tick` with a DMA refill and
