@@ -1,7 +1,7 @@
 # USB host keyboard: plan after ID detection
 
 Slice 1 (done): read the OTG ID pin once at boot, latch the result, and show
-`USB: OTG (KEYBOARD NEXT)` when that latched ID was grounded and no Mac has enumerated for
+`USB: OTG: KEYBOARD` when that latched ID was grounded and no Mac has enumerated for
 500 ms. The role intent is not re-sampled (hot-plug is not implemented yet; slice 2). The
 kernel does not start host mode in this slice.
 

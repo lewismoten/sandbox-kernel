@@ -44,7 +44,7 @@ static const char *init_fail="unavailable";
 static bool id_grounded;static struct usbrole role;
 static char fail_text[32];
 const char *usb_state(void) {if(!initialized)return init_fail;
- if(usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED)return "OTG (KEYBOARD NEXT)";if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
+ if(usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED)return "OTG: KEYBOARD";if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
 void usb_init(void) {
  uint32_t p[2]={3,3};if(!property(0x28001,p,2)) {{const char *a="USB POWER ",*b=property_fail;unsigned k=0;while(*a&&k<30)fail_text[k++]=*a++;while(*b&&k<30)fail_text[k++]=*b++;fail_text[k]=0;} init_fail=fail_text;error("USB POWER");log_line(property_fail);return;}
  /* Sample the OTG ID pin once, before forcing device: forced mode changes ConIDSts

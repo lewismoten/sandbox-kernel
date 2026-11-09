@@ -177,7 +177,7 @@ The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark,
 | Line | Meaning |
 | --- | --- |
 | `UP:` | uptime since the kernel started |
-| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
+| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG: KEYBOARD` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
 | `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
@@ -255,7 +255,7 @@ described in `docs/design.md`.)
 | 1.4 | `getdents_meta` (call 18: size, FAT date/time words, first cluster). Bounded **cache** writes under `/sd/OS/CACHE/`: `fsync` (call 12) and copy-publish `rename` (call 19); see `docs/cache-storage.md`. |
 | 1.5 | `getdents_long_meta` (call 20): validated VFAT long names as UTF-8; use a buffer of at least 280 bytes. Calls 11 and 18 keep returning 8.3 aliases. |
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
-| 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
+| 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders, 32 files per game or 1 MiB of files per game; apps cannot delete saves yet); see `docs/saves-storage.md`. |
 
 **Not yet:** sound (no `/dev/audio`; a PCM host core exists in `docs/audio-host-core.md`
 but is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
