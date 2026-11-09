@@ -84,4 +84,19 @@ static void spsc(void) {
     pthread_join(t, 0);
     assert(audio_ring_queued(&r) == 0);
 }
-int main(void) { ordering(); silence(); overrun(); pacing(); spsc(); puts("audio ring ok"); return 0; }
+/* The producer stops (closes, faults or exits): the queue drains once, then every frame read is zero, however long
+   the consumer keeps reading, and each short read counts one underrun. No old frame is ever played twice. */
+static void producer_stops(void) {
+    struct audio_ring q; audio_ring_init(&q);
+    uint32_t in[1000], out[384]; frames(in, 1, 1000);
+    assert(audio_ring_write(&q, in, sizeof in) == 1000);
+    uint32_t got = 0, nonzero_after = 0, reads = 0;
+    while (reads++ < 200) { /* 200 segments of 384 frames (1.6 s) */
+        uint32_t n = audio_ring_read(&q, out, 384); got += n;
+        for (uint32_t i = n; i < 384; i++) nonzero_after += out[i] != 0;
+    }
+    assert(got == 1000 && nonzero_after == 0 && q.underruns == 198 && audio_ring_queued(&q) == 0);
+    /* within 384 frames (8 ms) of the last real frame everything is silence */
+    assert(q.silence_frames == 200u * 384u - 1000u);
+}
+int main(void) { producer_stops(); ordering(); silence(); overrun(); pacing(); spsc(); puts("audio ring ok"); return 0; }
