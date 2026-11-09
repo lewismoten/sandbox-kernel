@@ -301,6 +301,17 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 first**, then install, then `run`. If you are fast, you can also install during the first
 10 s after boot, before autostart. Install a new `JS.ELF` or `GMOS.ELF` the same way.
 
+### Talking to your OS over serial
+
+Your program can send text to the host and receive bytes from it over the same USB link that
+carries the synthetic keyboard, with `/dev/serial0` (ABI 1.10). Open it nonblocking, `write` lines,
+and `read` until you get `EAGAIN`. Output with no listener, or past the 512-byte buffer, is dropped
+and counted, never blocks you. On the Mac, `usb_kernel.py <port> console` shows your output as it
+arrives (kernel `LOG` lines dimmed) and sends what you type, with arrows, Enter, Space, Q and Esc
+also pressed as keys. Wire format, counters and limits are in `docs/serial.md`. An example program
+will go in `examples/` when that folder exists; the core is
+`uint64_t fd; sbx_open("/dev/serial0", 12, 2 | 0x100, &fd);` (read and write, nonblocking), then a write call with `"hello\n"` and its length.
+
 ## 7. Make your own JavaScript OS
 
 The shortest path needs no C. The `gamemaker-os` repository builds `JS.ELF`, a native
