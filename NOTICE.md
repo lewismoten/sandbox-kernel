@@ -7,6 +7,7 @@ AI models used on this repository:
 
 | Model | Tool | What it did |
 | --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Production framebuffer pattern span inversion from the independently reviewed MIT proposal, exact 587-surface oracle/sanitizer and floor-mutation host tests, ARM stack evidence (2026-11-09). No mapping, USB or hardware qualification changes. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | Original unlinked app-arena transaction/epoch/teardown core, native and sanitizer harnesses, actual-uspace ordering/exhaustion tests and ARM compile/layout qualification (2026-11-09); no live arena, ABI or supervisor integration |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | Original unlinked bounded PCM host core, native/ARM qualification, rejection/model tests and documentation (2026-11-08); no HDMI driver or audio ABI |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex) | VFAT long-name reader, Unicode simple folding, ABI 1.5 opt-in enumeration, compatibility and malformed-media tests (2026-11-08) |

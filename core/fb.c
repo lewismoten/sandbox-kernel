@@ -49,10 +49,30 @@ uint32_t fb_pattern_pixel(const struct fb_info *f,uint32_t x,uint32_t y) {
  /* Swapped only if the firmware kept RGB, so the bars read the same either way. */
  return fb_native(f,c);
 }
+/* Reviewed span inversion: floor(x*N/w) changes at ceil((k+1)*w/N).
+ * Same validated 16..4096 32-bpp surfaces, forward volatile word stores,
+ * borders, native pixel order and untouched row padding. 24 bounded spans;
+ * no full-width stack row, framebuffer reads or mapping/barrier changes.
+ * AI assistance: Hermes OpenAI Codex GPT-6.1 Sol (openai-codex). */
+struct fill_span {uint32_t end,color;};
 void fb_pattern(const struct fb_info *f,uint8_t *pixels) {
- for(uint32_t y=0;y<f->height;y++) {
+ static const uint32_t rgb[8]={0xffffff,0xffff00,0x00ffff,0x00ff00,0xff00ff,0xff0000,0x0000ff,0};
+ struct fill_span bars[8],gray[16];
+ const uint32_t w=f->width,h=f->height,split=h*2/3;
+ for(uint32_t k=0;k<8;k++){bars[k].end=((k+1)*w+7)/8;bars[k].color=fb_native(f,rgb[k]);}
+ for(uint32_t k=0;k<16;k++){gray[k].end=((k+1)*w+15)/16;gray[k].color=k*17*0x010101;}
+ for(uint32_t y=0;y<h;y++) {
   volatile uint32_t *row=(volatile uint32_t *)(void *)(pixels+(size_t)y*f->pitch);
-  for(uint32_t x=0;x<f->width;x++) row[x]=fb_pattern_pixel(f,x,y);
+  uint32_t x=0;
+  if(y<4||y>=h-4){for(;x<w;x++)row[x]=0xffffff;continue;}
+  for(;x<4;x++)row[x]=0xffffff;
+  const struct fill_span *spans=y<split?bars:gray;
+  const uint32_t n=y<split?8:16;
+  for(uint32_t k=0;k<n;k++) {
+   uint32_t end=spans[k].end;if(end>w-4)end=w-4;
+   for(;x<end;x++)row[x]=spans[k].color;
+  }
+  for(;x<w;x++)row[x]=0xffffff;
  }
 }
 /* Mode sets: a program's start mode, and the kernel's own screen. */
