@@ -70,6 +70,7 @@ enum {
 #define SBX_EINK_HEIGHT 122u
 #define SBX_EINK_PAGE_BYTES 3904u
 #define SBX_EINK_TITLE_MAX 16u
+#define SBX_EINK_BUILD_MAX 16u /* the build line: what fits the status line at 2x */
 #define SBX_EINK_MARK_BYTES 200u /* 40x40, 5-byte rows, same bit order */
 #define SBX_EINK_TITLE_MARK 1u /* sbx_eink_title_rec.flags: a mark follows */
 /* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
@@ -219,6 +220,8 @@ typedef struct sbx_eink_title_rec { /* name 1-16 chars (kernel font, capitals), 
   uint64_t flags, name_bytes;
   char name[16];
   uint8_t mark[200];
+  uint64_t build_bytes; /* 0-16: the build line under the name; 0 = blank */
+  char build[16];       /* free text: a hash, a version, a date; the kernel font, capitals; anything else shows as ? */
 } sbx_eink_title_rec;
 typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
   uint64_t ns; /* monotonic nanoseconds since the kernel started */
@@ -256,7 +259,7 @@ static inline uint64_t sbx_app_generation(const sbx_startup *s) {
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
-SBX_CHECK(sbx_eink_info, 80); SBX_CHECK(sbx_eink_title_rec, 248); SBX_AT(sbx_eink_title_rec, name, 32); SBX_AT(sbx_eink_title_rec, mark, 48);
+SBX_CHECK(sbx_eink_info, 80); SBX_CHECK(sbx_eink_title_rec, 272); SBX_AT(sbx_eink_title_rec, name, 32); SBX_AT(sbx_eink_title_rec, mark, 48);
 SBX_CHECK(sbx_startup_ext, 48); SBX_AT(sbx_startup_ext, prefix, 0); SBX_AT(sbx_startup_ext, app_generation, 40);
 SBX_CHECK(sbx_app_arena_rec, 48); SBX_AT(sbx_app_arena_rec, h, 0);
 SBX_AT(sbx_app_arena_rec, owner_generation, 16); SBX_AT(sbx_app_arena_rec, requested_bytes, 24);

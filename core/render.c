@@ -47,7 +47,7 @@ void render_starting(uint8_t *p) {
 void render_status_ex(uint8_t *p,const char *title,const uint8_t *mark,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  memset(p,255,4000);
  if(mark) {struct logo l={40,40,5,mark};blit(p,4,2,&l);} else blit(p,4,2,&logo_small);
- plain(p,54,6,title?title:"SANDBOX KERNEL",16); plain(p,54,24,build_id,12);
+ plain(p,54,6,title?title:"SANDBOX KERNEL",16); plain(p,54,24,build_id,16);
  char up[32]; uptime(up,seconds);
  plain(p,4,48,"UP:",3); plain(p,54,48,up,16);
  plain(p,4,70,"USB:",4); plain(p,54,70,usb,16);

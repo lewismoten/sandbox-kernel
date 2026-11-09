@@ -29,10 +29,11 @@ class Eink(SupervisorBase):
         r,fd=self.dev();self.assertEqual(r,0);return fd
     def write_page(self,fd,data):
         poke(self.c,self.BUFP,data);return self.io(3,fd,self.BUFP,len(data))[0]
-    def title(self,fd,name,mark=None,flags=None,tail=b''):
+    def title(self,fd,name,mark=None,flags=None,tail=b'',build=b'',bn=None,btail=b''):
         n=name if isinstance(name,bytes) else name.encode()
-        rec=self.hdr(248)+struct.pack('<QQ',(1 if mark else 0) if flags is None else flags,len(n))+(n+tail).ljust(16,b'\0')+(mark or bytes(200))
-        poke(self.c,self.BUFP,rec);return self.ioctl(fd,TITLE,self.BUFP,248)
+        b=build if isinstance(build,bytes) else build.encode()
+        rec=self.hdr(272)+struct.pack('<QQ',(1 if mark else 0) if flags is None else flags,len(n))+(n+tail).ljust(16,b'\0')+(mark or bytes(200))+struct.pack('<Q',len(b) if bn is None else bn)+(b+btail).ljust(16,b'\0')
+        poke(self.c,self.BUFP,rec);return self.ioctl(fd,TITLE,self.BUFP,272)
     def clear(self,fd):
         poke(self.c,self.BUFP,self.hdr(16));return self.ioctl(fd,CLEAR,self.BUFP,16)
     def screen(self,error=b'none'):
@@ -47,6 +48,27 @@ class Eink(SupervisorBase):
     def peek(self,va,n):
         from test_m1_user import peek
         return peek(self.c,va,n)
+    def build_line(self,fd,build,**kw):
+        self.wait();self.assertEqual(self.title(fd,'SCOOT',build=build,**kw),0);return self.screen()
+    def test_build_line_is_free_text(self):
+        fd=self.ready()
+        for text,shown in ((b'3a9f2c1','3A9F2C1'),(b'v0.4.2','V0.4.2'),(b'2026-11-09','2026-11-09'),(b'v0.4 3a9f2c1','V0.4 3A9F2C1')):
+            with self.subTest(text):
+                got=self.build_line(fd,text);self.assertTrue(ktext(54,24,shown)<=got)
+                self.assertFalse(ktext(54,24,'5CA68D431228')<=got)          # never the kernel's hash
+    def test_build_line_none_is_blank(self):
+        fd=self.ready();self.assertEqual(self.title(fd,'SCOOT'),0);got=self.screen()
+        self.assertFalse(ktext(54,24,'5CA68D431228')<=got)
+        self.assertEqual({p for p in got if 20<=p[1]<44 and p[0]>=54},set())
+    def test_build_line_max_and_unsupported_chars(self):
+        fd=self.ready()
+        self.assertTrue(ktext(54,24,'A'*16)<=self.build_line(fd,b'A'*16))
+        self.assertTrue(ktext(54,24,'V1???')<=self.build_line(fd,b'V1@\xc3\xa9'))   # what the font lacks shows as ?
+        self.wait();self.assertEqual(self.title(fd,'OK',build=b'A'*16,bn=17),-EINVAL)   # longer than the line: refused (the SDK clips)
+        self.assertEqual(self.title(fd,'OK',build=b'AB',bn=1),-EINVAL)           # bytes after build_bytes must be zero
+    def test_reclaim_restores_the_kernel_hash(self):
+        fd=self.ready();self.title(fd,'SCOOT',build='V1');self.wait();self.assertEqual(self.clear(fd),0)
+        self.assertTrue(ktext(54,24,'5CA68D431228')<=self.screen())
     def test_title_set_and_clear(self):
         base=self.screen();fd=self.ready()
         mark=mark_with([(0,0),(39,39),(20,20)])
@@ -81,9 +103,9 @@ class Eink(SupervisorBase):
             with self.subTest(name): self.assertEqual(self.title(fd,name,flags=0),-EINVAL)
         self.assertEqual(self.title(fd,'OK',flags=2),-EINVAL)                # unknown flag
         self.assertEqual(self.title(fd,'OK',tail=b'X'),-EINVAL)              # bytes after name_bytes must be zero
-        self.wait();bad=self.hdr(248)+struct.pack('<QQ',0,2)+b'OK'.ljust(16,b'\0')+b'\1'+bytes(199)
-        poke(self.c,self.BUFP,bad);self.assertEqual(self.ioctl(fd,TITLE,self.BUFP,248),-EINVAL)   # mark bytes without the flag
-        poke(self.c,self.BUFP,self.hdr(240)+bytes(224));self.assertEqual(self.ioctl(fd,TITLE,self.BUFP,240),-EINVAL)   # wrong record size
+        self.wait();bad=self.hdr(272)+struct.pack('<QQ',0,2)+b'OK'.ljust(16,b'\0')+b'\1'+bytes(199)+bytes(24)
+        poke(self.c,self.BUFP,bad);self.assertEqual(self.ioctl(fd,TITLE,self.BUFP,272),-EINVAL)   # mark bytes without the flag
+        poke(self.c,self.BUFP,self.hdr(248)+bytes(232));self.assertEqual(self.ioctl(fd,TITLE,self.BUFP,248),-EINVAL)   # wrong record size
         poke(self.c,self.BUFP,self.hdr(16));self.assertEqual(self.ioctl(fd,0x40003,self.BUFP,16),-ENOTTY)
     def test_device_rules(self):
         self.assertEqual(self.dev(0)[0],-EACCES);self.assertEqual(self.dev(2)[0],-EACCES)   # write-only

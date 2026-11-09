@@ -235,10 +235,11 @@ static int ioctl_eink(const struct k_ioctl *r) {
  }
  if(r->request==0x40001u) {
   struct k_eink_title t; int e=class_in(r->buffer,r->bytes,&t,sizeof t); if(e) return e;
-  if((t.flags&~1ull)||t.name_bytes<1||t.name_bytes>sizeof t.name) return -EINVAL;
+  if((t.flags&~1ull)||t.name_bytes<1||t.name_bytes>sizeof t.name||t.build_bytes>sizeof t.build) return -EINVAL;
+  for(uint64_t i=t.build_bytes;i<sizeof t.build;i++) if(t.build[i]) return -EINVAL;
   for(uint64_t i=t.name_bytes;i<sizeof t.name;i++) if(t.name[i]) return -EINVAL;
   if(!(t.flags&1u)) for(unsigned i=0;i<sizeof t.mark;i++) if(t.mark[i]) return -EINVAL;
-  return eink_title(t.name,(uint32_t)t.name_bytes,(t.flags&1u)?t.mark:NULL,now);
+  return eink_title(t.name,(uint32_t)t.name_bytes,(t.flags&1u)?t.mark:NULL,t.build,(uint32_t)t.build_bytes,now);
  }
  if(r->request==0x40002u) {
   struct k_header h; int e=class_in(r->buffer,r->bytes,&h,sizeof h); if(e) return e;

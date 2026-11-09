@@ -24,8 +24,14 @@ A page is 32 x 122 = **3,904 bytes**. A mark is 40x40 = **200 bytes**.
 ## Two levels
 
 1. **Title.** The OS sets its own name (1 to 16 characters) and optionally a 40x40 mark. They
-   replace `SANDBOX KERNEL` and the chip mark on the status screen while the OS runs. The
-   build ID, `UP:`, `USB:` and `ERR:` lines stay the kernel's.
+   replace `SANDBOX KERNEL` and the chip mark on the status screen while the OS runs. The line
+   under the name is the OS's **build line**: free text of up to 16 characters (what fits the
+   line at 2x), such as a hash (`3A9F2C1`), a version (`V0.4.2`), a date (`2026-11-09`) or a mix
+   (`V0.4 3A9F2C1`). With `build_bytes` 0 it is blank. The kernel's own build ID is never shown
+   under an OS name; it returns with the kernel's screens, USB INFO and after a clear or reclaim.
+   `UP:`, `USB:` and `ERR:` stay the kernel's. The build line uses the same characters as the
+   name; lowercase shows as capitals and anything else shows as `?`. More than 16 bytes is
+   `EINVAL` in the record (the SDK wrapper clips for you).
    Name characters are the kernel font's: `A-Z`, `0-9`, space and `-:./()=,_+!?';%`.
    Lowercase letters are shown as capitals. Anything else is `EINVAL`.
 2. **Page.** The OS submits a whole 250x122 bitmap, shown **instead of** the status screen.
@@ -42,12 +48,12 @@ Open `/dev/eink` **write-only** (`SBX_O_WRONLY`); one handle at a time (`EBUSY` 
 | Operation | How | Record or data | Result |
 | --- | --- | --- | --- |
 | Query | `ioctl SBX_IOC_EINK_QUERY` (class 4, op 0) | `sbx_eink_info`, 56 bytes, all fields zero on entry | the sizes and limits below |
-| Set the title | `ioctl SBX_IOC_EINK_TITLE` (4, 1) | `sbx_eink_title_rec`, 248 bytes: `flags` (bit 0 = a mark follows), `name_bytes` (1-16), `name[16]`, `mark[200]` | 0, `EINVAL`, `EAGAIN` |
+| Set the title | `ioctl SBX_IOC_EINK_TITLE` (4, 1) | `sbx_eink_title_rec`, 272 bytes: `flags` (bit 0 = a mark follows), `name_bytes` (1-16), `name[16]`, `mark[200]`, `build_bytes` (0-16), `build[16]` | 0, `EINVAL`, `EAGAIN` |
 | Clear | `ioctl SBX_IOC_EINK_CLEAR` (4, 2) | `sbx_header` only (16 bytes) | the kernel's title and status screen return |
 | Submit a page | `write` of **exactly 3,904 bytes** | the bitmap | the count, `EINVAL` for any other size, `EAGAIN` |
 
 `flags` and `reserved` header words must be zero, as everywhere in the ABI. `name` bytes
-after `name_bytes`, and `mark` when bit 0 is clear, must be zero.
+after `name_bytes`, `build` bytes after `build_bytes`, and `mark` when bit 0 is clear, must be zero.
 A write is all or nothing: no partial pages, no append. Closing the handle does **not** clear
 the title or page (the OS may open the device only when it wants a change); the kernel clears
 them when the program ends, however it ends.

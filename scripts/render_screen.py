@@ -65,7 +65,7 @@ def set_title():
     for y in range(40):
         for x in range(40):
             if (x - 20) ** 2 + (y - 20) ** 2 <= 18 ** 2 and (x - 20) ** 2 + (y - 20) ** 2 >= 13 ** 2 or (x - 20) ** 2 + (y - 20) ** 2 <= 36: mark[y * 5 + x // 8] |= 0x80 >> (x % 8)
-    L.eink_title(b'TEST OS', 7, (ctypes.c_uint8 * 200).from_buffer(mark), ctypes.c_uint64(10**9))
+    L.eink_title(b'TEST OS', 7, (ctypes.c_uint8 * 200).from_buffer(mark), b'v0.4 3a9f2c1', 12, ctypes.c_uint64(10**9))
 def set_page():
     page = test_page(); L.eink_page((ctypes.c_uint8 * 3904).from_buffer_copy(page), 3904, ctypes.c_uint64(2 * 10**9))
 shot('eink-kernel-ok.png', L.render_status, b'5ca68d431228', b'reader', b'none', ctypes.c_uint32(3725))

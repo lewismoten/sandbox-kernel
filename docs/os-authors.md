@@ -201,7 +201,8 @@ extern const uint8_t my_page[SBX_EINK_PAGE_BYTES]; /* 250x122, 32-byte rows, bit
 uint64_t eink;
 if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
   sbx_eink_title_rec t;
-  sbx_eink_title(eink, &t, "MY OS", 5, NULL);   /* name up to 16 characters; a 200-byte 40x40 mark is optional */
+  sbx_eink_title(eink, &t, "MY OS", 5, NULL, "V0.4 3A9F2C1");   /* name up to 16 characters; a 200-byte 40x40 mark is optional;
+                                                                   the build line is free text up to 16 (hash, version, date) or NULL */
   /* a page replaces the status screen; call again for the next frame, at most once a second */
   while (sbx_eink_page(eink, my_page) == -SBX_EAGAIN) { /* too soon: wait and try again */ }
 }

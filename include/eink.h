@@ -7,6 +7,7 @@
 #define EINK_H 122u
 #define EINK_PAGE_BYTES 3904u /* 122 rows of 32 bytes, bit 7 = leftmost, 1 = black */
 #define EINK_TITLE_MAX 16u
+#define EINK_BUILD_MAX 16u /* the build line: 16 characters at 12 px from x=54 end at the panel edge */
 #define EINK_MARK_BYTES 200u /* 40x40, 5-byte rows */
 #define EINK_MIN_INTERVAL_US 1000000ull   /* VERIFY: between accepted updates */
 #define EINK_BURST 30u                    /* VERIFY: accepted updates in any 60 s */
@@ -14,7 +15,7 @@
 #define EINK_FULL_PARTIALS 50u            /* VERIFY: partials before a ghost-clearing full refresh */
 #define EINK_FULL_MIN_US 180000000ull     /* Waveshare 2.13" V4: full refreshes at least 180 s apart */
 /* All return 0 or a negative errno (-22 EINVAL, -11 EAGAIN); now_us is the monotonic microseconds. */
-int eink_title(const char *name,uint32_t name_bytes,const uint8_t *mark,uint64_t now_us); /* mark NULL: none */
+int eink_title(const char *name,uint32_t name_bytes,const uint8_t *mark,const char *build,uint32_t build_bytes,uint64_t now_us); /* mark NULL: none; build_bytes 0: a blank build line */
 int eink_page(const uint8_t *bits,uint32_t bytes,uint64_t now_us);
 int eink_clear(uint64_t now_us);
 void eink_reset(void); /* the program ended (exit, fault, stop): the kernel has the panel back */
