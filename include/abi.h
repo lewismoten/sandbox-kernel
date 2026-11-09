@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 7u /* 1.7: /OS/SAVES/<GAME>/ write scope */
+#define K_ABI_MINOR 8u /* 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};
@@ -21,6 +21,7 @@ struct k_fb_palette {struct k_header h; uint64_t first,count; uint32_t rgb[256];
 struct k_mmap {struct k_header h; uint64_t fd,offset,length,protection,flags,address;};
 struct k_app_arena {struct k_header h; uint64_t owner_generation,requested_bytes,address,actual_bytes;};
 _Static_assert(sizeof(struct k_app_arena)==48,"arena record");
+struct k_audio_info {struct k_header h; uint64_t flags,rate,capacity_frames,queued_frames,played_frames,underruns,overruns,overrun_frames;}; /* ABI 1.7 /dev/audio */
 struct k_health {struct k_header h; uint64_t generation,sequence;};
 struct k_clock {struct k_header h; uint64_t clock,ns;}; /* clock_gettime (13): clock 0 is monotonic; ns out */
 struct k_sleep {struct k_header h; uint64_t deadline;}; /* sleep_until (14): absolute monotonic ns */
@@ -38,7 +39,7 @@ K_SIZE(k_header,16); K_SIZE(k_open,56); K_SIZE(k_io,48); K_SIZE(k_close,24);
 K_SIZE(k_seek,48);
 K_SIZE(k_rename,48);K_SIZE(k_dirent_meta,24);
 K_SIZE(k_ioctl,48); K_SIZE(k_exit,24); K_SIZE(k_fb_mode,56); K_SIZE(k_fb_present,48); K_SIZE(k_fb_set,40); K_SIZE(k_fb_palette,1056); K_SIZE(k_mmap,64); K_SIZE(k_startup,40);
-K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_dirent,8);
+K_SIZE(k_audio_info,80); K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_dirent,8);
 _Static_assert(offsetof(struct k_open,fd)==48&&offsetof(struct k_io,transferred)==40&&offsetof(struct k_fb_mode,buffer_bytes)==48,"tail fields");
 #undef K_SIZE
 /* Check a record header against the registers: 0 or a negative errno.
