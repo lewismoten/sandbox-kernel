@@ -178,14 +178,15 @@ The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark,
 | --- | --- |
 | `UP:` | uptime since the kernel started |
 | `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
-| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared |
+| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared. Normal refusals (`not-ready`) do not set it |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
 `Timer progress lost`, `Trial storage health failed`, an SD step name when the card did not
 start, and `OS autostart rejected; trying DIAG.ELF`. In `core/protocol.c`, `fail()` sets
-`ERR:` to the reason of the last failed USB command, so **`not-ready` on the panel is the
-last USB command that was refused because the device was not ready for it** (for example
-`PUTF` while an OS program was running). It does not mean the kernel is broken.
+`ERR:` to the reason of a real USB error (a bad command, a size or CRC mismatch, storage).
+A flow-control refusal, `ERR not-ready` because there was no `INFO` yet or an OS program is
+running, goes through `refuse()`: the reply only, so `ERR:` is not touched. `PUTF`, `RUN`,
+`PUT2`, `STOP`, `KEY`, `AXIS` and `INPUT` all follow that one rule.
 The panel redraws only when its content changes, and a full refresh takes seconds.
 
 ## 3. Writing a program
@@ -300,7 +301,7 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 
 | Command | What it does |
 | --- | --- |
-| `info` | print the device's `INFO` line: slots, generations, features |
+| `info` | print the device's `INFO` line: slots, generations, `updates=ready\|locked`, `os=running\|stopped\|none`, features |
 | `tail` | print the kernel log (`LOG ...` lines) until you stop it |
 | `put FILE [--name NAME]` | install FILE as `/OS/<NAME>` (upper-case 8.3, 1 byte to 1 MiB, CRC and SHA-256 checked) |
 | `putgame FOLDER DIR` | install every file as `/GAMES/<DIR>/<NAME>` |
@@ -311,6 +312,12 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
 | `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot) |
+
+**The `INFO` fields:** `updates=ready` means a kernel update may be sent (`features=kernel-update`);
+`updates=locked` means it may not (`features=locked`). `os=running` is an OS program running
+now, `os=stopped` one ran and was stopped, `os=none` none has run since boot. Kernels before
+this change said `features=kernel,no-os` for updates ready; it never meant "no OS", and
+`usb_kernel.py` still accepts it.
 
 **The not-ready rule:** `PUTF` (and so `put`, `putgame`, `putapp`) is refused with
 `ERR not-ready` while an OS program is running, and during a kernel update. **Run `stop`

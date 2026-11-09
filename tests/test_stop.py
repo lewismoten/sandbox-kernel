@@ -150,6 +150,23 @@ class Stop(ProtocolBase):
             if process.stderr is not None: process.stderr.close()
             os.close(master);os.close(slave)
 
+    def test_not_ready_refusals_leave_the_err_line_alone_but_real_errors_stick(self):
+        err=lambda: C.c_char_p.in_dll(self.c,'last_error').value
+        before=err()
+        self.assertEqual(self.command('STOP'),'ERR not-ready\n')     # no INFO session
+        self.assertEqual(self.command('RUN DIAG.ELF'),'ERR not-ready\n')
+        self.assertEqual(self.command('INPUT add'),'ERR not-ready\n')
+        self.assertEqual(err(),before)
+        info=self.command('INFO');self.assertIn(' updates=',info);self.assertIn(' os=none ',info)
+        self.assertNotIn('no-os',info)
+        self.assertIn('OK file',self.put(program()))
+        self.assertIn('OK run',self.command('RUN DIAG.ELF'))
+        self.assertIn(' os=running ',self.command('INFO'))
+        self.assertIn('ERR not-ready',self.put(b'x'))                # an OS runs: normal refusal
+        self.assertEqual(err(),before)
+        self.assertEqual(self.command('RUN'+' '),'ERR command\n')    # a real error is sticky
+        self.assertEqual(err(),b'command')
+
     def test_repeated_stop_put_run_and_normal_not_ready(self):
         self.command('INFO')
         for _ in range(4):
