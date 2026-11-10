@@ -107,7 +107,10 @@ Build: `make USB_ROLE=host all` (the default, `USB_ROLE=device`, is the Mac link
 the Makefile follows the existing `PANEL_ROTATE_180 ?=` style of variables). A role change
 relinks everything (`build/usb_role.stamp`). The role is fixed at build time: there is no ID
 autodetect, no hub and no Mac link in a host image (the one port cannot be both), so the
-serial reader and the protocol see nothing. Recover with a device-role image.
+serial reader and the protocol see nothing. So a host image never confirms its A/B trial:
+after 30 s it logs "Host-role test image: not confirmed", and the next power cycle boots the
+confirmed device-role kernel again, Mac link included. Send it from a device-role kernel as
+usual; to test again, send it again.
 
 What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
 device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the

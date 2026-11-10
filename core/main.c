@@ -73,11 +73,18 @@ void kernel_main(void) {
    if(!storage_ready||!updates_ready||!usb_healthy()||!control_healthy())health_failed=true;
    /* Read and compare the authoritative record before trial confirmation. */
    if(health_failed) {error("Trial storage health failed");for(;;)service_io();}
+#if USB_ROLE_HOST
+   /* A host-role image has no Mac link to replace it, so it never confirms: it stays a
+      trial, and a power cycle returns to the confirmed device-role kernel. */
+   (void)c;
+   if(expired(diagnostics_start,30000000)) {trial=false;log_line("Host-role test image: not confirmed; power off and on to return to the device kernel");}
+#else
    if(expired(diagnostics_start,30000000)) {
     memcpy(c,control,512);c[3]=boot_slot;c[6]=boot_generation;c[4]=NO_SLOT;c[5]=0;c[7]=0;memcpy(c+16,c+24,32);memset(c+24,0,32);
     if(!control_commit(c)) {error("Confirmation failed");for(;;)service_io();}
     trial=false;boot_trial=0;log_line("Trial confirmed after 30 seconds");
    }
+#endif
   }
  }
 }
