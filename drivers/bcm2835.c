@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT; original implementation from BCM2835 manual. */
 #include "kernel.h"
+#include "hdmi_audio.h"
 #define GPIO (PERIPH+0x200000)
 void gpio_mode(unsigned p,unsigned m) { uint32_t a=GPIO+(p/10)*4, s=(p%10)*3; REG(a)=(REG(a)&~(7u<<s))|(m<<s); barrier(); }
 void gpio_set(unsigned p,bool v) { REG(GPIO+(v?0x1c:0x28)+(p/32)*4)=1u<<(p%32); barrier(); }
@@ -37,10 +38,12 @@ bool property_message(uint32_t *m,unsigned words,uint32_t timeout) {
 }
 static bool property_once(uint32_t tag,uint32_t *v,unsigned n,uint32_t timeout) {
  uint32_t m[14]; m[0]=(n+6)*4; m[1]=0; m[2]=tag; m[3]=n*4; m[4]=n*4;
- for(unsigned i=0;i<n;i++) m[5+i]=v[i]; m[5+n]=0;
+ for(unsigned i=0;i<n;i++) { m[5+i]=v[i]; }
+ m[5+n]=0;
  if(!property_message(m,n+6,timeout)) return false;
  if(!(m[4]&0x80000000u)) {property_fail="MBOX TAG";return false;}
- for(unsigned i=0;i<n;i++) v[i]=m[5+i]; return true;
+ for(unsigned i=0;i<n;i++) { v[i]=m[5+i]; }
+ return true;
 }
 bool property(uint32_t tag,uint32_t *v,unsigned n) {
  if(n>8) {property_fail="MBOX ARGS";return false;}
@@ -73,8 +76,8 @@ void irq_init(void) {
 void irq_handler(void) {
  if(REG(PERIPH+0x3000)&2) { REG(PERIPH+0x3000)=2; REG(PERIPH+0x3010)=micros()+10000; ticks++; }
 #ifndef SELECTOR
- if(REG(PERIPH+0xb204)&0x007e0000u) { extern void hdmi_audio_irq(void); hdmi_audio_irq(); }
- if(REG(PERIPH+0xb204)&(1<<9)) { extern void usb_irq(void); usb_irq(); }
+ if(REG(PERIPH+0xb204)&0x007e0000u) { hdmi_audio_irq(); }
+ if(REG(PERIPH+0xb204)&(1<<9)) { usb_irq(); }
 #endif
 }
 void watchdog_feed(void) {

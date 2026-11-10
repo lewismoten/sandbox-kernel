@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT; fake block media and CDC, real core logic. */
+#include "host_exports.h"
 #include "kernel.h"
+#include "tusb.h"
 #include <stdio.h>
 #include <stdlib.h>
 static FILE *disk;
@@ -40,7 +42,6 @@ void feed(const void *data,unsigned n) {if(in_w+n>sizeof(input))abort();memcpy(i
 uint32_t tud_cdc_available(void) {return in_w-in_r;}
 uint32_t tud_cdc_read(void *p,uint32_t n) {if(n>in_w-in_r)n=in_w-in_r;memcpy(p,input+in_r,n);in_r+=n;return n;}
 void tud_cdc_read_flush(void) {in_r=in_w=0;}
-bool verify_confirmed(void);
 bool initialize(void) {storage_ready=store_init();updates_ready=storage_ready&&verify_confirmed();return updates_ready;}
 /* M1 slice 2: the kernel map, framebuffer, logs and watchdog seen by
    core/uspace.c, core/sys.c, core/os.c and core/fatput.c. */

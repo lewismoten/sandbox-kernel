@@ -24,7 +24,7 @@ class UnicodeTable(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             work = pathlib.Path(folder)
             source = work/'fold.c'
-            source.write_text('#include <stdint.h>\n#include "vfat_fold.h"\nuint32_t fold(uint32_t c){return vfat_fold(c);}\n')
+            source.write_text('#include <stdint.h>\n#include "vfat_fold.h"\nuint32_t fold(uint32_t c);\nuint32_t fold(uint32_t c){return vfat_fold(c);}\n')
             subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-Werror',
                             '-I'+str(root/'include'), str(source), '-o', str(work/'fold.so')], check=True)
             library = C.CDLL(str(work/'fold.so'))

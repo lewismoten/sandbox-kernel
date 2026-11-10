@@ -176,9 +176,9 @@ static int ensure_dir(uint32_t parent,bool top,const uint8_t name[11],uint32_t *
    "POCKET/NAME.GMP" are a packed game (or its further volume, NAME.G01 to
    NAME.G99) in /GAMES or /POCKET, the Pocket Player's folder, and
    "GAMES/LIBRARY.JSL" the library index. Nothing else. */
-static bool pack_name(const char *s) {
- const char *dot=0; for(const char *c=s;*c;c++) if(*c=='.') dot=c;
- if(!dot||dot==s||strlen(dot)!=4||dot[1]!='G') return false;
+static bool pack_name(const char *name) {
+ const char *dot=0; for(const char *c=name;*c;c++) if(*c=='.') dot=c;
+ if(!dot||dot==name||strlen(dot)!=4||dot[1]!='G') return false;
  return (dot[2]=='M'&&dot[3]=='P')||(dot[2]>='0'&&dot[2]<='9'&&dot[3]>='0'&&dot[3]<='9'&&(dot[2]!='0'||dot[3]!='0'));
 }
 static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm[11]) {
