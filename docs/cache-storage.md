@@ -2,8 +2,9 @@
 
 This is **not general SD write access**. Existing read/seek/getdents layouts and
 all older minor-version applications remain compatible. USB PUTF keeps its
-existing install allowlist. Applications can create/replace only plain uppercase
-8.3 names at the exact canonical path `/sd/OS/CACHE/NAME`.
+existing install allowlist. ABI 1.4 permits plain uppercase 8.3 names at the exact canonical path
+`/sd/OS/CACHE/NAME`. ABI 1.7 also permits [per-game saves](saves-storage.md);
+the two scopes share one writer. Physical writes and power cuts remain hardware-untested.
 
 ## Calls and SDK
 

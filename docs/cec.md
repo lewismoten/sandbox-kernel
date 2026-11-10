@@ -1,5 +1,7 @@
 # HDMI-CEC cores (host-only slices)
 
+Current status: unlinked and hardware-untested; no CEC input reaches event0.
+
 `drivers/cec_msg.c`, `cec_keys.c` and `cec_sm.c` (headers in `include/`) are pure C: no
 registers, no clocks, not in the kernel image yet. `tests/test_cec_core.py` builds them on the
 host and runs `tests/cec_core.c` (set `CEC_SANITIZE=1` to opt into ASan/UBSan). Hardware and the input glue come later.

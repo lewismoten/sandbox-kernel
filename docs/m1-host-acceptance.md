@@ -2,7 +2,9 @@
 
 Validated on November 7, 2026, based on `origin/main`
 `aac205c699c26a98641894dadd4ba97e6964115b`. Host-only; no board qualification
-is implied. The stall rule, input implementation and `core/os.c` are unchanged.
+is implied. The stall rule, input implementation and `core/os.c` were unchanged
+by that integration. Current discovery (2026-11-10) finds 440 test cases; the
+119-test result below is historical, and optional-tool skips depend on the host.
 
 ## Added coverage
 
@@ -14,7 +16,7 @@ is implied. The stall rule, input implementation and `core/os.c` are unchanged.
 | Integration regressions | 2 | Shared-library symbol binding in an isolated child process; matching FAT primary/backup/root labels and file layout |
 
 Total: 37 additional test methods over the 82-test baseline. `make test` runs
-119 tests successfully. The full suite also passes reverse and seed-1107 shuffled
+119 tests successfully at that integration baseline (not the current suite total). The full suite also passes reverse and seed-1107 shuffled
 order. Each run skips the existing ARM layout/svc test because the Arm GNU
 toolchain is not installed. Normal validation uses the system
 compiler and a real `fsck.fat -n`, with no compiler/checker wrappers, suppressed
@@ -57,9 +59,11 @@ synthetic transport credits, not USB hardware or TinyUSB internals.
 
 Outstanding milestone gates are not hidden:
 
-- ABI 1.0 has no older minor version. Zero-tail extension is tested, but an
-  older-minor executable running on a later ABI cannot yet be qualified. This
-  needs an actual newer ABI, not a fabricated version bump in an acceptance test.
+- At the ABI 1.0 baseline, no older minor existed. The current kernel is 1.10;
+  `test_supervisor_native.py` can load supplied old ELFs, and
+  `test_app_arena_native.py` exercises legacy startup/SDK gating on the host.
+  Actual older ARM application execution
+  on a current kernel remains a separate hardware-untested compatibility gate.
 - ARM attributes are not parsed by the current validator. All existing rejection
   paths are tested; that does not implement missing CPU/VFP checks.
 - Full-pool exhaustion uses internal `us_map` because anonymous allocation is

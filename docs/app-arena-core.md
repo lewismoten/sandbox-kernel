@@ -1,8 +1,10 @@
 # App arena slice A — historical unlinked qualification
 
-**Current status:** separately authorized Slice B now binds the lifecycle core
-to the supervisor/uspace and links that subset into the runtime. Allocation and
-the app interface remain unavailable. See [app-arena-supervisor.md](app-arena-supervisor.md).
+**Current status:** Slice B binds lifecycle/cleanup to the supervisor and
+uspace; Slice C exposes allocation through ABI 1.6 call 21. The current ABI is
+1.10. See [app-arena-supervisor.md](app-arena-supervisor.md) and
+[app-arena-abi.md](app-arena-abi.md). Hardware timing/MMU acceptance remains
+hardware-untested.
 The remainder below records the original Slice A boundary, not the current link list.
 
 Original MIT implementation by Lewis Moten with Hermes Agent / OpenAI Codex

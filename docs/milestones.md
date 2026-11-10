@@ -1,6 +1,6 @@
 # Milestones and acceptance tests
 
-Status, November 7, 2026: M0 board-qualified on the Zero W v1.1 (boot, USB logging,
+Status, November 10, 2026: M0 board-qualified on the Zero W v1.1 (boot, USB logging,
 updates with trial confirmation, automatic fallback, and the e-ink start and status
 screens, photographed). Not yet run from M0's list: ten timed cold boots and power
 cuts at each transition. M1 in progress ([docs/m1.md](m1.md)). Gates are cumulative;
@@ -24,8 +24,10 @@ Implementation progress: startup/MMU, UART, timer/IRQ, GPIO/SPI/V4 status, watch
 TinyUSB CDC, original EMMC/restricted FAT writer, fixed selector, manifest/hash
 validation, alternating control records, trial/fallback/confirmation, stdlib Mac
 sender and reproducible boot image are implemented. Host checks run the actual
-parser/FAT writer with fake CDC/media. **All nine physical acceptance gates remain
-pending**. See [M0 implementation and board handoff](m0.md) for exact formats,
+parser/FAT writer with fake CDC/media. Recorded board runs qualify boot, panel
+start/status, CDC logging and verified kernel trials/fallback. The full nine-gate
+campaign is incomplete; timed cold boots, injected faults and transition power
+cuts remain hardware-untested unless a specific run is recorded. See [M0 implementation and board handoff](m0.md) for exact formats,
 commands, pins, measured build sizes and limitations. M0 uses preallocated FAT32
 files per the implementation request, overriding the proposed raw partition layout.
 
@@ -33,7 +35,9 @@ Status display behavior (from testing the Circle prototype on the Zero W, 2026-1
 
 - The panel shows "Starting…" as the kernel's first visible act, before USB, SD and timers are up; the full
   status replaces it once initialization finishes (the prototype's first status took about 4 seconds).
-- One full refresh at boot only; every later update is a partial refresh, and an unchanged image is not redrawn.
+- The original M0 cadence was one full refresh at boot, partial refreshes later,
+  and no unchanged redraw. ABI 1.9 adds periodic full refreshes for panel care;
+  those refresh-care paths are hardware-untested ([eink.md](eink.md)).
 - Uptime is compact: seconds below 100 (`42s`), then the two largest units (`49m`, `1h 5m`, `2d 4h`, `7w 1d`,
   `1y 45w`), so the panel redraws at most once a minute after the first 100 seconds.
 - The update sender retries the first handshake: the prototype's first send timed out twice before the device
@@ -90,6 +94,11 @@ read-only FAT assets, framebuffer presentation, native ELF32 loading in ARM
 User mode, input event queues, supervisor recovery, and OS A/B updates. Add the
 durable settings/save store before enabling those writes. A basic keyboard or
 synthetic event source can establish the input ABI; gamepad qualification is M2.
+The current SDK is ABI 1.10. Bounded FAT cache/save writes are implemented
+([cache-storage.md](cache-storage.md), [saves-storage.md)); they replace neither
+the proposed journal nor the OS A/B/pair-update gates. Physical save/cache
+power-cut durability remains hardware-untested. The tests below retain the
+long-term journal/pair targets; their presence does not claim implementation.
 
 Acceptance tests:
 
@@ -133,6 +142,16 @@ Acceptance tests:
 
 ## M2: Sound and gamepads
 
+Implementation status: ABI 1.8 provides stereo S16_LE/48 kHz `/dev/audio` with a
+16384-frame ring. HDMI DMA is linked with null fallback; the recorded second-Pi
+run shows drain counters only. Listening, sustained load and fault/unplug tests
+remain hardware-untested. The kernel-internal mixer serves the USB `TONE` hook.
+PWM and gamepad drivers are absent. `make USB_ROLE=host all` links a boot-keyboard
+role (hardware-untested, no CDC/hubs, consumed trial only, never confirms); the
+default is `USB_ROLE=device`, and `make boot` refuses host runtimes. CEC remains
+unlinked host-only code. The acceptance targets below are still gates, not claims
+that the original PWM-first plan shipped.
+
 Deliver kernel-managed buffered PCM through PWM first, then investigate HDMI
 sound as a distinct gate. The Zero W needs appropriate external filtering/audio
 hardware; a GPIO tone is not acceptance of buffered PCM or TV audio. Keep VOC
@@ -164,7 +183,8 @@ Acceptance tests:
 6. HDMI audio passes only after a separately audited permissive backend produces
    PCM on real displays, handles supported modes, mute/drain and unplug/reconnect,
    and passes the same sustained-load and OS-fault tests. Until then report
-   "PWM supported; HDMI audio unavailable" through capabilities and release notes.
+   the actual selected backend (`AUDIO`: HDMI or null); PWM is not implemented
+   and capability enumeration is not available.
 
 ## M3: Wi-Fi and Bluetooth
 

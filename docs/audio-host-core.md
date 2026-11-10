@@ -3,7 +3,9 @@
 `core/audio_core.c` and `include/audio_core.h` are a fixed-memory qualification
 component, deliberately absent from `KERNEL` in the Makefile. They implement no
 syscall, SDK record, device path, availability flag, hardware backend or IRQ.
-Existing ABI 1.0–1.5 and existing boot sources are unchanged. This is not HDMI audio.
+This component does not change the ABI. The current runtime/SDK is ABI 1.10;
+[the linked audio device and HDMI backend](audio-device.md) use `audio_ring.c`
+and `audio_null.c`, independently of this qualification core.
 
 ## Internal contract
 
@@ -50,8 +52,9 @@ firmware/config/EDID/sink/clock evidence and approved compatible hardware-driver
 provenance. Circle is GPL reference-only: none of its implementation is used here.
 HDMI DREQ17 is not DMA channel17; a firmware-safe DMA channel must be claimed and
 released, with ARM1176 alignment/bus-alias/cache/barrier handling and bounded waits.
-IEC958 framing, infoframes, real DMA descriptors, IRQ dispatch and USB/timer
-coexistence are not implemented. No `/dev/audio` or competing ABI minor is allocated.
+This component supplies none of IEC958 framing, infoframes, DMA descriptors or
+IRQ dispatch. The separate linked backend implements those paths, and ABI 1.8
+allocated `/dev/audio`; full USB/timer coexistence under load is hardware-untested.
 
 Synchronous SD readiness/transfer/programming waits can exceed this 85.333 ms
 software ring. Host draining in a test does not prove producer schedulability.

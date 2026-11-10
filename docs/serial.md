@@ -10,7 +10,8 @@ the Pi Zero W here has its header covered by the e-ink HAT, so none exists.)
 
 ## For the OS (`sdk/include/sandbox/abi.h`)
 
-- `open("/dev/serial0", SBX_O_RDONLY | SBX_O_WRONLY | SBX_O_RDWR, with SBX_O_NONBLOCK)`. Blocking
+- `open("/dev/serial0", access | SBX_O_NONBLOCK)`, choosing one access mode:
+  `SBX_O_RDONLY`, `SBX_O_WRONLY` or `SBX_O_RDWR`. Blocking
   opens return `EINVAL`; a second open while one is held returns `EBUSY`. Closing it, or the program
   ending, frees it and empties both buffers.
 - `write` takes every byte and never blocks. Output waits in a 512-byte buffer. If it is full, or no
@@ -18,7 +19,12 @@ the Pi Zero W here has its header covered by the e-ink HAT, so none exists.)
 - `read` returns up to 256 buffered bytes from the host, or `EAGAIN` when there are none.
 - `sbx_serial_query` (ioctl class 6, op 0) fills `sbx_serial_info`: `transport`
   (`SBX_SERIAL_NONE` 0 or `SBX_SERIAL_USB` 1), `tx_bytes`, `tx_dropped`, `rx_bytes`, `rx_dropped`,
-  `tx_pending`, `rx_pending`. The counters count since boot.
+  `tx_pending`, `rx_pending`. The counters count since boot (32-bit internal
+  counters wrap); byte totals count accepted bytes, with drops counted separately.
+  The current dispatcher does not enforce per-handle read/write direction after open.
+
+The OS channel is hardware-untested. A `USB_ROLE=host` build has no CDC link;
+its transport stays `SBX_SERIAL_NONE`, writes drop and empty reads return `EAGAIN`.
 
 ## Wire framing (USB)
 

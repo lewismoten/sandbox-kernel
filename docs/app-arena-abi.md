@@ -3,7 +3,7 @@
 This is an opt-in kernel interface, not an audio device or general allocator.
 The 40-byte `k_startup` / `sbx_startup` types and offsets remain unchanged.
 Runtime publishes a separate 48-byte extension with an application epoch at
-40, major 1/minor 6 and prefix.size 48. Health continues using the boot
+40, major 1/minor 10 and prefix.size 48 (introduced in minor 6). Health continues using the boot
 generation at offset 8. New consumers gate major, minor and size before reading
 the epoch. The SDK wrapper returns ENOSYS without issuing a call on legacy
 startup, and leaves caller outputs unchanged on every error (including skewed

@@ -1,4 +1,15 @@
-# USB host keyboard: plan after ID detection
+# USB host keyboard: fixed host-role build
+
+Current status: `make USB_ROLE=host all` links TinyUSB HID host and the keyboard
+input glue described in slice 2 below. It is **hardware-untested**. The default
+`USB_ROLE=device` is the Mac CDC link. There is no automatic role switching, hub
+support or CDC in a host image. Host images run only as consumed trials and
+never confirm; `make boot` refuses them.
+
+## Historical device-role ID-detection plan
+
+The following ID-window notes describe `drivers/usb.c` in the device build;
+they do not describe `drivers/usb_host.c` or select the build role.
 
 Slice 1 (done): read the OTG ID pin once at boot, latch the result, and show
 `USB: OTG (KEYBOARD NEXT)` when that latched ID was grounded and no Mac has enumerated for
@@ -98,8 +109,9 @@ cheapest, though the design file asks to audit its BSP needs.
   previous one (Linux key codes, releases first); a rollover-error report is ignored.
   `hidboot_feed` sends them to `input_frame` in frames of at most `INPUT_FRAME_MAX`.
   `hidboot_release_all` releases held keys on unplug.
-- Tests: `tests/hidboot.c`, run by `tests/test_hidboot.py`. Nothing calls these yet; the host
-  controller slices will. The OS-facing ABI does not change.
+- Tests: `tests/hidboot.c`, run by `tests/test_hidboot.py`. The host-role glue
+  now calls the report parser. The descriptor walker remains a standalone core;
+  TinyUSB performs runtime enumeration. The OS-facing ABI does not change.
 
 ## Slice 2: the host-role build (keyboard on the OTG port)
 
