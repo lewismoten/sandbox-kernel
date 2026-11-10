@@ -5,6 +5,11 @@
 #include "os.h"
 #include "autostart.h"
 #include "input.h"
+#ifdef USB_ROLE_HOST /* no Mac link in the host role: the CDC reads see an empty port */
+static inline uint32_t tud_cdc_available(void) {return 0;}
+static inline uint32_t tud_cdc_read(void *b,uint32_t n) {(void)b;(void)n;return 0;}
+static inline void tud_cdc_read_flush(void) {}
+#endif
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
 extern uint32_t boot_slot,boot_generation;

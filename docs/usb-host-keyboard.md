@@ -100,3 +100,36 @@ cheapest, though the design file asks to audit its BSP needs.
   `hidboot_release_all` releases held keys on unplug.
 - Tests: `tests/hidboot.c`, run by `tests/test_hidboot.py`. Nothing calls these yet; the host
   controller slices will. The OS-facing ABI does not change.
+
+## Slice 2: the host-role build (keyboard on the OTG port)
+
+Build: `make USB_ROLE=host all` (the default, `USB_ROLE=device`, is the Mac link and is unchanged;
+the Makefile follows the existing `PANEL_ROTATE_180 ?=` style of variables). A role change
+relinks everything (`build/usb_role.stamp`). The role is fixed at build time: there is no ID
+autodetect, no hub and no Mac link in a host image (the one port cannot be both), so the
+serial reader and the protocol see nothing. Recover with a device-role image.
+
+What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
+device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
+host-testable glue. TinyUSB sets boot protocol on a boot-subclass HID interface before its
+mount callback; the glue arms the interrupt endpoint, `hidboot_feed` turns reports into
+`input_frame` changes, and an unmount calls `hidboot_release_all` then `input_remove`.
+`include/tusb_config.h` carries the host settings and a one-line `dwc2_int_set` shim,
+because TinyUSB 0.21's `dwc2_bcm.h` has only the device interrupt switch.
+
+What the HDMI console shows, in order (the e-ink status line shows `HOST: no device`,
+`HOST: device, no keyboard` or `HOST: keyboard`):
+1. `USB host up`: the stack started (it did not hang before this).
+2. `device attached VID:PID`: the port reset and enumeration reached the device descriptor.
+3. `keyboard ready`: a boot keyboard interface mounted and polling started. If the device has
+   no boot keyboard interface the line is `HID interface skipped (not a boot keyboard)`.
+4. `key NAME` for each press (`key Up`, `key Space`, `key LShift`); releases are not shown.
+5. `keyboard removed` / `device removed` when it is unplugged.
+Stopping at 1 with a device plugged in means the port never saw it (power or reset); stopping at
+2 means set-up or HID mounting failed.
+
+Tests: `tests/usbkbd.c` (`make test`) drives the glue with fakes: stage lines, skipped
+non-keyboard interfaces, press names, no stuck key on unplug, replug, rollover and short reports.
+
+Unverified on hardware: whether TinyUSB's `hcd_dwc2.c` runs on the Zero's BCM2835 core at all,
+the FIFO split, VBUS being powered, and the keyboard dongle being full speed.
