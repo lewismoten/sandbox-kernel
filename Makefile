@@ -5,6 +5,8 @@ OBJCOPY := $(TOOLCHAIN)objcopy
 SIZE := $(TOOLCHAIN)size
 PYTHON ?= python3
 BUILD_ID ?= $(shell $(PYTHON) scripts/build_id.py --hash)
+TUSB_VERSION := 0.21.0
+TUSB_STAMP := third_party/tinyusb/.fetched-$(TUSB_VERSION)
 TUSB := third_party/tinyusb/src
 PANEL_ROTATE_180 ?= 1
 # USB_ROLE=device (default, the Mac link) or host (a keyboard on the OTG port; see docs/usb-host-keyboard.md)
@@ -43,9 +45,9 @@ endef
 $(foreach f,$(FAULTS),$(eval $(call FAULT_RULE,$(f))))
 build:
 	mkdir -p build
-third_party/tinyusb/.fetched:
+$(TUSB_STAMP): scripts/fetch.py
 	$(PYTHON) scripts/fetch.py tinyusb
-deps: third_party/tinyusb/.fetched
+deps: $(TUSB_STAMP)
 FORCE:
 # a role change must relink (and recompile: one command builds everything)
 build/usb_role.stamp: FORCE | build
@@ -54,7 +56,7 @@ build/build_id.h: FORCE | build
 	$(PYTHON) scripts/build_id.py '$(BUILD_ID)'
 build/selector.elf: Makefile build/build_id.h $(COMMON) core/selector.c $(HEADERS) arch/armv6/link.ld | build
 	$(CC) $(CFLAGS) -DSELECTOR $(COMMON) core/selector.c $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x8000,--defsym=MEMORY_LIMIT=0x70000,-Map=build/selector.map -o $@
-build/runtime.elf: Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld third_party/tinyusb/.fetched | build
+build/runtime.elf: Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
 	$(CC) $(CFLAGS) $(KERNEL) $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x100000,--defsym=MEMORY_LIMIT=0x08000000,-Map=build/runtime.map -o $@
 build/kernel.img: build/selector.elf
 	$(OBJCOPY) -O binary $< $@
