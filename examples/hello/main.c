@@ -19,16 +19,16 @@
 
 static uint64_t log_fd, fb, input;
 static uint8_t *pix;   /* mapped surface, as bytes: rows are `pitch` bytes apart, not W*2 */
-static uint32_t pitch;
+static uint32_t pitch, width, height;
 
 static void say(const char *s) { uint32_t n = 0; while (s[n]) n++; sbx_log(log_fd, s, n); }
 
 /* A pixel rectangle, clipped to the screen. */
 static void rect(int32_t x, int32_t y, uint32_t w, uint32_t h, uint16_t c) {
   for (int32_t j = y; j < y + (int32_t)h; j++) {
-    if (j < 0 || j >= (int32_t)H) continue;
+    if (j < 0 || j >= (int32_t)height) continue;
     uint16_t *row = (uint16_t *)(pix + (uint32_t)j * pitch);  /* pitch, not width */
-    for (int32_t i = x; i < x + (int32_t)w; i++) if (i >= 0 && i < (int32_t)W) row[i] = c;
+    for (int32_t i = x; i < x + (int32_t)w; i++) if (i >= 0 && i < (int32_t)width) row[i] = c;
   }
 }
 
@@ -54,7 +54,7 @@ static void text(int32_t x, int32_t y, const char *t, uint32_t s) {
 }
 
 static void draw(int32_t bx, int32_t by) {
-  rect(0, 0, W, H, BG);
+  rect(0, 0, width, height, BG);
   text(120, 100, "Hello, world!", 10);
   rect(bx, by, BOX, BOX, BOXC);
 }
@@ -69,12 +69,16 @@ int main(const sbx_startup *start) {
   sbx_fb_mode mode;
   void *surface;
   if (sbx_open("/dev/fb0", 8, SBX_O_RDWR, &fb) || sbx_fb_set_mode(fb, W, H, SBX_FB_RGB565) ||
-      sbx_fb_query(fb, &mode) || mode.width != W || mode.height != H || mode.format != SBX_FB_RGB565 ||
-      sbx_fb_map(fb, mode.buffer_bytes, &surface)) { say("HELLO no 960x540 screen"); return 4; }
+      sbx_fb_query(fb, &mode) || mode.format != SBX_FB_RGB565 ||
+      !mode.width || !mode.height || mode.width > INT32_MAX || mode.height > INT32_MAX ||
+      mode.pitch > UINT32_MAX || mode.pitch < mode.width * 2 || mode.buffer_bytes > UINT32_MAX ||
+      mode.height > mode.buffer_bytes / mode.pitch ||
+      sbx_fb_map(fb, mode.buffer_bytes, &surface)) { say("HELLO no usable screen"); return 4; }
   pix = surface; pitch = (uint32_t)mode.pitch;
+  width = (uint32_t)mode.width; height = (uint32_t)mode.height;
 
   /* 3. Keyboard: read-only and nonblocking, so reads return -SBX_EAGAIN when nothing is queued. */
-  if (sbx_open("/dev/input/event0", 17, SBX_O_RDONLY | SBX_O_NONBLOCK, &input)) say("HELLO no keyboard");
+  if (sbx_open("/dev/input/event0", 17, SBX_O_RDONLY | SBX_O_NONBLOCK, &input)) return 6;
 
 #if SBX_ABI_HAS_EINK
   /* E-ink goes here once the e-ink API merges (branch feature/eink-api); not built yet. */
@@ -84,15 +88,18 @@ int main(const sbx_startup *start) {
 
   int32_t bx = 400, by = 300;
   uint64_t seq = 1, now = 0;
-  sbx_clock_ns(&now);
+  if (sbx_clock_ns(&now)) return 7;
   for (;;) {
     /* Heartbeat: the first call must come within 10 s of the start, then one every 2 s.
        The sequence starts at 1 and must increase. We call it every frame (about 30 ms). */
     if (sbx_health(start->generation, seq++)) return 5;
 
     /* Drain queued key events: type 1 is a key; value 1 is down, 2 is repeat, 0 is up. */
-    sbx_input_event ev; uint64_t got;
-    while (!sbx_read(input, &ev, sizeof ev, &got) && got == sizeof ev) {
+    for (;;) {
+      sbx_input_event ev; uint64_t got = 0;
+      int32_t status = sbx_read(input, &ev, sizeof ev, &got);
+      if (status == -SBX_EAGAIN) break;
+      if (status || got != sizeof ev) return 6;
       if (ev.type != SBX_EV_KEY || ev.value == 0) continue;
       if (ev.code == SBX_KEY_ESC) { say("HELLO bye"); return 0; }  /* returning from main exits */
       if (ev.code == SBX_KEY_LEFT) bx -= STEP;
@@ -102,13 +109,15 @@ int main(const sbx_startup *start) {
     }
     if (bx < 0) bx = 0;
     if (by < 0) by = 0;
-    if (bx > (int32_t)(W - BOX)) bx = (int32_t)(W - BOX);
-    if (by > (int32_t)(H - BOX)) by = (int32_t)(H - BOX);
+    int32_t max_x = width > BOX ? (int32_t)(width - BOX) : 0;
+    int32_t max_y = height > BOX ? (int32_t)(height - BOX) : 0;
+    if (bx > max_x) bx = max_x;
+    if (by > max_y) by = max_y;
 
     draw(bx, by);
-    sbx_fb_present(fb, 0, 0, W, H);  /* copy the surface to the screen */
+    if (sbx_fb_present(fb, 0, 0, width, height)) return 8;
 
     now += 33000000u;                /* next frame; sleeping lets the CPU rest */
-    sbx_sleep_until(now);
+    if (sbx_sleep_until(now)) return 7;
   }
 }

@@ -1,8 +1,8 @@
 # HELLO: a tiny OS to copy
 
 `main.c` (about 110 lines) is a complete OS program for sandbox-kernel. It checks the ABI
-version, draws "Hello, world!" and an orange box on `/dev/fb0` (960x540, 16-bit color, rows
-`pitch` bytes apart), moves the box with the arrow keys from `/dev/input/event0`, sends the
+version, draws "Hello, world!" and an orange box on `/dev/fb0` (requested 960x540, 16-bit color, rows
+`pitch` bytes apart; drawing uses the negotiated dimensions), moves the box with the arrow keys from `/dev/input/event0`, sends the
 heartbeat every frame, and exits when you press Esc. The Makefile uses only the SDK
 (`sdk/lib/crt0.S`, `mem.c`, `sandbox.ld`, `sdk/include/sandbox/`). The 5x7 letters are drawn
 from a small table of bitmaps drawn for this example in `main.c` (MIT, like everything here).

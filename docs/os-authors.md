@@ -198,6 +198,16 @@ The panel redraws only when its content changes, and a full refresh takes second
 
 Short on time? Copy [`examples/hello/`](../examples/hello/README.md): a complete program (screen, arrow keys, heartbeat, clean exit) in about 110 lines, with a Makefile that uses only the SDK.
 
+The examples request 960x540 RGB565, then query the framebuffer and use the
+negotiated width and height for clipping, movement bounds and presentation, and
+its pitch for row addresses. A successful mode request may return a smaller mode.
+Map the queried buffer size and check `sbx_fb_present` errors; both examples exit
+on a failed present. CLOCK scales its digits to the returned screen; HELLO clips
+its fixed text and box. Initialize syscall outputs and check return status before
+using them: the SDK leaves outputs untouched on failure. Both examples exit on
+input-open or clock failure. For nonblocking input, `-SBX_EAGAIN` ends the current
+drain; other read errors or incomplete events cause an explicit failure exit.
+
 ### The ELF rules (`core/elf.c`, `include/uspace.h`)
 
 The loader rejects anything else, with a short code in the log:
