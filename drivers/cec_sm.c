@@ -25,6 +25,7 @@ static void active_source(struct cec_sm *s) {
 
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
     s->phys = phys; s->laddr = CEC_ADDR_BROADCAST; s->cand = 0; s->active = 0;
+    s->poll_retries = 0;
     s->ui_code = 0; s->inflight = 0; s->inflight_retry = 0; s->retry_next = 0;
     s->tx_id = 0; s->tx_start_ms = 0; s->now_ms = now_ms; s->qn = 0;
     if (phys == CEC_PHYS_UNKNOWN) { s->state = CEC_SM_NO_ADDRESS; return; }
@@ -34,7 +35,7 @@ void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
 
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms) {
     s->now_ms = now_ms;
-    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, s->tx_id, 0);
+    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, s->tx_id, CEC_SM_TX_ERROR);
 }
 
 int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id) {
@@ -48,24 +49,31 @@ int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id) {
     return 1;
 }
 
-void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, int ok) {
+void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result result) {
     if (!s->inflight || tx_id != s->tx_id) return;
     int was_poll = cec_is_poll(&s->cur);
     s->inflight = 0;
     if (was_poll && s->state == CEC_SM_POLL) {
-        if (ok) {                                   /* ACKed: somebody owns it, try the next */
+        if (result == CEC_SM_TX_ACK) {               /* somebody owns it, try the next */
+            s->poll_retries = 0;
             if (++s->cand >= 3u) { s->state = CEC_SM_NO_ADDRESS; s->laddr = CEC_ADDR_BROADCAST; }
             else poll_next(s);
-        } else {                                    /* NACK: free, claim it */
+        } else if (result == CEC_SM_TX_NACK) {       /* explicit NACK: free, claim it */
             struct cec_msg m;
             s->laddr = cands[s->cand]; s->state = CEC_SM_CLAIMED;
             report(s);
             cec_build_set_osd_name(&m, s->laddr, CEC_ADDR_BROADCAST, CEC_SM_OSD_NAME);
             push(s, &m);
+        } else if (s->poll_retries < CEC_SM_POLL_RETRIES) {
+            s->poll_retries++;
+            poll_next(s);                           /* unknown outcome: same candidate */
+        } else {
+            s->state = CEC_SM_NO_ADDRESS;
+            s->laddr = CEC_ADDR_BROADCAST;
         }
         return;
     }
-    if (!ok && !s->inflight_retry) {                /* one retry of a failed frame, sent first */
+    if (result != CEC_SM_TX_ACK && !s->inflight_retry) { /* one retry of a failed frame, sent first */
         if (s->qn < CEC_SM_QUEUE) {
             for (unsigned i = s->qn; i > 0; i--) s->q[i] = s->q[i - 1];
             s->q[0] = s->cur; s->qn++;

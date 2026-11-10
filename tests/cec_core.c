@@ -159,12 +159,58 @@ static void test_sm(void) {
     assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, last_tx_id, 0);   /* second failure is final */
     assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     assert(!tx(&s, &m));
-    /* a frame that never reports back times out as a NACK and is retried */
+    /* a frame that never reports back times out as an error and is retried */
     cec_sm_announce(&s);
     cec_sm_tick(&s, 5000); assert(tx(&s, &m));
     cec_sm_tick(&s, 5999); assert(!tx(&s, &m));
     cec_sm_tick(&s, 6000); assert(tx(&s, &m) && cec_opcode(&m) == 0x04);
     puts("PASS cec_sm polling, replies, active source, retry");
+}
+static void test_poll_errors(void) {
+    struct cec_sm s = {0}, before;
+    struct cec_msg m;
+    uint64_t id, retired;
+    /* Both timeout and transport error consume the same bounded retry budget. */
+    for (unsigned errors = 0; errors < 3; errors++) {
+        cec_sm_init(&s, 0x1000, 0);
+        for (unsigned attempt = 0; attempt <= CEC_SM_POLL_RETRIES; attempt++) {
+            assert(cec_sm_next_tx(&s, &m, &id) && m.len == 1 && m.b[0] == 0x44);
+            if (errors == 0 || (errors == 2 && attempt % 2 == 0))
+                cec_sm_tick(&s, s.now_ms + CEC_SM_TX_TIMEOUT_MS);
+            else cec_sm_tx_done(&s, id, CEC_SM_TX_ERROR);
+            assert(!s.inflight && s.laddr == CEC_ADDR_BROADCAST);
+            assert(s.state == (attempt < CEC_SM_POLL_RETRIES ? CEC_SM_POLL : CEC_SM_NO_ADDRESS));
+            memcpy(&before, &s, sizeof(s));
+            cec_sm_tx_done(&s, id, CEC_SM_TX_ACK);
+            cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
+            assert(memcmp(&before, &s, sizeof(s)) == 0);
+        }
+        cec_sm_announce(&s);
+        cec_sm_tick(&s, s.now_ms + CEC_SM_TX_TIMEOUT_MS);
+        assert(!cec_sm_next_tx(&s, &m, &id));
+    }
+    /* An explicit NACK after a transport error is sufficient to claim. */
+    cec_sm_init(&s, 0x1000, 0);
+    assert(cec_sm_next_tx(&s, &m, &retired));
+    cec_sm_tx_done(&s, retired, CEC_SM_TX_ERROR);
+    assert(cec_sm_next_tx(&s, &m, &id) && id != retired && m.b[0] == 0x44);
+    cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
+    assert(s.state == CEC_SM_CLAIMED && s.laddr == 4 && s.qn == 2);
+
+    /* An ACK after retries moves to the next candidate with a fresh budget. */
+    cec_sm_init(&s, 0x1000, 0);
+    for (unsigned attempt = 0; attempt < CEC_SM_POLL_RETRIES; attempt++) {
+        assert(cec_sm_next_tx(&s, &m, &id));
+        cec_sm_tx_done(&s, id, CEC_SM_TX_ERROR);
+    }
+    assert(cec_sm_next_tx(&s, &m, &id));
+    cec_sm_tx_done(&s, id, CEC_SM_TX_ACK);
+    assert(s.poll_retries == 0 && s.laddr == CEC_ADDR_BROADCAST);
+    assert(cec_sm_next_tx(&s, &m, &id) && m.b[0] == 0x88);
+    cec_sm_tx_done(&s, id, CEC_SM_TX_ERROR);
+    assert(cec_sm_next_tx(&s, &m, &id) && m.b[0] == 0x88);
+    cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
+    assert(s.state == CEC_SM_CLAIMED && s.laddr == 8);
 }
 static void test_stale_completion(void) {
     struct cec_sm s = {0}, before;
@@ -176,13 +222,12 @@ static void test_stale_completion(void) {
     cec_sm_tick(&s, 999);
     assert(!cec_sm_next_tx(&s, &next, &next_id));
     cec_sm_tick(&s, 1000);
-    assert(s.state == CEC_SM_CLAIMED && s.laddr == 4);
+    assert(s.state == CEC_SM_POLL && s.laddr == CEC_ADDR_BROADCAST && !s.inflight);
     assert(cec_sm_next_tx(&s, &report, &report_id));
-    static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04};
-    eq(&report, rpa, sizeof(rpa));
+    eq(&report, poll.b, poll.len);
     assert(report_id != poll_id && s.inflight);
 
-    /* C1 witness: original poll fails after its timeout and report handoff.
+    /* Original poll completes after its timeout and retry handoff.
      * No field (queue, retry, address or current transfer) may change. */
     memcpy(&before, &s, sizeof(s));
     cec_sm_tx_done(&s, poll_id, 0);
@@ -192,15 +237,20 @@ static void test_stale_completion(void) {
     cec_sm_tx_done(&s, 0, 0);
     assert(memcmp(&before, &s, sizeof(s)) == 0);
 
-    /* Only the report's own completion releases the next frame. */
+    /* The retry's ACK proves address 4 is taken; no duplicate claim. */
     cec_sm_tx_done(&s, report_id, 1);
-    assert(!s.inflight);
+    assert(!s.inflight && s.state == CEC_SM_POLL && s.laddr == CEC_ADDR_BROADCAST);
     assert(cec_sm_next_tx(&s, &next, &next_id));
-    assert(next_id != report_id && cec_opcode(&next) == CEC_OP_SET_OSD_NAME);
+    assert(next_id != report_id && cec_is_poll(&next) && next.b[0] == 0x88);
     memcpy(&before, &s, sizeof(s));
     cec_sm_tx_done(&s, report_id, 0);  /* duplicate of a completed transfer */
     assert(memcmp(&before, &s, sizeof(s)) == 0);
-    cec_sm_tx_done(&s, next_id, 1);
+    cec_sm_tx_done(&s, next_id, CEC_SM_TX_NACK);
+    assert(s.state == CEC_SM_CLAIMED && s.laddr == 8);
+    while (cec_sm_next_tx(&s, &next, &next_id)) {
+        assert(cec_initiator(&next) == 8 && !cec_is_poll(&next));
+        cec_sm_tx_done(&s, next_id, CEC_SM_TX_ACK);
+    }
     assert(!cec_sm_next_tx(&s, &next, &next_id));
 
     /* A timed-out frame's retry has identical bytes but a fresh identity. */
@@ -228,4 +278,4 @@ static void test_stale_completion(void) {
     assert(!cec_sm_next_tx(&s, &next, &next_id) && s.qn == 1);
     puts("PASS cec_sm stale completions ignored");
 }
-int main(void) { test_msg(); test_keys(); test_sm(); test_stale_completion(); return 0; }
+int main(void) { test_msg(); test_keys(); test_sm(); test_poll_errors(); test_stale_completion(); return 0; }

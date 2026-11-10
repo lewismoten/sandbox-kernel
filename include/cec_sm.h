@@ -8,16 +8,19 @@
 
 #define CEC_SM_QUEUE 6u
 #define CEC_SM_TX_TIMEOUT_MS 1000u
+#define CEC_SM_POLL_RETRIES 2u
 #define CEC_SM_OSD_NAME "Game-Maker"
 
 enum cec_sm_state { CEC_SM_POLL, CEC_SM_CLAIMED, CEC_SM_NO_ADDRESS };
 enum cec_sm_event { CEC_SM_EV_NONE, CEC_SM_EV_KEY_PRESSED, CEC_SM_EV_KEY_RELEASED };
+enum cec_sm_tx_result { CEC_SM_TX_ERROR = -1, CEC_SM_TX_NACK = 0, CEC_SM_TX_ACK = 1 };
 
 struct cec_sm {
     enum cec_sm_state state;
     uint16_t phys;
     uint8_t laddr;                 /* claimed address, 15 when none */
     uint8_t cand;                  /* index into the 4/8/11 candidates */
+    uint8_t poll_retries;          /* uncertain outcomes for this candidate */
     uint8_t active;                /* we are the active source */
     uint8_t ui_code;               /* operand of the last Pressed */
     uint8_t inflight;              /* a frame is out for sending */
@@ -33,7 +36,7 @@ struct cec_sm {
 /* phys 0xFFFF = unknown: no address is claimed. Starts polling at once.
  * Before reinitializing, drain/cancel all callbacks from the previous lifetime. */
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms);
-/* Time passes; a stuck send counts as a NACK. */
+/* Time passes; retire a stuck send as a transport error, never as a NACK. */
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms);
 /* A received frame. Returns a key event for User Control frames. */
 enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m);
@@ -41,10 +44,12 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m);
  * Save this ID with the transfer, including retries; never read it at callback
  * time from s. IDs are nonzero and never wrap: exhaustion stops new transfers. */
 int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id);
-/* Outcome of the frame handed out: ok = the destination ACKed it. For a
- * broadcast, ok means nobody NACKed. Only the current transfer ID is accepted;
+/* Report explicit ACK/NACK or ERROR for an uncertain transport outcome.
+ * Only an explicit poll NACK claims an address. Poll errors retry the same
+ * candidate up to CEC_SM_POLL_RETRIES times, then leave us unregistered.
+ * For a broadcast, ACK means nobody NACKed. Only the current transfer ID is accepted;
  * timed-out, duplicate and other mismatched completions have no effect. */
-void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, int ok);
+void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result result);
 /* Wake the TV and take the screen: Image View On, then Active Source. */
 void cec_sm_announce(struct cec_sm *s);
 #endif
