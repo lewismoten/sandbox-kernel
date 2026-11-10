@@ -3,10 +3,10 @@
 kernel reclaim on fault and exit, and a kernel error winning over an OS page. Real core code
 through the syscall dispatcher over fake media (tests/harness.c)."""
 import ctypes as C
-import struct, unittest
+import pathlib, struct, unittest
 from test_m1_user import SupervisorBase, poke, drain
 from test_boot_screens import font, text as ktext
-EAGAIN,EBUSY,EINVAL,EACCES,EBADF,ENOTTY=11,16,22,13,9,25
+EAGAIN,EBUSY,EINVAL,EACCES,EBADF,ENOTTY,ENODEV=11,16,22,13,9,25,19
 WR=1
 Q,TITLE,CLEAR=0x40000,0x40001,0x40002
 PAGE=3904
@@ -23,6 +23,8 @@ def mark_with(pixels):
 
 class Eink(SupervisorBase):
     BUFP=SupervisorBase.BUF
+    def setUp(self):
+        super().setUp();self.c.eink_set_available(True)   # the panel driver would do this
     def dev(self,flags=WR):
         r,fd=self.open('/dev/eink',flags);return r,fd
     def ready(self):
@@ -138,6 +140,36 @@ class Eink(SupervisorBase):
         for _ in range(50): c.eink_note_refresh(False,C.c_uint64(10**9+1))
         self.assertFalse(c.eink_full_due(C.c_uint64(10**9+179_000_000)))   # not sooner than 180 s after the last full
         self.assertTrue(c.eink_full_due(C.c_uint64(10**9+180_000_000)))
+    def test_query_record_is_80_bytes(self):                              # E1: docs said 56
+        fd=self.ready()
+        for n in (56,64,79):
+            poke(self.c,self.BUFP,self.hdr(n)+bytes(n-16));self.assertEqual(self.ioctl(fd,Q,self.BUFP,n),-EINVAL,n)
+        poke(self.c,self.BUFP,self.hdr(80)+bytes(64));self.assertEqual(self.ioctl(fd,Q,self.BUFP,80),0)
+        doc=(pathlib.Path(__file__).resolve().parent.parent/'docs/eink.md').read_text()
+        self.assertIn('`sbx_eink_info`, 80 bytes',doc);self.assertNotIn('56 bytes',doc)
+    def test_no_panel_reports_enodev(self):                               # E4
+        fd=self.ready();self.c.eink_set_available(False)
+        poke(self.c,self.BUFP,self.hdr(80)+bytes(64));self.assertEqual(self.ioctl(fd,Q,self.BUFP,80),-ENODEV)
+        self.assertEqual(self.write_page(fd,page_with({(1,1)})),-ENODEV)
+        self.assertEqual(self.title(fd,'SCOOT'),-ENODEV);self.assertEqual(self.clear(fd),-ENODEV)
+        self.c.eink_set_available(True);poke(self.c,self.BUFP,self.hdr(80)+bytes(64));self.assertEqual(self.ioctl(fd,Q,self.BUFP,80),0)
+    def test_open_without_panel_is_enodev(self):
+        self.c.eink_set_available(False);self.assertEqual(self.dev()[0],-ENODEV)
+    def test_boot_refresh_counts_in_the_ledger(self):                     # E3: boot full at 0.127 s
+        c=self.c;c.eink_full_due.restype=C.c_bool
+        c.eink_note_refresh(True,C.c_uint64(127_000))
+        for _ in range(50): c.eink_note_refresh(False,C.c_uint64(130_000))
+        self.assertFalse(c.eink_full_due(C.c_uint64(127_000+179_999_999)))
+        self.assertTrue(c.eink_full_due(C.c_uint64(127_000+180_000_000)))
+    def test_static_screen_gets_a_daily_full_refresh(self):               # E2: simulated time only
+        c=self.c;c.eink_full_due.restype=C.c_bool;c.eink_maintenance_due.restype=C.c_bool
+        c.eink_note_refresh(True,C.c_uint64(127_000));c.eink_note_refresh(False,C.c_uint64(200_000_000))   # full 1, partial 1
+        self.assertFalse(c.eink_maintenance_due(C.c_uint64(200_000_000+1)));self.assertFalse(c.eink_full_due(C.c_uint64(200_000_000+1)))   # nothing due at 200 s
+        self.assertTrue(c.eink_full_due(C.c_uint64(86_600_300_000)))           # the reviewer's 86,600.3 s case: due even though nothing changed
+        t=127_000+23*3600*10**6
+        self.assertFalse(c.eink_maintenance_due(C.c_uint64(t-1)))
+        self.assertTrue(c.eink_maintenance_due(C.c_uint64(t)));self.assertTrue(c.eink_full_due(C.c_uint64(t)))
+        c.eink_note_refresh(True,C.c_uint64(t));self.assertFalse(c.eink_maintenance_due(C.c_uint64(t+1)))
     def test_kernel_reclaims_on_fault(self):
         fd=self.ready();self.title(fd,'SCOOT');self.wait();self.write_page(fd,page_with({(5,5)}))
         self.c.os_handle(5,0,0);drain(self.c)                                # a data abort

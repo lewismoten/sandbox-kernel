@@ -43,11 +43,11 @@ status screen.
 ## The device: `/dev/eink`
 
 Open `/dev/eink` **write-only** (`SBX_O_WRONLY`); one handle at a time (`EBUSY` otherwise),
-`ENODEV` before the panel exists. It needs no mmap.
+`ENODEV` (on open and on every call) before the panel exists, and again if the panel driver gives up (a BUSY timeout disables it). It needs no mmap.
 
 | Operation | How | Record or data | Result |
 | --- | --- | --- | --- |
-| Query | `ioctl SBX_IOC_EINK_QUERY` (class 4, op 0) | `sbx_eink_info`, 56 bytes, all fields zero on entry | the sizes and limits below |
+| Query | `ioctl SBX_IOC_EINK_QUERY` (class 4, op 0) | `sbx_eink_info`, 80 bytes, all fields zero on entry | the sizes and limits below |
 | Set the title | `ioctl SBX_IOC_EINK_TITLE` (4, 1) | `sbx_eink_title_rec`, 272 bytes: `flags` (bit 0 = a mark follows), `name_bytes` (1-16), `name[16]`, `mark[200]`, `build_bytes` (0-16), `build[16]` | 0, `EINVAL`, `EAGAIN` |
 | Clear | `ioctl SBX_IOC_EINK_CLEAR` (4, 2) | `sbx_header` only (16 bytes) | the kernel's title and status screen return |
 | Submit a page | `write` of **exactly 3,904 bytes** | the bitmap | the count, `EINVAL` for any other size, `EAGAIN` |
@@ -69,7 +69,8 @@ way to ask for a full refresh; the kernel decides.
 | Minimum interval between accepted updates | **1 s**; sooner is `EAGAIN` (nothing changes) | VERIFY: a safe round number, not a datasheet figure |
 | At most **30** accepted updates in any 60 s | `EAGAIN` beyond | VERIFY: guess; stops a loop from running the panel flat out |
 | **Ghost-clearing full refresh** after every **50** partial refreshes, and never sooner than **180 s** after the last full one | done by the kernel on the next redraw | Waveshare wiki and manual, 2.13" V4: "refresh interval of at least 180 s; refresh at least once every 24 hours; after several partial refreshes, do a full refresh". VERIFY the 50 against the SSD1680 panel guidance and the real panel |
-| A full refresh at least once every **24 h** | kernel | same source; the status screen's `UP:` line changes every minute, so this is met by the 50-partial rule in practice |
+| A full refresh at least once every **24 h** | kernel: its own deadline of **23 h** after the last full refresh, kept even when the screen never changes (a static page is redrawn in full) | same source; one hour of margin |
+| The boot refresh | counts as a full refresh: the 180 s gap and the 23 h deadline run from boot | the next refresh can never land inside the gap |
 
 `EAGAIN` is -11. The rejected submission is dropped, not queued: wait and try again. A
 sensible animation is at most one frame a second.

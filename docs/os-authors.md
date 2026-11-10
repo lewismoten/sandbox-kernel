@@ -216,7 +216,8 @@ if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
 
 - **Limits:** one accepted update per second at most and 30 a minute; a refused one returns
   `-SBX_EAGAIN` and changes nothing. The OS cannot ask for a full refresh; the kernel does a
-  ghost-clearing one itself.
+  ghost-clearing one itself (after 50 partials, and at least every 23 hours even for a page that never changes).
+- **No panel:** `/dev/eink` and its calls return `-SBX_ENODEV` when no panel driver is running (or it was disabled after a fault).
 - **The kernel wins:** when your program exits, faults or is stopped, the panel goes back to
   the kernel's status screen. If a kernel error appears while your page is up, the panel shows
   the kernel screen at its next update; your next page returns with a small black square in

@@ -14,13 +14,17 @@
 #define EINK_BURST_WINDOW_US 60000000ull
 #define EINK_FULL_PARTIALS 50u            /* VERIFY: partials before a ghost-clearing full refresh */
 #define EINK_FULL_MIN_US 180000000ull     /* Waveshare 2.13" V4: full refreshes at least 180 s apart */
-/* All return 0 or a negative errno (-22 EINVAL, -11 EAGAIN); now_us is the monotonic microseconds. */
+#define EINK_FULL_MAX_US 82800000000ull   /* 23 h: the panel's at-least-daily full refresh, with an hour of margin */
+/* All return 0 or a negative errno (-22 EINVAL, -11 EAGAIN); the boot refresh counts as a full one (eink_note_refresh(true) at its start); now_us is the monotonic microseconds. */
 int eink_title(const char *name,uint32_t name_bytes,const uint8_t *mark,const char *build,uint32_t build_bytes,uint64_t now_us); /* mark NULL: none; build_bytes 0: a blank build line */
 int eink_page(const uint8_t *bits,uint32_t bytes,uint64_t now_us);
 int eink_clear(uint64_t now_us);
 void eink_reset(void); /* the program ended (exit, fault, stop): the kernel has the panel back */
 /* The screen to draw now: the page, the title screen or the kernel's own. */
 void eink_compose(uint8_t *plane,const char *build_id,const char *usb,const char *error,uint32_t seconds);
+void eink_set_available(bool on); /* the panel driver: running (true) or absent/disabled (false); the OS API reports ENODEV while false */
+bool eink_available(void);
+bool eink_maintenance_due(uint64_t now_us);   /* 23 h since the last full refresh: redraw even if nothing changed */
 bool eink_full_due(uint64_t now_us);          /* the next redraw should be a full refresh */
 void eink_note_refresh(bool full,uint64_t now_us);
 bool eink_page_shown(void);                   /* test hook: is an OS page what compose draws */
