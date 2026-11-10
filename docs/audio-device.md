@@ -17,10 +17,12 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   rate, capacity (16,384 frames, about 341 ms; `include/audio_ring.h:20`), queued, played, underruns,
   overruns, overrun frames. Output fields must be zero on entry.
 - **Underrun:** the backend asks for more than is queued, plays zeros for the
-  missing frames and adds one to `underruns`. During long SD operations over
-  about 64 ms, foreground refill can stall and the HDMI DMA chain can replay
-  its last buffered audio until refill resumes. Nothing counts before the
-  first write of an open, or while closed.
+  missing frames and adds one to `underruns`. If foreground refill stalls
+  (for example during SD operations), HDMI plays each buffered segment once,
+  then silence as those segments recur, within 64 ms. The IRQ retires played
+  segments to packed IEC 958 silence; it never consumes the application ring.
+  Missed ring drains and their underruns are accounted when the task resumes.
+  Ring underruns do not count before the first write of an open, or while closed.
 - **Overrun:** the ring never overwrites unread audio. A write that does not
   fit is cut at the last whole frame that fits; each refused write adds one to
   `overruns` and its refused frames to `overrun_frames`. The app sees the short count.
@@ -89,7 +91,10 @@ and the reason is logged (`AUDIO hdmi: unavailable ...`, also in the `AUDIO` com
 The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested by
 `tests/test_hdmi_audio.py`.
 
-- **Clocks:** 1080p60 is 148.5 MHz; at 48 kHz N = 6144, CTS = 148500 (`hdmi_nct`).
+- **Clocks:** the nominal active pixel clock is queried from firmware (clock ID 9),
+  not assumed from framebuffer dimensions. Missing/unsupported clocks keep the null
+  backend. 1080p60 is 148.5 MHz; at 48 kHz N = 6144, CTS = 148500 (`hdmi_nct`).
+  At 25.2 and 74.25 MHz, N is still 6144 and CTS is 25200 and 74250 respectively.
   The MAI sample divider is the best fraction of HSM clock / 48000 (continued fractions,
   N up to 24 bits, M up to 256). The HSM clock is read from the Clock Manager
   (`CM_HSMCTL` 0x2d6, `CM_HSMDIV` 0x30e0 on the test board: PLLD_PER 500 MHz / 3.0547 =
@@ -99,14 +104,25 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
 - **MAI and DMA:** the FIFO takes IEC 958 subframes (the packer's output) from a DMA channel
   (1-6, chosen from the firmware's mask) running a circular ring of 8 control blocks, each one 384
   frames (two channel-status blocks, 8 ms), paced by DREQ 17. DMA runs continuously.
-  Each segment-complete IRQ increments a monotonic 32-bit counter; task progress uses
+  Each segment-complete IRQ replaces the just-played segment with prepacked
+  IEC 958 silence and marks it consumed, then increments a monotonic 32-bit
+  counter; task progress uses
   unsigned counter differences, so full laps and counter wrap remain visible. IRQs
   must be serviced within 8 ms because the DMA interrupt status is sticky.
   The task refills completed segments from `/dev/audio` (silence when empty;
   underruns counted only after the first write while the device is open).
-  A delay of eight or more completions increments starvation and accounts for missed
-  drains before refilling the latest seven safe buffers. No completions for 64 ms
-  counts one stall until progress resumes. Neither path restarts DMA.
+  The IRQ counts one `starved` segment each time a consumed segment finishes
+  playing without a task refill (initial silence is intentional). These counts
+  advance during foreground stalls, even with application audio queued. The
+  task accounts for all missed ring drains before refilling recent buffers;
+  ring underruns count short application queues, separately from starvation.
+  Packing uses a separate staging buffer. Publication masks IRQs only for a
+  fixed 3 KiB copy and write-buffer drain, and rechecks DMA ownership: neither
+  its current nor next segment may be written, leaving at least 8 ms for the
+  copy. The IRQ writes only the current control block's predecessor, leaving
+  seven segments before reuse. These bounded operations must finish within
+  8 ms; their board timing remains untested. No completions for 64 ms adds one
+  stall to `starved` until progress resumes. Neither path restarts DMA.
 - **Firmware:** `scripts/assemble_boot.py` writes `hdmi_drive=2` (HDMI, not DVI, signaling:
   DVI carries no audio packets). The boot config on the card must carry it.
 - **Test hooks (USB):** `TONE <hz> <ms>` (50-4000 Hz, up to 1000 ms; a square tone at about
@@ -117,6 +133,64 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
   starvation, no ring underruns over seconds of silence. This is drain-counter
   evidence only; audible TV output, concurrent storage/display load, unplug/reconnect
   and OS-fault silence remain hardware-untested.
+
+### Startup correction (2026-11-10)
+
+The failing-board log `MAI_CTL 00003029` alone does **not** establish a stuck
+reset: bit 0 is single-shot RESET with undefined readback. The old startup
+sent MAI_FMT while MAI was disabled, then enabled MAI only after programming
+the core. It also mixed shutdown ERRORF/FLUSH writes into startup, inherited
+the firmware's global packet-RAM enable instead of setting it, and ignored
+the packet-stop timeout. These are concrete bring-up defects/dependencies;
+which one explains a particular board still requires a new hardware trace.
+
+Startup now follows the reference's reset/clock/enable/format ordering:
+reset+flush+clear errors, MAI_SMP, MAI enable (2 channels, whole samples,
+channel alignment), MAI_FMT, thresholds, core channel configuration and map,
+audio sample packet mask, N/CTS, then Audio InfoFrame. Packet RAM's global
+enable (bit 16) and the audio slot enable (bit 4) are both set while preserving
+other firmware packets. Packet-stop/start and DMA-reset waits are bounded
+and fail back to null. The HDMI scheduler must already report HDMI_ACTIVE;
+the kernel does not change the firmware's video timing or PHY.
+
+DMA DREQ 17, destination bus address 0x7e808020, 32-bit words, source increment,
+fixed destination and burst 2 were already correct. IEC958 packing was also
+correct: S16 occupies bits 12–27, validity/user bits are zero, channel status
+is bit 30, even parity is bit 31, and B/M/W tags are 8/2/4. New literal-word
+tests lock these facts down, including negative PCM and block boundaries.
+No GPL driver/conversion code was copied; references are recorded in NOTICE.md.
+
+The old failure message used only the IRQ completion count, not direct FIFO
+evidence. Startup now also logs DMA CS/DEBUG/CONBLK and preserves their
+pre-reset values for diagnosis. Advancing control blocks without a completion
+IRQ gets a distinct IRQ-routing failure instead of being called a DREQ stall.
+Null remains active on every failure; DMA errors are classified before reset
+can erase them. Boot replay retains the full startup result and diagnostics.
+
+With the generated `hdmi_drive=2`, CEA mode 16 boot config, successful UART
+output includes these exact lines (USB replay prefixes each with `BOOT `):
+
+```text
+AUDIO hdmi: pixel clock 148500000 Hz (firmware)
+AUDIO hdmi: N 6144
+AUDIO hdmi: CTS 148500
+AUDIO hdmi: MAI_CONFIG 0c000003
+AUDIO hdmi: AUDIO_PACKET_CONFIG 21002003
+AUDIO hdmi: CRP_CFG 01001800
+AUDIO hdmi: DMA destination 7e808020
+AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)
+```
+
+`RAM_PACKET_CONFIG` must include 0x00010010 plus retained firmware bits.
+`DMA channel <n> (32-bit, burst 2, DREQ 17)` identifies the allocated channel.
+`DMA completed segments <n> in 30 ms` should normally show 3 (8 ms segments);
+counts and status bits are observations, not fixed expected register values.
+`MAI_CTL after write` may still show bit 0; do not treat that as failure.
+After `INFO`, `TONE 440 1000` should be audible and `AUDIO` should report
+`backend=hdmi`, roughly 48000 drain_fps, and no accumulating dma_err.
+The backend deliberately transmits silence until PCM or a tone is supplied;
+a TV reporting PCM does not itself prove FIFO consumption or audible output.
+The corrected startup is host-tested, not yet validated on the failing TV/monitor.
 
 Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_regs.h`,
 `vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);

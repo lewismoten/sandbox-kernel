@@ -55,6 +55,7 @@ loads `kernel.img`. The generated `config.txt` is:
 | `hdmi_force_hotplug=1` | HDMI is on even if no display is seen at power-on |
 | `hdmi_group=1`, `hdmi_mode=16` | 1920x1080 at 60 Hz (CEA mode 16) |
 | `hdmi_drive=2` | HDMI signaling, including audio packets (`scripts/assemble_boot.py:28`) |
+| `hdmi_ignore_cec=1`, `hdmi_ignore_cec_init=1` | the firmware's own CEC task stays off the bus and sends no start-up Active Source; the kernel's CEC driver is the only device (`docs/cec.md`) |
 | `disable_overscan=1` | no black border |
 | `scaling_kernel=8` | the GPU scales smaller modes to 1080p with nearest-neighbor, so 960x540 is exactly 2x |
 

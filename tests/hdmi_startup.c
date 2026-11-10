@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: MIT; production HDMI startup with bounded fake MMIO. */
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include "audio_null.h"
+#include "hdmi_audio.h"
+#include "iec958.h"
+#include "mixer.h"
+
+#define PERIPH 0x20000000u
+#define REG(address) (*mock_register(address))
+static uint32_t *mock_register(uint32_t address);
+static uint32_t bus(const void *pointer);
+static void drain(void);
+static void hd(uint32_t offset, uint32_t value);
+static void hc(uint32_t offset, uint32_t value);
+static uint32_t dma(uint32_t offset);
+static void dmaw(uint32_t offset, uint32_t value);
+static void barrier(void) {}
+static uint32_t irq_save(void) { return 0; }
+static void irq_restore(uint32_t flags) { (void)flags; }
+static uint32_t micros(void);
+static int expired(uint32_t start, uint32_t duration);
+static void delay_us(uint32_t duration);
+static int property(uint32_t tag, uint32_t *values, unsigned count);
+static void boot_note(const char *line) { (void)line; }
+static void number(char *out, uint32_t value) { snprintf(out, 12, "%u", value); }
+
+#include "hdmi-driver.h"
+
+static uint32_t hd_regs[64], core_regs[384], misc_regs[5], dma_regs[9];
+static struct { uint32_t address, value; } writes[128];
+static unsigned write_count, scenario, packet_stuck;
+static uint32_t now, pixel_hz;
+uint64_t clock_us(void) { return now; }
+
+static uint32_t *mock_register(uint32_t address) {
+ if (address >= HDMI_HD_BASE && address < HDMI_HD_BASE + sizeof hd_regs)
+  return &hd_regs[(address - HDMI_HD_BASE) / 4];
+ if (address >= HDMI_CORE_BASE && address < HDMI_CORE_BASE + sizeof core_regs)
+  return &core_regs[(address - HDMI_CORE_BASE) / 4];
+ const uint32_t addresses[] = {CM_HSMCTL, CM_HSMDIV, DMA_ENABLE, PERIPH + 0xb210u, PERIPH + 0xb21cu};
+ for (unsigned index = 0; index < 5; index++) if (address == addresses[index]) return &misc_regs[index];
+ assert(!"unexpected MMIO address"); return NULL;
+}
+static void record(uint32_t address, uint32_t value) {
+ assert(write_count < 128);
+ writes[write_count].address = address; writes[write_count++].value = value;
+}
+static uint32_t bus(const void *pointer) {
+ assert(pointer == cbs || pointer == buf);
+ return pointer == cbs ? 0xc0100000u : 0xc0200000u;
+}
+static void drain(void) {}
+static void hd(uint32_t offset, uint32_t value) {
+ record(HDMI_HD_BASE + offset, value);
+ REG(HDMI_HD_BASE + offset) = value;
+}
+static void hc(uint32_t offset, uint32_t value) {
+ record(HDMI_CORE_BASE + offset, value);
+ REG(HDMI_CORE_BASE + offset) = value;
+ if (offset == HC_RAM_PACKET_CONFIG && !packet_stuck)
+  core_regs[HC_RAM_PACKET_STATUS / 4] = (value & 0x10000u) ? value & 0x1fu : 0;
+}
+static uint32_t dma(uint32_t offset) { assert(offset <= 0x20u); return dma_regs[offset / 4]; }
+static void dmaw(uint32_t offset, uint32_t value) {
+ record(DMA_BASE + (uint32_t)hw.ch * 0x100u + offset, value);
+ if (offset == DMA_CS && value & 0x80000000u) {
+  dma_regs[DMA_CS / 4] = scenario == 4 ? value : 0;
+  dma_regs[DMA_CONBLK / 4] = 0;
+ } else if (offset == DMA_CS && value == 6u) dma_regs[0] &= ~6u;
+ else dma_regs[offset / 4] = value;
+}
+static uint32_t micros(void) { now += 1000; return now; }
+static int expired(uint32_t start, uint32_t duration) { return micros() - start >= duration; }
+static void delay_us(uint32_t duration) {
+ assert(duration == 30000);
+ assert(dma_regs[0] == (1u | (1u << 28) | (8u << 16) | (15u << 20)));
+ assert(misc_regs[3] == (1u << (16u + (uint32_t)hw.ch)));
+ if (scenario != 1) dma_regs[1] += 3 * 32;
+ if (!scenario) completions = 3;
+ if (scenario == 3) dma_regs[0] |= 0x100u;
+ now += duration;
+}
+static int property(uint32_t tag, uint32_t *values, unsigned count) {
+ if (tag == 0x60001) { assert(count == 1); values[0] = 1u << 2; return 1; }
+ assert(tag == 0x30002 && count == 2 && values[0] == 9);
+ values[1] = pixel_hz; return pixel_hz != 0;
+}
+static void reset(unsigned mode) {
+ memset(hd_regs, 0, sizeof hd_regs); memset(core_regs, 0, sizeof core_regs);
+ memset(misc_regs, 0, sizeof misc_regs); memset(dma_regs, 0, sizeof dma_regs);
+ memset(&hw, 0, sizeof hw); memset(&audio_hw, 0, sizeof audio_hw);
+ scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000;
+ misc_regs[0] = 0x2d6; misc_regs[1] = 0x30e0;
+ hd_regs[HD_M_CTL / 4] = 1; core_regs[HC_SCHEDULER_CONTROL / 4] = 3;
+ core_regs[HC_RAM_PACKET_CONFIG / 4] = 0x02;
+}
+static void expect(unsigned index, uint32_t address, uint32_t value) {
+ assert(writes[index].address == address && writes[index].value == value);
+}
+int main(void) {
+ const uint32_t pixels[] = {25200000, 74250000, 148500000};
+ for (unsigned index = 0; index < 3; index++) {
+  reset(0); pixel_hz = pixels[index];
+  assert(!hdmi_audio_init() && hw.active);
+  assert(audio_hw.task == hdmi_audio_task && audio_hw.tone == hdmi_audio_tone);
+  expect(0, 0x20808014, 0x8207);
+  expect(1, 0x2080802c, (clk.smp_n << 8) | clk.smp_m);
+  expect(2, 0x20808014, 0x3028);
+  expect(3, 0x2080801c, 0x20900);
+  expect(4, 0x20808018, 0x08080608);
+  expect(5, 0x20902094, 0x0c000003);
+  expect(6, 0x20902090, 8);
+  expect(7, 0x2090209c, 0x21002003);
+  expect(8, 0x209020a8, 0x01001800);
+  expect(9, 0x209020ac, pixels[index] / 1000);
+  expect(10, 0x209020b0, pixels[index] / 1000);
+  expect(11, 0x209020a0, 0x10002);
+  expect(12, 0x20902490, 0x0a0184);
+  expect(13, 0x20902494, 0x0170);
+  for (unsigned word = 2; word < 9; word++) expect(12 + word, 0x20902490 + word * 4, 0);
+  expect(21, 0x209020a0, 0x10012);
+  expect(22, 0x20007200, 0x80000000);
+  expect(23, 0x20007200, 6);
+  expect(24, 0x20007220, 7);
+  expect(25, 0x20007204, 0xc0100000);
+  assert(write_count == 27 && cbs[0].dst == 0x7e808020);
+  assert(cbs[0].ti == 0x00112149 && cbs[0].len == 3072);
+  unsigned previous_writes = write_count;
+  assert(!hdmi_audio_init() && write_count == previous_writes);
+ }
+ for (unsigned mode = 1; mode <= 4; mode++) {
+  reset(mode); assert(hdmi_audio_init() == -1 && !hw.active);
+  assert(!audio_hw.task && !audio_hw.tone && audio_hw.report == hdmi_audio_report);
+  if (mode == 1) assert(strstr(why, "not draining"));
+  if (mode == 2) assert(strstr(why, "no completion IRQ"));
+  if (mode == 3) assert(!strcmp(why, "DMA error"));
+  if (mode == 4) assert(!strcmp(why, "DMA reset timed out"));
+  assert(!(hd_regs[HD_MAI_CTL / 4] & 8u));
+ }
+ reset(0); core_regs[HC_SCHEDULER_CONTROL / 4] = 1;
+ assert(hdmi_audio_init() == -1 && strstr(why, "DVI mode") && !write_count);
+ reset(0); pixel_hz = 0;
+ assert(hdmi_audio_init() == -1 && strstr(why, "pixel clock unavailable") && !write_count);
+ reset(0); misc_regs[0] &= ~0x80u;
+ assert(hdmi_audio_init() == -1 && strstr(why, "HSM clock stopped") && !write_count);
+ for (unsigned status = 0; status <= 0x10; status += 0x10) {
+  reset(0); packet_stuck = 1; core_regs[HC_RAM_PACKET_STATUS / 4] = status;
+  assert(hdmi_audio_init() == -1 && strstr(why, "infoframe did not start/stop"));
+  assert(!hw.active && !audio_hw.task && !(hd_regs[HD_MAI_CTL / 4] & 8u));
+  assert(now <= 102000);
+ }
+ puts("hdmi startup ok");
+ return 0;
+}

@@ -250,11 +250,25 @@ def stop_program(port):
     print(line,flush=True)
     return 0 if line in ('OK stop','OK stop idle') else 1
 
+def cec_log(port,seconds):
+    """CECLOG: the newest CEC session lines (the kernel replays 12 to a new reader about a second after
+    it connects, then streams new ones). The whole bounded log is /OS/SAVES/KERNEL/CEC.TXT on the card."""
+    print(handshake(port),flush=True)
+    end=time.monotonic()+seconds;seen=0
+    while time.monotonic()<end:
+        try: line=port.line(max(0.1,end-time.monotonic()))
+        except TimeoutError: break
+        m=re.match(r'(?:LOG|BOOT) CEC (.*)$',line)
+        if m: print(m.group(1),flush=True);seen+=1
+    if not seen: print('no CEC lines (is this the CEC build, and has HDMI CEC started?)',file=sys.stderr)
+    return 0 if seen else 1
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
+    p=sub.add_parser('ceclog',help='show the newest HDMI-CEC session lines (claim result, frames, keys)');p.add_argument('--seconds',type=float,default=8)
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
     p=sub.add_parser('name',help='give this Pi a short name (1-8 of A-Z 0-9 -), shown on the e-ink and in INFO; stored as /OS/NAME.TXT');p.add_argument('text')
     sub.add_parser('usblog',help='print /OS/SAVES/KERNEL/USB.TXT: what the keyboard (host) kernel found on the USB bus last boot')
@@ -284,6 +298,7 @@ def main():
             with tempfile.TemporaryDirectory() as d:
                 f=pathlib.Path(d)/'NAME.TXT';f.write_text(n+'\n');return send_file(port,f,'NAME.TXT')
         if a.action=='stop': return stop_program(port)
+        if a.action=='ceclog': return cec_log(port,a.seconds)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
         if a.action=='key': return send_keys(port,a.keys,a.gap,a.seconds)

@@ -39,6 +39,15 @@ partial refresh, a USB serial link to a Mac, and kernel updates over that link. 
 for facts only. Its code is not included or translated.
 Circle, by R. Stange and contributors, is GPL-3.0-or-later and is not a dependency.
 
+HDMI-CEC hardware layer (`include/cec_regs.h`, `drivers/cec_drv.c`, `drivers/cec_hw.c`): the BCM2835 HDMI
+core's CEC register offsets, bit fields, the 40 kHz bit-clock rule and the bit-timing thresholds in microseconds, and the
+send and receive sequences were read as facts from the Linux kernel's public `drivers/gpu/drm/vc4/vc4_hdmi.c`,
+`vc4_hdmi_regs.h` and `vc4_regs.h` (raspberrypi/linux, branch rpi-6.6.y, GPL-2.0, by Broadcom and the
+Raspberry Pi and Linux contributors, copyright held by them) and the opcode numbers from `include/uapi/linux/cec.h`.
+No code was copied or translated; the registers are described again in this repository's own words and code. The
+`get EDID block` mailbox tag number comes from the Raspberry Pi firmware's public mailbox property interface.
+Linux is not a dependency and no Linux code ships.
+
 Credit the independent sources when their code is actually imported:
 
 - Ha Thach and TinyUSB contributors: MIT USB stack.
@@ -89,6 +98,35 @@ Source SHA-256: `ec998b30bb9d28662e23f2dee64d609ed8483824270d3e9c5cd86993f202dfa
 The full permission/warranty notice is retained in
 [licenses/Waveshare.txt](licenses/Waveshare.txt). The SPI adapter, cooperative
 state machine, pixels and glyphs are original; upstream fonts are not imported.
+
+### HDMI audio reference facts (2026-11-10)
+
+The MIT HDMI audio implementation and its host tests are independent work.
+Linux Raspberry Pi **rpi-6.6.y** was consulted for hardware/interface facts only:
+
+- `drivers/gpu/drm/vc4/vc4_hdmi.c`: `vc4_hdmi_audio_startup`,
+  `vc4_hdmi_audio_prepare`, MAI clock divider, N/CTS, packet-RAM enable and
+  infoframe sequencing, 32-bit IEC958 DMA width and burst size 2.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/drivers/gpu/drm/vc4/vc4_hdmi.c>
+- `vc4_hdmi_regs.h` and `vc4_regs.h` in that directory: BCM2835 register
+  offsets/fields, undefined RESET readback, HDMI_ACTIVE bit 1 and global
+  packet-RAM enable bit 16. These driver files are GPL-2.0; no implementation,
+  macros or explanatory prose was copied into this project.
+- `arch/arm/boot/dts/broadcom/bcm2835-common.dtsi`: HDMI DMA DREQ 17.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/arch/arm/boot/dts/broadcom/bcm2835-common.dtsi>
+- `drivers/clk/bcm/clk-bcm2835.c`: HSM clock register offsets.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/drivers/clk/bcm/clk-bcm2835.c>
+
+ALSA's `alsa-lib/src/pcm/pcm_iec958.c` (LGPL-2.1-or-later) was read to verify
+the documented IEC958_SUBFRAME_LE bit layout and B/M/W preamble values 8/2/4;
+no conversion code was copied. The existing packer already matches that layout.
+<https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_iec958.c>
+
+The Raspberry Pi firmware mailbox documentation supplies clock ID 9 (PIXEL)
+and get-clock-rate tag 0x30002. Only interface facts are used.
+<https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface>
+These references are not linked or shipped as runtime dependencies and their
+licenses do not relicense this implementation.
 
 Boot firmware is pinned to Raspberry Pi firmware tag **1.20240902**, commit
 `b5eb52b343e9bc1391a8059a38e12e470c109f5c`. Only `bootcode.bin`, `start.elf`,

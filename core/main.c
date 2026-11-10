@@ -90,7 +90,7 @@ void kernel_main(void) {
     the panel or any card sector; failures are logged, never fatal. */
  /* Slice 3: the synthetic input device (USB KEY/AXIS), present from boot. */
  boot_note("INPUT /dev/input/event0 synthetic (USB KEY, AXIS)");
- watchdog_feed();cpu_speed();fb_start();hdmi_audio_init(); /* after the firmware's HDMI is up; falls back to the null backend */
+ watchdog_feed();cpu_speed();fb_start();hdmi_audio_init();cec_hw_init(); /* after the firmware's HDMI is up; falls back to the null backend */
  if(storage_ready)asset_probe();
  watchdog_feed();
  /* M1: the OS program starts 10 s after boot, so a program that could take
@@ -107,7 +107,7 @@ void kernel_main(void) {
 #endif
  if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  clock_us();audio_null_task();usb_task();protocol_task();os_task();
+  clock_us();audio_null_task();usb_task();protocol_task();os_task();cec_hw_task();
 #if USB_ROLE_HOST
   /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}
