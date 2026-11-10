@@ -99,6 +99,7 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
   fds[i].kind=K_FB;
  }
  else if(n==9&&!memcmp(p,"/dev/eink",9)) { /* ABI 1.9: write-only, one handle (docs/eink.md) */
+  if(!eink_available()) return -ENODEV;
   if(access!=1) return -EACCES;
   for(unsigned j=0;j<SYS_HANDLES;j++) if(fds[j].kind==K_EINK) return -EBUSY;
   fds[i].kind=K_EINK;
@@ -151,6 +152,7 @@ static int io(struct k_io *r,bool write) {
  }
  if(fds[i].kind==K_EINK) {
   if(!write) return -EBADF;
+  if(!eink_available()) return -ENODEV;
   if(count!=EINK_PAGE_BYTES) return -EINVAL; /* a whole page or nothing */
   if(us_copy_in(eink_stage,va,count)) return -EFAULT;
   int e=eink_page(eink_stage,count,clock_us()); if(e) return e;
@@ -251,6 +253,7 @@ static int ioctl_fb(const struct k_ioctl *r) {
 }
 static int ioctl_eink(const struct k_ioctl *r) {
  uint64_t now=clock_us();
+ if(!eink_available()) return -ENODEV;
  if(r->request==0x40000u) {
   struct k_eink_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
   if(q.width|q.height|q.page_bytes|q.title_max|q.mark_bytes|q.min_interval_ms|q.max_per_minute|q.flags) return -EINVAL;

@@ -27,6 +27,7 @@ void panel_start(void) {
  REG(SPI+8)=64; /* 250MHz core /64 = 3.90625 MHz; fixed in config.txt */
  render_starting(desired);memcpy(frame,desired,4000);
  gpio_set(17,true);wait_phase(1,20000);
+ eink_set_available(true);eink_note_refresh(true,clock_us()); /* the boot refresh is a full one: count it in the cadence ledger */
 }
 bool panel_boot_done(void) {return disabled||!full;}
 void panel_task(const char *state,uint32_t seconds) {
@@ -38,7 +39,7 @@ void panel_task(const char *state,uint32_t seconds) {
  case 3:wait_phase(4,5000000);return;
  case 4:case 5:case 6:case 9:
   if(phase!=4&&!expired(since,10000))return;
-  if(gpio_get(24)) {if(expired(since,5000000)) {disabled=true;error("Panel BUSY timeout");}return;}
+  if(gpio_get(24)) {if(expired(since,5000000)) {disabled=true;eink_set_available(false);error("Panel BUSY timeout");}return;}
   if(phase==4) {cmd(0x12);wait_phase(5,0);return;}
   if(phase==5) {setup();cmd(0x3c);datum(5);cmd(0x21);datum(0);datum(0x80);cmd(0x18);datum(0x80);wait_phase(6,0);return;}
   if(phase==6) {window();cmd(0x24);pos=0;phase=7;return;}
@@ -56,7 +57,6 @@ void panel_task(const char *state,uint32_t seconds) {
  }
  if(phase)return;
  eink_compose(desired,BUILD_ID,state,last_error,seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
- if(!memcmp(desired,shown,4000))return;
- {uint64_t now=clock_us();full=eink_full_due(now);eink_note_refresh(full,now);} /* ghost-clearing full refresh: VERIFY on the board */
+ {uint64_t now=clock_us();if(!memcmp(desired,shown,4000)&&!(eink_maintenance_due(now)&&eink_full_due(now)))return;full=eink_full_due(now);eink_note_refresh(full,now);} /* ghost-clearing full refresh: VERIFY on the board */
  memcpy(frame,desired,4000);gpio_set(17,false);wait_phase(12,1000);
 }

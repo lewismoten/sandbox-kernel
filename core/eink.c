@@ -12,7 +12,7 @@ static struct {
  char seen[40]; /* the kernel error text the last redraw showed */
 } s={.seen="none"}; /* the kernel starts with no error */
 static uint64_t accepted[EINK_BURST]; static unsigned next_slot,filled; /* a ring of the last 30 accepted times */
-static unsigned partials; static uint64_t last_full;
+static unsigned partials; static uint64_t last_full; static bool available; /* a panel provider is linked and running */
 /* Gate every change: 1 s apart, 30 in any 60 s. A refusal changes nothing. */
 static int gate(uint64_t now) {
  if(filled) {
@@ -60,5 +60,9 @@ void eink_compose(uint8_t *plane,const char *build_id,const char *usb,const char
  if(s.has_page&&!s.suppressed) {render_page(plane,s.page,strcmp(error,"none")!=0);return;}
  render_status_ex(plane,s.has_title?s.title:NULL,s.has_title&&s.has_mark?s.mark:NULL,s.has_title?s.build:build_id,usb,error,seconds);
 }
-bool eink_full_due(uint64_t now) {return partials>=EINK_FULL_PARTIALS&&now-last_full>=EINK_FULL_MIN_US;}
+void eink_set_available(bool on) {available=on;}
+bool eink_available(void) {return available;}
+/* The 24-hour deadline runs on its own: a screen that never changes still gets a full refresh. */
+bool eink_maintenance_due(uint64_t now) {return now-last_full>=EINK_FULL_MAX_US;}
+bool eink_full_due(uint64_t now) {return now-last_full>=EINK_FULL_MIN_US&&(partials>=EINK_FULL_PARTIALS||eink_maintenance_due(now));}
 void eink_note_refresh(bool full,uint64_t now) {if(full) {partials=0;last_full=now;} else partials++;}
