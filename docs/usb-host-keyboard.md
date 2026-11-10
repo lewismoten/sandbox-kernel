@@ -86,3 +86,17 @@ Pi (Alex Chadwick, MIT), or Plan 9's usb stack (MIT-style license; VERIFY). Cred
 source in NOTICE.md when any code is adapted. TinyUSB (already used, MIT) has a DWC2 host
 driver (`portable/synopsys/dwc2/hcd_dwc2.c`) and HID host class; evaluating it first is
 cheapest, though the design file asks to audit its BSP needs.
+
+## Slice 1: descriptor walker and boot-report parser (host-tested, no hardware)
+
+- `core/usbdesc.c`: `usbdesc_find_boot_keyboard` walks a configuration descriptor and returns the
+  HID boot keyboard interface (class 3, subclass 1, protocol 1, alternate 0) with its interrupt IN
+  endpoint (max packet at least 8), wherever it sits on a composite device. A bad `bLength`, an
+  overrun or a truncated buffer returns `USBDESC_E_MALFORMED`; a good descriptor without a keyboard
+  returns `USBDESC_E_NOT_FOUND`.
+- `core/hidboot.c`: `hidboot_diff` turns each 8-byte report into key down/up changes against the
+  previous one (Linux key codes, releases first); a rollover-error report is ignored.
+  `hidboot_feed` sends them to `input_frame` in frames of at most `INPUT_FRAME_MAX`.
+  `hidboot_release_all` releases held keys on unplug.
+- Tests: `tests/hidboot.c`, run by `tests/test_hidboot.py`. Nothing calls these yet; the host
+  controller slices will. The OS-facing ABI does not change.
