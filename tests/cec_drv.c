@@ -105,6 +105,7 @@ static void test_timeout(void) {
     cec_drv_task(&drv, 1); assert(chip.tx_started && drv.tx_busy);
     cec_drv_task(&drv, 500); assert(drv.tx_busy);
     cec_drv_task(&drv, 1001);                                                       /* transport error after 1 s */
+    cec_drv_task(&drv, 1300);                                                       /* after the hold-off the retry goes out */
     assert(chip.c5_resets == 2 && strstr(drv.log.text, "timed out"));
     assert(!(chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_START_XMIT) || drv.tx_busy);        /* retry of the same poll started */
     assert(chip.sent_n == 2 && drv.sm.state == CEC_SM_POLL);
@@ -144,6 +145,19 @@ static void test_rx_keys_and_replies(void) {
     assert(strstr(drv.log.text, "RX 0>4 46"));
 }
 
+static void test_registers_wiped(void) {
+    claim4(); keys.n = 0;
+    chip.r[CEC_R_CNTRL_1 / 4] &= ~(CEC_C1_DIV_MASK | CEC_C1_ADDR_MASK);              /* a video mode change resets the block */
+    chip.r[CEC_R_CNTRL_2 / 4] = 0;
+    cec_drv_task(&drv, 1000);
+    assert(drv.reprogrammed == 1 && strstr(drv.log.text, "registers programmed again"));
+    assert((chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_DIV_MASK) == 4092u && ((chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_ADDR_MASK) >> 12) == 4u);
+    assert(chip.r[CEC_R_CNTRL_2 / 4] != 0);
+    cec_drv_task(&drv, 1200); assert(drv.reprogrammed == 1);                         /* stable: no more writes */
+    static const uint8_t up[] = {0x04, 0x44, 0x01};
+    inject(&chip, up, 3); cec_drv_task(&drv, 1300); assert(keys.n == 1);             /* still receiving */
+}
+
 static void test_edid_log_timing(void) {
     uint8_t b[128] = {0};
     b[0] = 0x02; b[1] = 3; b[2] = 12;                      /* data blocks 4..11, then timings */
@@ -177,6 +191,7 @@ int main(void) {
     test_next_candidate_and_none(); puts("PASS candidates and silence");
     test_timeout(); puts("PASS send timeout");
     test_rx_keys_and_replies(); puts("PASS rx, keys, replies");
+    test_registers_wiped(); puts("PASS registers wiped and rewritten");
     test_edid_log_timing(); puts("PASS edid, log, timing");
     return 0;
 }

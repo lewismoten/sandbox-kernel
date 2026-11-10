@@ -1,7 +1,7 @@
 # HDMI-CEC
 
-Current status: linked into the runtime image (device and host roles) and host-tested against a
-fake register file; **not yet run on a TV**. The first live session is
+Current status: linked into the runtime image (device and host roles), host-tested against a fake
+register file, and run on a bench board (PI-1) with no TV (see "Bench result" below); **not yet run on a TV**. The first live session is
 `.for-lewis/research/pi/2026-11-10-cec-tv-test.md` (the maintainer's notes, outside this repository).
 
 ## Layers
@@ -65,14 +65,34 @@ Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lin
 replays them to a new reader about a second after it connects), so a session can be read afterward
 without pulling the card.
 
+## Bench result (2026-11-10, PI-1, a display with no CEC, no TV)
+
+What the real block did, read from `ceclog` of a trial boot:
+
+- The registers are where Linux says (HDMI core 0x20902000 + 0xE8..): the divider 4092 and thresholds were
+  accepted (read back in the log), and `CPU_STATUS` bit 6 (read raw, unmasked) raises for each finished send,
+  so polling works. `CPU_STATUS` also shows bit 1 constantly; it is ignored.
+- A poll to address 4 is reported `nack` (nobody there), so address 4 was claimed; one-byte frames work.
+- Broadcasts (Report Physical Address, Set OSD Name, Active Source) report `ack` (good), so the chip's flag
+  is already inverted for broadcast: nothing NACKed them. Directed frames to the TV (address 0) report `nack`
+  because nobody is there. That is the expected answer for an empty bus.
+- After a directed `nack` the block was not ready for the next frame at once: a frame started right away never
+  completed (timeout after 1 s, every later send too). The driver now waits 250 ms (`CEC_DRV_HOLD_MS`) before
+  the next send after a failed directed send; with that, the retry and the frames after it completed. Polls
+  and broadcasts need no wait. The block seems to be on its own retry for a moment (this is an inference).
+- The GMOS start changes the video mode; the driver checks the divider, address field and a threshold word every
+  100 ms and writes everything again if they changed (`registers programmed again` in the log). That has not
+  been seen to trigger yet; it is there because a mode change may wipe the block.
+- `CEC.TXT` was written (`CEC.TXT written` in the USB log) and the kernel confirmed its trial after 30 s.
+- Never exercised on this bench: any received frame (`rx 0`), so the RX path (read of the RX words, receive
+  clear) and the key events are tested only against the fake chip until a TV is connected.
+
 ## Limits and things the TV session decides
 
 - The chip is polled from the main loop, not by interrupt. A long SD write or USB install can delay
   a poll; the received frame stays in the block until read. If frames are lost, an interrupt is the next step.
-- `CPU_STATUS` bit 6 is read raw (unmasked): if the block only latches it through the mask, nothing
-  is seen and the log shows the claim poll timing out. The log line "send timed out" is the sign.
-- One-byte polls on this block, the HSM clock (assumed 163.68 MHz only if the clock manager is unreadable)
-  and the EDID status word are all unconfirmed on silicon.
+- Receive on silicon, and whether `hdmi_ignore_cec=1` really keeps the firmware's CEC task off (the bench card
+  still has the old `config.txt`; see the TV test notes).
 
 ## Transfer completion guarantee
 

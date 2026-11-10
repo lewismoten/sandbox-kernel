@@ -22,6 +22,13 @@ struct cec_drv {
     uint8_t tx_busy, announced, last_state, last_ui, ui_seen;
     uint32_t rx_frames, tx_frames, tx_good, tx_bad, key_events, spurious;
     uint32_t last_ui_ms;
+    uint32_t hold_until_ms;       /* no new send before this (after a failed one) */
+    uint8_t hold, diag;
+    struct cec_timing t;          /* what the block was programmed with */
+    uint32_t hb_tx, hb_rx;
+    uint32_t alive_ms;            /* last heartbeat line */
+    uint32_t check_ms;            /* last register check */
+    uint32_t reprogrammed;        /* times the registers were found changed and written again */
 };
 
 /* Program the block (divider from hsm_hz, thresholds, unregistered address, receive reset) and
