@@ -114,7 +114,9 @@ In order:
 1. The first line of `/OS/AUTORUN.TXT`, if it names a program that exists. The name is
    1 to 8 characters of `A-Z 0-9 _ -` followed by `.ELF`; case is folded, and blanks and
    a trailing CR are ignored. Anything else on line 1 makes it invalid. Later lines are
-   free for notes. An invalid or missing choice is logged ("ignored") and skipped.
+   free for notes. If `AUTORUN.TXT` exists but its first line is invalid or names an
+   unavailable program, the choice is logged ("ignored") and skipped. A missing
+   `AUTORUN.TXT` is skipped without a log (`core/autostart.c:33`).
 2. `/OS/GMOS.ELF`, if present.
 3. `/OS/DIAG.ELF`, the diagnostics program.
 
@@ -194,7 +196,10 @@ start, and `OS autostart rejected; trying DIAG.ELF`. Which replies set `ERR:` (`
 | direct replies: `ERR input value` (`KEY`, `AXIS`), `ERR run ASSET NOT FOUND` (`RUN`) | no, reply only |
 
 `STOP` and `INPUT` use `refuse()` for their not-ready cases. A refusal never clears an earlier error.
-The panel redraws only when its content changes, and a full refresh takes seconds.
+The panel normally redraws when its content changes, but even an unchanged static page
+gets periodic full maintenance refreshes (`drivers/panel.c:64`, `core/eink.c:65`).
+The maintenance deadline is 23 hours after the last full refresh (`include/eink.h:17`);
+the physical refresh timing and cadence remain **hardware-untested**.
 
 ### Show your OS on the e-ink (ABI 1.9)
 
@@ -205,15 +210,40 @@ While your program runs it can put its own name and mark on the panel, or draw a
 #include <sandbox/syscall.h>
 extern const uint8_t my_page[SBX_EINK_PAGE_BYTES]; /* 250x122, 32-byte rows, bit 7 = leftmost, 1 = black */
 
-uint64_t eink;
-if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
+int main(const sbx_startup *startup) {
+  if (startup->major != 1 || startup->minor < 9) return 1;
+  uint64_t eink, sequence = 0;
+  if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) != 0) return 1;
   sbx_eink_title_rec t;
-  sbx_eink_title(eink, &t, "MY OS", 5, NULL, "V0.4 3A9F2C1");   /* name up to 16 characters; a 200-byte 40x40 mark is optional;
-                                                                   the build line is free text up to 16 (hash, version, date) or NULL */
-  /* a page replaces the status screen; call again for the next frame, at most once a second */
-  while (sbx_eink_page(eink, my_page) == -SBX_EAGAIN) { /* too soon: wait and try again */ }
+  int title_pending = 1, page_pending = 1;
+  for (;;) {
+    if (sbx_health(startup->generation, ++sequence) != 0) return 1;
+    /* Service input and other bounded work here on every pass, including retries. */
+    int32_t rc = 0;
+    if (title_pending) {
+      rc = sbx_eink_title(eink, &t, "MY OS", 5, NULL, "V0.4 3A9F2C1");
+      if (rc == 0) title_pending = 0;
+    } else if (page_pending) {
+      rc = sbx_eink_page(eink, my_page);
+      if (rc == 0) page_pending = 0;
+    }
+    if (rc != 0 && rc != -SBX_EAGAIN) return 1;
+    uint64_t now;
+    if (sbx_clock_ns(&now) != 0) return 1;
+    if (sbx_sleep_until(now + 100000000ull) != 0) return 1; /* 100 ms, then service health again */
+  }
 }
 ```
+
+TITLE and PAGE share the gate: accepted changes must be at least 1 s apart, with at
+most 30 in any 60 s (`core/eink.c:17`, `core/eink.c:38`, `core/eink.c:42`). Keep a
+refused update pending and retry through the health-servicing main loop, as above.
+An empty busy retry or sleep alone is unsafe: the gate can stay closed longer than
+the 2 s heartbeat deadline, and sleep does not service health (`core/os.c:151`,
+`core/sys.c:385`). The example checks title, page, health, clock and sleep errors;
+it keeps servicing health after the page is accepted. The SDK wrappers are in
+`sdk/include/sandbox/syscall.h:123`, `sdk/include/sandbox/syscall.h:135` and
+`sdk/include/sandbox/syscall.h:167`.
 
 - **Limits:** one accepted update per second at most and 30 a minute; a refused one returns
   `-SBX_EAGAIN` and changes nothing. The OS cannot ask for a full refresh; the kernel does a
@@ -300,7 +330,12 @@ recognizes as exit with `r0` as status; it is not a readable trampoline page
 (`include/uspace.h:18`, `core/os.c:115`, `core/os.c:176`, `sdk/lib/crt0.S:8`).
 
 **Check `major` and `minor` before using a call that is newer than 1.0.** An older kernel
-answers `-SBX_ENOSYS` for calls it does not have. `sdk/lib/crt0.S` calls
+answers `-SBX_ENOSYS` (-38) for an unknown syscall number (`core/sys.c:398`). An
+unknown device ioctl returns `-SBX_ENOTTY` (-25), while opening an absent device
+returns `-SBX_ENODEV` (-19) (`core/sys.c:270`, `core/sys.c:304`, `core/sys.c:139`).
+For example, the ABI 1.7 kernel at `98c5200` returns `ENODEV` for `/dev/audio`,
+`/dev/eink` and `/dev/serial0`, which it does not have (`98c5200:core/sys.c:114`;
+version at `98c5200:include/abi.h:8`). `sdk/lib/crt0.S` calls
 `int main(const sbx_startup *)` and uses the return value as the exit status. A short
 record is valid; from 1.6 the record grows to 48 bytes with `app_generation`, and
 `sbx_app_generation()` checks size and version for you.
@@ -671,7 +706,14 @@ as left out in `docs/js.md`).
 - **Handles:** 16 total, at most eight SD files/directories, one framebuffer handle,
   one input reader, one audio writer, one e-ink handle and one serial owner
   (`include/assets.h:6`, `core/sys.c:94`, `core/input.c:54`, `core/serial.c:7`).
-- **Check your minor version.** A kernel that is older than your SDK returns `ENOSYS`. Check the startup `minor` (>= 7 before writing under `/sd/OS/SAVES/`, >= 8 before opening `/dev/audio`) and fall back to silence or no saves when it is lower.
+- **Check your minor version.** Gate features on the startup ABI version: with major 1,
+  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink and >= 10 for serial
+  (`include/abi.h:8`). Fall back to silence or no saves when the version is lower.
+  Unsupported operations do not all return `ENOSYS`: unknown syscall numbers return
+  `ENOSYS` (-38), unknown device ioctls return `ENOTTY` (-25), and absent device
+  paths return `ENODEV` (-19) (`core/sys.c:398`, `core/sys.c:270`, `core/sys.c:304`,
+  `core/sys.c:139`). The ABI 1.7 ancestor also returns `ENODEV` for the then-absent
+  audio, e-ink and serial devices (`98c5200:core/sys.c:114`).
 - **Framebuffer size:** a program starts in 640x480x32. A mode that does not fit the
   surface or violates the width, height or format bounds is refused (`core/sys.c:262`).
 - **Transfers:** at most 1 MiB per read or write call.
