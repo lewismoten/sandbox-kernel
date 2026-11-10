@@ -85,4 +85,21 @@ class Autostart(Work):
         f=(C.c_uint32*17).in_dll(self.c,'os_frame');f[15]=0x0000f000;f[0]=0;self.c.os_handle(4,0,0x0000f000)
         log=self.c.take_log();self.assertIn(b'OS exit 0 /OS/GMOS.ELF; recovery console',log);self.assertFalse(self.c.os_running())
 
+    def test_boot_storage_failure_selects_recovery(self):
+        c=self.c;c.boot_storage_policy.argtypes=[C.c_bool];c.boot_storage_policy.restype=C.c_bool
+        c.fb_setup(0,True);c.take_log()
+        self.assertFalse(c.boot_storage_policy(False));log=c.take_log().decode()   # first pass, no card
+        self.assertIn('SD card not readable; recovery console',log);self.assertFalse(c.os_running())
+        c.eink_page_shown.restype=C.c_bool;self.assertFalse(c.eink_page_shown())   # the panel stays the kernel's
+    def test_boot_healthy_storage_without_os_keeps_recovery_rule(self):
+        c=self.c;c.boot_storage_policy.argtypes=[C.c_bool];c.boot_storage_policy.restype=C.c_bool
+        self.card({})
+        self.assertTrue(c.boot_storage_policy(True));self.assertNotIn(b'recovery',c.take_log())   # waits for the 10 s autostart
+        c.autostart_launch();self.assertIn(b'OS none; recovery console',c.take_log())
+    def test_clean_exit_still_leaves_last_frame(self):
+        self.card({'DIAG.ELF':program(),'GMOS.ELF':program()})
+        self.c.boot_storage_policy.argtypes=[C.c_bool];self.assertTrue(self.c.boot_storage_policy(True))
+        self.assertEqual(self.c.autostart_run(b'/OS/GMOS.ELF'),0);self.c.take_log()
+        self.c.autostart_launch();self.assertNotIn(b'OS none',self.c.take_log())   # running OS is left alone
+
 if __name__=='__main__': unittest.main()

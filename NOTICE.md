@@ -25,6 +25,8 @@ AI models used on this repository:
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 3: input event queue and synthetic USB source, getdents, health heartbeat, PUTF into /GAMES folders with folder growth, host tests, board runs (2026-11-07) |
 | Claude Opus 5.5 (Anthropic) | Claude Code | M1 slice 4: clock_gettime and sleep_until (ABI 1.1), SDK records and wrappers, host tests, board run (2026-11-07) |
 | Claude Sonnet 5.5 (Anthropic) | Claude Code | JS spike: PUTF to 1 MiB and /OS/APPS folders, ABI 1.2 screen modes and palettes, the boot clock, branch prediction and write-back user pages, host tests, board benchmarks, docs/js-spike.md (2026-11-07) |
+| GPT-6.1 Sol (OpenAI) | ChatGPT | The social preview image (docs/images/social-preview-640x320.png), made from the maintainer's directions (2026-11-09) |
+| GPT-6.1 Sol (OpenAI) | ChatGPT | The 1280x640 social preview (docs/images/social-preview-1280x640.png) and the chip mark cropped from it (docs/images/chip-mark.png), for the site in docs/, made from the maintainer's directions (2026-11-09) |
 
 The initial design was documentation only. M0 now fetches the pinned dependencies
 listed below into gitignored third_party/ and generates boot artifacts. The dependency
@@ -115,11 +117,12 @@ Primary technical references used:
 - Standard SD CMD0/2/3/7/8/9/13/17/24/55/ACMD41 command semantics. The public
   manual errata page at elinux.org was inaccessible (access denied) during this
   implementation; EMMC errata and physical behavior remain qualification work.
-- The Game-Maker: Sandbox Edition logo (sandbox, sand castle, pail and shovel):
-  the same author and MIT license as this project. `scripts/make_logo.py` redraws
-  its subject as 1-bit art (`core/logo_data.c`); the panel font in `core/render.c`
-  is original artwork. The drawing script was written with Claude Sonnet 5.5
-  (Anthropic).
+- Boot art (`art/boot/`, round 2): the chip-with-K mark, the e-ink and HDMI layouts and the
+  lowercase glyphs of the HDMI title text were made with ChatGPT (GPT-6.1 Sol, OpenAI) from
+  Lewis Moten's directions, with the mark and layouts shaped with Claude (Anthropic); MIT.
+  `scripts/make_boot_art.py` (written with Claude Sonnet 5.5) bakes it into `core/logo_data.c`.
+  The 5x7 font in `core/font.c` is original artwork. The earlier Game-Maker castle badge was
+  removed from the kernel; Game-Maker OS owns that branding.
 
 Build results and limitations are recorded in [docs/m0.md](docs/m0.md).
 M0 acceptance requires real-board and power-interruption testing.
@@ -135,3 +138,5 @@ script `scripts/unicode_fold.py`; the generated data remains Unicode-3.0 license
 The full Unicode License V3 is in [licenses/Unicode.txt](licenses/Unicode.txt),
 copied to `UNICODE.TXT` in boot distributions. The original VFAT parser imports
 no FatFs or other filesystem implementation.
+
+**Silkscreen** (The Silkscreen Project Authors, SIL Open Font License 1.1) is bundled as WOFF2 in `docs/fonts/` (from the `@fontsource/silkscreen` 5.1.0 package) for the site's headings; the license text is `docs/fonts/OFL-Silkscreen.txt`.

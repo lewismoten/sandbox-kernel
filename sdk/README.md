@@ -4,7 +4,7 @@ Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is the
 **draft 1.0** described in [docs/design.md](../docs/design.md#system-call-abi-draft-version-10);
 it may still change before 1.0 is frozen. New to this? Read the
 [OS author's guide](../docs/os-authors.md) first: boot, the program rules, and a table of
-what each ABI minor added (the headers are now at minor 7).
+what each ABI minor added (the headers are now at minor 9).
 
 - `include/sandbox/abi.h`: call numbers, error values, open flags, ioctl IDs and the
   fixed records, with size and offset asserts. Portable C11; no OS headers.
@@ -41,6 +41,9 @@ what each ABI minor added (the headers are now at minor 7).
   general filesystem write access or a power-loss journal. Close aborts unflushed
   bytes. See [the cache storage contract](../docs/cache-storage.md), including
   completed-sector durability and initially non-cross-linked FAT assumptions.
+- ABI 1.7 save folders and ABI 1.8 `/dev/audio` (`sbx_audio_query`): check startup minor >= 7 before
+  writing saves and minor >= 8 before opening `/dev/audio`; an older kernel refuses them, so
+  keep a path without them. See [the audio device](../docs/audio-device.md).
 - `lib/crt0.S`, `lib/mem.c` and `lib/sandbox.ld`: entry (`int main(const sbx_startup *)`,
   whose return value is the exit status), `memset`/`memcpy`, and the link map (text
   at `0x08000000`, data on separate never-executable pages).

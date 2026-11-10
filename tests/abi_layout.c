@@ -26,7 +26,9 @@ SIZE(k_dirent,sbx_dirent); SAME(k_dirent,sbx_dirent,length); SAME(k_dirent,sbx_d
 SIZE(k_health,sbx_health_rec); SAME(k_health,sbx_health_rec,generation); SAME(k_health,sbx_health_rec,sequence);
 SIZE(k_clock,sbx_clock_rec); SAME(k_clock,sbx_clock_rec,clock); SAME(k_clock,sbx_clock_rec,ns);
 SIZE(k_sleep,sbx_sleep_rec); SAME(k_sleep,sbx_sleep_rec,deadline);
+SIZE(k_eink_info,sbx_eink_info); SAME(k_eink_info,sbx_eink_info,page_bytes); SAME(k_eink_info,sbx_eink_info,max_per_minute); SIZE(k_eink_title,sbx_eink_title_rec); SAME(k_eink_title,sbx_eink_title_rec,flags); SAME(k_eink_title,sbx_eink_title_rec,name_bytes); SAME(k_eink_title,sbx_eink_title_rec,name); SAME(k_eink_title,sbx_eink_title_rec,mark); SAME(k_eink_title,sbx_eink_title_rec,build_bytes); SAME(k_eink_title,sbx_eink_title_rec,build);
 SIZE(k_input_event,sbx_input_event); SAME(k_input_event,sbx_input_event,ns); SAME(k_input_event,sbx_input_event,type); SAME(k_input_event,sbx_input_event,code); SAME(k_input_event,sbx_input_event,value);
+SIZE(k_audio_info,sbx_audio_info); SAME(k_audio_info,sbx_audio_info,rate); SAME(k_audio_info,sbx_audio_info,capacity_frames); SAME(k_audio_info,sbx_audio_info,queued_frames); SAME(k_audio_info,sbx_audio_info,played_frames); SAME(k_audio_info,sbx_audio_info,underruns); SAME(k_audio_info,sbx_audio_info,overruns); SAME(k_audio_info,sbx_audio_info,overrun_frames);
 SIZE(k_input_info,sbx_input_info); SAME(k_input_info,sbx_input_info,flags); SAME(k_input_info,sbx_input_info,instance); SAME(k_input_info,sbx_input_info,queue_records); SAME(k_input_info,sbx_input_info,keys); SAME(k_input_info,sbx_input_info,axes); SAME(k_input_info,sbx_input_info,axis_min); SAME(k_input_info,sbx_input_info,axis_max);
 SIZE(k_serial_info,sbx_serial_info); SAME(k_serial_info,sbx_serial_info,transport); SAME(k_serial_info,sbx_serial_info,rx_pending);
 SIZE(k_input_state,sbx_input_state); SAME(k_input_state,sbx_input_state,keys); SAME(k_input_state,sbx_input_state,axes);
@@ -42,7 +44,9 @@ int32_t use_all(uint64_t fd,char *b) {
  s|=sbx_seek(fd,0,&n);
  s|=sbx_fsync(fd);s|=sbx_getdents_meta(fd,b,64,&n);s|=sbx_rename("/sd/OS/CACHE/A.TMP",18,"/sd/OS/CACHE/A.IDX",18);
  s|=sbx_getdents_long_meta(fd,b,280,&n);
- sbx_startup_ext startup={{48,1,6,1,0,0,0,0},1};
+ sbx_eink_info ei; sbx_eink_title_rec et; s|=sbx_eink_query(fd,&ei); s|=sbx_eink_title(fd,&et,"X",1,(const uint8_t *)b,"V1"); s|=sbx_eink_clear(fd); s|=sbx_eink_page(fd,(const uint8_t *)b);
+ sbx_audio_info ai; s|=sbx_audio_query(fd,&ai);
+ sbx_startup_ext startup={{48,1,7,1,0,0,0,0},1};
  s|=sbx_app_arena(&startup.prefix,1,&a,&n);
  if(s==-1) sbx_exit(1);
  return s;

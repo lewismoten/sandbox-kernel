@@ -86,7 +86,8 @@ itself with `usb_kernel.py send`.
 
 In order:
 
-1. **E-ink "starting" screen**, drawn before USB or the SD card is set up.
+1. **E-ink "starting" screen** (the mark, `SANDBOX KERNEL`, `STARTING...`), drawn before USB or
+   the SD card is set up.
 2. MMU, UART, interrupts and USB are initialized. The log prints the build ID, the reset
    cause, the selected slot and the generation.
 3. **Card scan:** the SD card is initialized (`store_init`), the fallback slot is
@@ -150,24 +151,76 @@ loop (`core/protocol.c`) keeps answering `INFO`, `PUTF`, `RUN`, `STOP` and the i
 commands. Log lines say `OS none; recovery console (USB PUTF and RUN available)` or
 `OS stopped; kernel recovery console kept`.
 
+### The kernel's own screens
+
+The kernel carries its own generic branding (the chip-with-K mark and the name
+`sandbox-kernel`); it never shows the name of any OS program. Anyone running an OS on it
+sees only that. The art is in `art/boot/` (with its layout notes), baked into
+`core/logo_data.c` by `scripts/make_boot_art.py`.
+
+- **HDMI boot screen:** color bars over a 16-step gray ramp, with a small panel in the
+  middle (the mark, `sandbox-kernel`, `bare-metal boot`). It is drawn at 960x540 (the
+  kernel's own mode) and 640x480, and again whenever a fault puts the kernel's screen back.
+- **HDMI recovery console:** when no OS program is running (none was found at boot, or USB
+  stopped it) the kernel shows a header and a 60 by 12 box with its own log lines, newest
+  at the bottom, redrawn as lines arrive. A program that exits on its own leaves its last
+  frame up, as before. The console is 960x540 only.
+- **E-ink:** the starting and status screens below; a running OS can change the title and
+  mark or show its own page (`docs/eink.md`, section "Show your OS on the e-ink").
+
+`scripts/render_screen.py OUTDIR` renders all of them on the host to PNG.
+
 ### Reading the e-ink panel
 
-The 250x122 panel (`core/render.c`, `render_status`) shows the logo, `GAME-MAKER`, the
-build ID, and three lines:
+The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark, the title
+`SANDBOX KERNEL`, the build ID, and three lines (values are clipped at 16 characters):
 
 | Line | Meaning |
 | --- | --- |
 | `UP:` | uptime since the kernel started |
-| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, or a start-up failure such as `USB POWER MBOX TIMEOUT` |
-| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared |
+| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
+| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared. Normal refusals (`not-ready`) do not set it |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
 `Timer progress lost`, `Trial storage health failed`, an SD step name when the card did not
-start, and `OS autostart rejected; trying DIAG.ELF`. In `core/protocol.c`, `fail()` sets
-`ERR:` to the reason of the last failed USB command, so **`not-ready` on the panel is the
-last USB command that was refused because the device was not ready for it** (for example
-`PUTF` while an OS program was running). It does not mean the kernel is broken.
+start, and `OS autostart rejected; trying DIAG.ELF`. Which replies set `ERR:` (`core/protocol.c`):
+
+| Reply | Sets `ERR:`? |
+| --- | --- |
+| `fail()` errors: bad command, `size`, `crc-format`, CRC or SHA-256 mismatch, write failure | yes |
+| storage not ready (`PUTF`, `RUN`, `PUT2` when storage is down): `ERR not-ready` through `fail()` | yes (`not-ready`) |
+| flow-control refusals through `refuse()`: no `INFO` yet, an OS program running, a locked or pending update | no, reply only |
+| direct replies: `ERR input value` (`KEY`, `AXIS`), `ERR run ASSET NOT FOUND` (`RUN`) | no, reply only |
+
+`STOP` and `INPUT` use `refuse()` for their not-ready cases. A refusal never clears an earlier error.
 The panel redraws only when its content changes, and a full refresh takes seconds.
+
+### Show your OS on the e-ink (ABI 1.9)
+
+While your program runs it can put its own name and mark on the panel, or draw a whole
+250x122 page, through `/dev/eink` (write-only; full rules and limits in `docs/eink.md`):
+
+```c
+#include <sandbox/syscall.h>
+extern const uint8_t my_page[SBX_EINK_PAGE_BYTES]; /* 250x122, 32-byte rows, bit 7 = leftmost, 1 = black */
+
+uint64_t eink;
+if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
+  sbx_eink_title_rec t;
+  sbx_eink_title(eink, &t, "MY OS", 5, NULL, "V0.4 3A9F2C1");   /* name up to 16 characters; a 200-byte 40x40 mark is optional;
+                                                                   the build line is free text up to 16 (hash, version, date) or NULL */
+  /* a page replaces the status screen; call again for the next frame, at most once a second */
+  while (sbx_eink_page(eink, my_page) == -SBX_EAGAIN) { /* too soon: wait and try again */ }
+}
+```
+
+- **Limits:** one accepted update per second at most and 30 a minute; a refused one returns
+  `-SBX_EAGAIN` and changes nothing. The OS cannot ask for a full refresh; the kernel does a
+  ghost-clearing one itself.
+- **The kernel wins:** when your program exits, faults or is stopped, the panel goes back to
+  the kernel's status screen. If a kernel error appears while your page is up, the panel shows
+  the kernel screen at its next update; your next page returns with a small black square in
+  the top-right corner (8x8) for as long as `ERR:` is not `none`. Leave that corner white.
 
 ## 3. Writing a program
 
@@ -237,12 +290,11 @@ described in `docs/design.md`.)
 | 1.5 | `getdents_long_meta` (call 20): validated VFAT long names as UTF-8; use a buffer of at least 280 bytes. Calls 11 and 18 keep returning 8.3 aliases. |
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
-| 1.8 | Reserved for sound, in review; not in this kernel yet. |
-| 1.9 | Reserved for e-ink, in review; not in this kernel yet. |
+| 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 4,096-frame ring (about 85 ms) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. A gap plays silence and counts an underrun. **Today a null backend drains the ring; no sound reaches a speaker or HDMI yet.** See `docs/audio-device.md`. |
+| 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
 
-**Not yet:** sound (no `/dev/audio`; a PCM host core exists in `docs/audio-host-core.md`
-but is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
+**Not yet:** sound you can hear (`/dev/audio` exists, but only a null backend drains it; the PCM host core in `docs/audio-host-core.md` is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
 only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI audio and HDMI-CEC, and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
 general SD writing are not supported either.
@@ -284,7 +336,7 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 
 | Command | What it does |
 | --- | --- |
-| `info` | print the device's `INFO` line: slots, generations, features |
+| `info` | print the device's `INFO` line: slots, generations, `updates=ready\|locked`, `os=running\|stopped\|none`, features |
 | `tail` | print the kernel log (`LOG ...` lines) until you stop it |
 | `put FILE [--name NAME]` | install FILE as `/OS/<NAME>` (upper-case 8.3, 1 byte to 1 MiB, CRC and SHA-256 checked) |
 | `putgame FOLDER DIR` | install every file as `/GAMES/<DIR>/<NAME>` |
@@ -295,6 +347,22 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
 | `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot) |
+
+**The `INFO` fields:** `updates=ready` means this kernel accepts update requests (a capability);
+`updates=locked` means it does not; `updates=busy` means a new kernel is already pending, so wait
+for its confirmation. `os=running` is an OS program running now, `os=stopped` one ran and was
+stopped, `os=none` none has run since boot. `features=` is **legacy**, kept for compatibility:
+it still reads `kernel,no-os` when updates are ready (it never meant "no OS") and `locked`
+otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
+
+**When `PUT2` is admitted:** `INFO` was sent this session, storage is ready, `updates=ready`
+(not locked) and no update slot is pending. Otherwise `ERR not-ready`. `os=running` alone does
+not block a kernel update. `usb_kernel.py send` parses `INFO` into exact fields and refuses
+before sending if `updates=`, `features=` or `pending=` repeats, `updates=` is not exactly `ready`
+(including `busy`), `features=locked` contradicts it, or a `pending=` field is not a plain
+decimal 0. With no `updates=` field it accepts
+only the exact legacy `features=kernel,no-os`. The web page (`web/src/piRemote/protocol.ts`, in
+the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 
 **The not-ready rule:** `PUTF` (and so `put`, `putgame`, `putapp`) is refused with
 `ERR not-ready` while an OS program is running, and during a kernel update. **Run `stop`
@@ -346,7 +414,7 @@ as left out in `docs/js.md`).
   `fsync`. A writer open blocks other mutation (`EBUSY`); a read handle on those folders
   blocks writing too, so close directory handles first.
 - **Handles:** 16 at a time; one `/dev/fb0` handle.
-- **Check your minor version.** A kernel that is older than your SDK returns `ENOSYS`.
+- **Check your minor version.** A kernel that is older than your SDK returns `ENOSYS`. Check the startup `minor` (>= 7 before writing under `/sd/OS/SAVES/`, >= 8 before opening `/dev/audio`) and fall back to silence or no saves when it is lower.
 - **Framebuffer size:** a program starts in 640x480x32. A mode that does not fit the
   surface is refused.
 - **Transfers:** at most 1 MiB per read or write call.

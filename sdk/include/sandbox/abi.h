@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -57,10 +57,30 @@ enum {
 #define SBX_IOC_FB_PRESENT SBX_IOC(1, 1)
 #define SBX_IOC_FB_SET_MODE SBX_IOC(1, 2) /* 1.2: sbx_fb_set_rec; the firmware scales the mode to HDMI */
 #define SBX_IOC_FB_PALETTE SBX_IOC(1, 3)  /* 1.2: sbx_fb_palette_rec, for SBX_FB_INDEX8 */
+/* 1.8: open "/dev/audio" write-only for the one writer (a second open is EBUSY).
+   write() takes whole stereo frames of signed 16-bit little-endian PCM (L,R,L,R...)
+   at SBX_AUDIO_RATE, takes what fits and returns that many bytes, or EAGAIN when
+   none fit (wait a little, retry). It never blocks and never overwrites queued audio.
+   When the ring runs dry the device plays silence and counts an underrun. close()
+   drops whatever is still queued. Check sbx_startup.minor >= 8 first. */
+#define SBX_IOC_AUDIO_QUERY SBX_IOC(2, 0)
+#define SBX_AUDIO_RATE 48000u
 #define SBX_FB_XRGB8888 1u /* sbx_fb_mode.format: 32-bit words 0x00RRGGBB */
 #define SBX_FB_RGB565 2u   /* 16-bit words rrrrrggggggbbbbb */
 #define SBX_FB_INDEX8 3u   /* bytes, colors from the palette */
 #define SBX_FB_FORMAT_XRGB8888 1u /* 32-bit little-endian words 0x00RRGGBB */
+/* Class 4 (ABI 1.9) is the e-ink panel, /dev/eink, opened write-only: docs/eink.md. A page is
+   written with write() as exactly SBX_EINK_PAGE_BYTES (250x122, 32-byte rows, bit 7 leftmost, 1 = black). */
+#define SBX_IOC_EINK_QUERY SBX_IOC(4, 0)
+#define SBX_IOC_EINK_TITLE SBX_IOC(4, 1) /* sbx_eink_title_rec */
+#define SBX_IOC_EINK_CLEAR SBX_IOC(4, 2) /* a bare sbx_header: back to the kernel's screen */
+#define SBX_EINK_WIDTH 250u
+#define SBX_EINK_HEIGHT 122u
+#define SBX_EINK_PAGE_BYTES 3904u
+#define SBX_EINK_TITLE_MAX 16u
+#define SBX_EINK_BUILD_MAX 16u /* the build line: what fits the status line at 2x */
+#define SBX_EINK_MARK_BYTES 200u /* 40x40, 5-byte rows, same bit order */
+#define SBX_EINK_TITLE_MARK 1u /* sbx_eink_title_rec.flags: a mark follows */
 /* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
 #define SBX_IOC_INPUT_QUERY SBX_IOC(3, 0)
 #define SBX_IOC_INPUT_STATE SBX_IOC(3, 1) /* current state; also empties the queue */
@@ -204,11 +224,30 @@ typedef struct sbx_sleep_rec { /* sleep_until (ABI 1.1): not run again before th
   sbx_header h;
   uint64_t deadline; /* absolute monotonic nanoseconds; one already passed returns at once */
 } sbx_sleep_rec;
+typedef struct sbx_eink_info { /* SBX_IOC_EINK_QUERY output (fields zero on entry) */
+  sbx_header h;
+  uint64_t width, height, page_bytes, title_max, mark_bytes, min_interval_ms, max_per_minute, flags;
+} sbx_eink_info;
+typedef struct sbx_eink_title_rec { /* name 1-16 chars (kernel font, capitals), optional mark */
+  sbx_header h;
+  uint64_t flags, name_bytes;
+  char name[16];
+  uint8_t mark[200];
+  uint64_t build_bytes; /* 0-16: the build line under the name; 0 = blank */
+  char build[16];       /* free text: a hash, a version, a date; the kernel font, capitals; anything else shows as ? */
+} sbx_eink_title_rec;
 typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
   uint64_t ns; /* monotonic nanoseconds since the kernel started */
   uint16_t type, code;
   int32_t value; /* key: 0 up, 1 down, 2 repeat; axis: position */
 } sbx_input_event;
+typedef struct sbx_audio_info { /* SBX_IOC_AUDIO_QUERY output; counters are for this open */
+  sbx_header h;
+  uint64_t flags, rate, capacity_frames, queued_frames, played_frames;
+  uint64_t underruns;      /* drains that found the ring short */
+  uint64_t overruns;       /* writes that did not fit whole */
+  uint64_t overrun_frames; /* frames those writes were refused */
+} sbx_audio_info;
 typedef struct sbx_input_info { /* SBX_IOC_INPUT_QUERY output */
   sbx_header h;
   uint64_t flags, instance, queue_records, keys, axes;
@@ -244,6 +283,7 @@ static inline uint64_t sbx_app_generation(const sbx_startup *s) {
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
+SBX_CHECK(sbx_eink_info, 80); SBX_CHECK(sbx_eink_title_rec, 272); SBX_AT(sbx_eink_title_rec, name, 32); SBX_AT(sbx_eink_title_rec, mark, 48);
 SBX_CHECK(sbx_startup_ext, 48); SBX_AT(sbx_startup_ext, prefix, 0); SBX_AT(sbx_startup_ext, app_generation, 40);
 SBX_CHECK(sbx_app_arena_rec, 48); SBX_AT(sbx_app_arena_rec, h, 0);
 SBX_AT(sbx_app_arena_rec, owner_generation, 16); SBX_AT(sbx_app_arena_rec, requested_bytes, 24);

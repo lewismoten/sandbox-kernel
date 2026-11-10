@@ -5,11 +5,13 @@
 #include "autostart.h"
 #include "clock.h"
 #include "input.h"
+#include "fb_art.h"
+#include "audio_null.h"
 void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
-void log_line(const char *s) {uart_puts(s);uart_puts("\r\n");usb_log(s);}
+void log_line(const char *s) {console_log(s);uart_puts(s);uart_puts("\r\n");usb_log(s);}
 void error(const char *s) {last_error=s;log_line(s);}
 extern bool panel_boot_done(void),verify_confirmed(void),protocol_busy(void),usb_healthy(void),control_healthy(void);
 void kernel_main(void) {
@@ -48,21 +50,21 @@ void kernel_main(void) {
     the kernel down can still be replaced over USB (PUTF) before it runs.
     GMOS.ELF if present (or AUTORUN.TXT's choice), else DIAG.ELF; a rejected
     file falls back to DIAG.ELF, and a missing DIAG keeps the recovery console. */
- bool autostart=storage_ready;
+ bool autostart=boot_storage_policy(storage_ready);
  if(autostart) {char t[48]="OS autostart in 10 s: ";const char *a=autostart_pick();memcpy(t+22,a,strlen(a)+1);log_line(t);}
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  clock_us();usb_task();protocol_task();os_task();
+  clock_us();audio_null_task();usb_task();protocol_task();os_task();
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
-   if(!os_running()&&autostart_run(autostart_pick()))log_line("OS none; recovery console (USB PUTF and RUN available)");
+   autostart_launch();
   }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
-  panel_task(usb_state(),seconds);
+  panel_task(usb_state(),seconds);fb_recovery_task();
   if(expired(start,100000)) {
    if(ticks==old_ticks) {error("Timer progress lost");for(;;)service_io();}
    old_ticks=ticks;start=micros();watchdog_feed();

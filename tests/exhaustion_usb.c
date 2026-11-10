@@ -2,6 +2,7 @@
  * Include the implementation so tests observe its private queue accounting
  * without production hooks or changes to the shared host harness. */
 #include <assert.h>
+#include "../core/usbrole.c"
 #include "../drivers/usb.c"
 #include "../core/serial.c"
 static bool mounted=true,connected=true,busy;

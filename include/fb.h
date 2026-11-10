@@ -47,6 +47,9 @@ int fb_set_mode(uint32_t width,uint32_t height,uint32_t depth);
 int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb);
 void fb_program_mode(void);
 void fb_home(void);
+void fb_boot_screen(const struct fb_info *fb,uint8_t *pixels); /* bars and ramp, then the title panel */
+void fb_recovery(void); /* the log console; fb_recovery_task redraws its log box as lines arrive */
+void fb_recovery_task(void);
 extern uint32_t fb_mode_us; /* how long the last mode set took */
 extern const char *fb_fail;
 extern struct fb_info fb0;

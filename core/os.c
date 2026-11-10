@@ -232,6 +232,7 @@ void os_task(void) {
   uint32_t intent=cleanup.disposition;cleanup.disposition=0;
   if(stop_requested) {
    log_line(stop_result?"OS stopped by USB; recovery console":"OS already idle; recovery console");
+   fb_recovery();
    stop_requested=false;return;
   }
   if(intent==RESTART) {
