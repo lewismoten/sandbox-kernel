@@ -268,3 +268,12 @@ transactions (`hcd_dwc2.c`, `split_en` set for any non-high-speed device when th
 high speed), so full and low-speed devices behind a high-speed hub are supported. The HID glue accepts
 any interface that is a boot keyboard (subclass 1, protocol 1), on any interface number, and ignores
 mouse and other interfaces; report IDs on another interface do not matter.
+
+## The fault record (FAULT.TXT)
+
+When the OS program faults (abort, undefined instruction, missed heartbeat, or a nonzero exit), the kernel
+saves `/OS/SAVES/KERNEL/FAULT.TXT` before it restarts the program or falls back to DIAG.ELF. Line 1 has the
+program, the kind, the PC, the fault status and address registers, how long the program ran, its system calls
+and presents, and how many times it was started. Each following `>` line is one of the program's last four
+log lines (those OS log lines are otherwise only on the serial port). Read it on a Mac with the card in a
+reader. A new fault replaces the file, so read it after the first crash at the TV.

@@ -16,5 +16,7 @@ extern uint32_t sys_calls; /* every call, counted */
 extern uint32_t sys_healths; /* accepted health calls since the program started */
 extern uint32_t sys_presents; /* framebuffer presents since the program started */
 extern uint64_t sys_wake_us; /* sleep_until: the program waits until clock_us() reaches this (0: awake) */
+#define SYS_RECENT 4u
+const char *sys_recent_log(unsigned back); /* the program's last log lines (0 = newest), "" when fewer were written; kept across restarts */
 void sys_reset(void); /* close every handle and forget the surface */
 uint32_t sys_open_handles(void);

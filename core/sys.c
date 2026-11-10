@@ -145,10 +145,13 @@ opened:
  if(!fds[i].gen) fds[i].gen=1;
  *fd=((uint64_t)fds[i].gen<<8)|i; return 0;
 }
+static char recent[SYS_RECENT][SYS_LOG_LINE+8];static uint32_t recent_next;
+const char *sys_recent_log(unsigned back) {return back<SYS_RECENT&&back<recent_next?recent[(recent_next-1-back)%SYS_RECENT]:"";}
 static void log_user(const uint8_t *s,uint32_t n) {
  char line[SYS_LOG_LINE+8]="OS: "; unsigned k=4;
  for(uint32_t i=0;i<n&&k<sizeof(line)-1;i++) {uint8_t c=s[i]; if(c=='\n'&&i+1==n) break; line[k++]=(char)(c>=32&&c<127?c:'?');}
  line[k]=0; log_line(line);
+ memcpy(recent[recent_next%SYS_RECENT],line+4,k-3);recent_next++;
 }
 static int io(struct k_io *r,bool write) {
  int i=lookup(r->fd); if(i<0) return i;

@@ -71,6 +71,16 @@ class Autostart(Work):
         self.assertEqual(C.c_char_p.in_dll(self.c,'last_error').value,b'OS fell back to DIAG.ELF after repeated faults')   # error(): the log and the status panel (the host harness only records it)
         self.assertIn('kernel recovery console kept',self.fault_twice())   # DIAG itself faulting: the console, no loop
         self.assertFalse(self.c.os_running())
+    def test_fault_is_saved_for_a_tv_with_no_mac(self):
+        c=self.c;self.card({'DIAG.ELF':program(),'GMOS.ELF':program()})
+        self.assertEqual(c.autostart_run(b'/OS/GMOS.ELF'),0)
+        f=(C.c_uint32*17).in_dll(c,'os_frame');f[15]=0x08001234
+        c.os_handle(5,0x805,0xdeadbee0)   # a data abort
+        c.asset_open.argtypes=[C.c_char_p,C.c_uint32,C.c_uint32];p=b'/OS/SAVES/KERNEL/FAULT.TXT'
+        h=c.asset_open(p,len(p),0);self.assertGreaterEqual(h,0)
+        buf=C.create_string_buffer(1024);n=c.asset_read(h,buf,1024);text=buf.raw[:n].decode()
+        self.assertIn('OS fault /OS/GMOS.ELF data abort pc 0x08001234 fsr 0x00000805 addr 0xdeadbee0',text)
+        self.assertIn('starts 1',text)
     def test_diag_autostart_has_no_fallback(self):
         self.card({'DIAG.ELF':program()})
         self.assertEqual(self.c.autostart_run(self.c.autostart_pick()),0)

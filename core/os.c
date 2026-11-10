@@ -12,6 +12,7 @@
 #include "uspace.h"
 #include "input.h"
 #include "app_arena_core.h"
+#include "fatput.h"
 static struct aa_owner owner;
 static struct aa_cleanup cleanup;
 enum {RESTART=1,FALLBACK=2,USB_STOP=3,DIAG=4};
@@ -120,8 +121,22 @@ int os_start(const char *path) {
  char line[80],*p=line; append(&p,"OS start ");append(&p,os_path);append(&p," entry ");append_hex(&p,plan.entry);append(&p," pages ");append_n(&p,plan.bytes/4096);log_line(line);
  return 0;
 }
+static uint32_t last_pc,last_fsr,last_far; /* the registers of the fault being handled */
+/* /OS/SAVES/KERNEL/FAULT.TXT: why the program stopped, where, and its last log lines, so a fault at a TV
+   with no Mac attached can be read afterwards. Only a failed write is logged; it never blocks the restart. */
+static void save_fault(const char *kind,int64_t status) {
+ static char rec[7*SYS_LOG_LINE+160];char *p=rec;
+ append(&p,"OS fault ");append(&p,os_path);append(&p," ");
+ if(kind) append(&p,kind); else {append(&p,"exit ");if(status<0){append(&p,"-");status=-status;}append_n(&p,(uint32_t)status);}
+ append(&p," pc ");append_hex(&p,last_pc);append(&p," fsr ");append_hex(&p,last_fsr);append(&p," addr ");append_hex(&p,last_far);
+ append(&p," up ");append_n(&p,(uint32_t)(now()-start_us)/1000u);append(&p," ms calls ");append_n(&p,sys_calls);append(&p," presents ");append_n(&p,sys_presents);
+ append(&p," starts ");append_n(&p,os_starts);append(&p,"\n");
+ for(unsigned i=SYS_RECENT;i--;) {const char *l=sys_recent_log(i);if(*l) {append(&p,"> ");append(&p,l);append(&p,"\n");}}
+ if(fatsave_put("KERNEL","FAULT.TXT",(const uint8_t *)rec,(uint32_t)(p-rec))) log_line("Fault record not saved");
+}
 static void stop(bool fault,const char *why,int64_t status) {
  running=false;os_stops++;
+ if(fault) {if(!why) {last_pc=os_frame.pc;last_fsr=last_far=0;} save_fault(why,status);}
  memset(&os_frame,0,sizeof os_frame);
  int teardown=us_quiesce(&owner,&cleanup);
  if(teardown) {os_fail="USER CLEANUP";cleanup.error=(uint32_t)-teardown;}
@@ -143,6 +158,7 @@ static void stop(bool fault,const char *why,int64_t status) {
 }
 static void fault(const char *kind,uint32_t fsr,uint32_t far) {
  char line[96],*p=line;
+ last_pc=os_frame.pc;last_fsr=fsr;last_far=far;
  append(&p,"OS fault ");append(&p,kind);append(&p," pc ");append_hex(&p,os_frame.pc);
  append(&p," fsr ");append_hex(&p,fsr);append(&p," addr ");append_hex(&p,far);log_line(line);
  stop(true,kind,0);
