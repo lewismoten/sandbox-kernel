@@ -17,10 +17,12 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   rate, capacity (16,384 frames, about 341 ms; `include/audio_ring.h:20`), queued, played, underruns,
   overruns, overrun frames. Output fields must be zero on entry.
 - **Underrun:** the backend asks for more than is queued, plays zeros for the
-  missing frames and adds one to `underruns`. During long SD operations over
-  about 64 ms, foreground refill can stall and the HDMI DMA chain can replay
-  its last buffered audio until refill resumes. Nothing counts before the
-  first write of an open, or while closed.
+  missing frames and adds one to `underruns`. If foreground refill stalls
+  (for example during SD operations), HDMI plays each buffered segment once,
+  then silence as those segments recur, within 64 ms. The IRQ retires played
+  segments to packed IEC 958 silence; it never consumes the application ring.
+  Missed ring drains and their underruns are accounted when the task resumes.
+  Ring underruns do not count before the first write of an open, or while closed.
 - **Overrun:** the ring never overwrites unread audio. A write that does not
   fit is cut at the last whole frame that fits; each refused write adds one to
   `overruns` and its refused frames to `overrun_frames`. The app sees the short count.
@@ -99,14 +101,25 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
 - **MAI and DMA:** the FIFO takes IEC 958 subframes (the packer's output) from a DMA channel
   (1-6, chosen from the firmware's mask) running a circular ring of 8 control blocks, each one 384
   frames (two channel-status blocks, 8 ms), paced by DREQ 17. DMA runs continuously.
-  Each segment-complete IRQ increments a monotonic 32-bit counter; task progress uses
+  Each segment-complete IRQ replaces the just-played segment with prepacked
+  IEC 958 silence and marks it consumed, then increments a monotonic 32-bit
+  counter; task progress uses
   unsigned counter differences, so full laps and counter wrap remain visible. IRQs
   must be serviced within 8 ms because the DMA interrupt status is sticky.
   The task refills completed segments from `/dev/audio` (silence when empty;
   underruns counted only after the first write while the device is open).
-  A delay of eight or more completions increments starvation and accounts for missed
-  drains before refilling the latest seven safe buffers. No completions for 64 ms
-  counts one stall until progress resumes. Neither path restarts DMA.
+  The IRQ counts one `starved` segment each time a consumed segment finishes
+  playing without a task refill (initial silence is intentional). These counts
+  advance during foreground stalls, even with application audio queued. The
+  task accounts for all missed ring drains before refilling recent buffers;
+  ring underruns count short application queues, separately from starvation.
+  Packing uses a separate staging buffer. Publication masks IRQs only for a
+  fixed 3 KiB copy and write-buffer drain, and rechecks DMA ownership: neither
+  its current nor next segment may be written, leaving at least 8 ms for the
+  copy. The IRQ writes only the current control block's predecessor, leaving
+  seven segments before reuse. These bounded operations must finish within
+  8 ms; their board timing remains untested. No completions for 64 ms adds one
+  stall to `starved` until progress resumes. Neither path restarts DMA.
 - **Firmware:** `scripts/assemble_boot.py` writes `hdmi_drive=2` (HDMI, not DVI, signaling:
   DVI carries no audio packets). The boot config on the card must carry it.
 - **Test hooks (USB):** `TONE <hz> <ms>` (50-4000 Hz, up to 1000 ms; a square tone at about
