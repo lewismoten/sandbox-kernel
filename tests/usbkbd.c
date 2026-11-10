@@ -9,6 +9,7 @@
 
 static char lines[64][64];static unsigned nlines,adds,removes;
 static struct input_change got[64];static unsigned ngot;
+void log_line(const char *s);
 void log_line(const char *s) {assert(nlines<64&&strlen(s)<64);strcpy(lines[nlines++],s);}
 void input_add(void) {adds++;}
 void input_remove(void) {removes++;}

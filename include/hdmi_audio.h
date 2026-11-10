@@ -116,6 +116,7 @@ uint32_t dma_cb_index(uint32_t conblk, uint32_t cb_bus, uint32_t nseg);
 /* Start / stop and service, for the kernel. */
 int hdmi_audio_init(void);      /* 0 = the HDMI backend replaces the null backend; else -1 and logs why */
 int hdmi_audio_active(void);
+void hdmi_audio_irq(void);
 void hdmi_audio_task(void);     /* main-loop hook: refill DMA segments from the ring */
 int hdmi_audio_tone(uint32_t hz, uint32_t ms); /* quiet test tone through the mixer; 0 or -1 */
 void hdmi_audio_report(char *out, size_t cap);  /* status text for the USB AUDIO command */

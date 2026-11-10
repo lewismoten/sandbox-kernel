@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; native checks of the real core/audio_ring.c and
  * core/audio_null.c: ordering, wrap, silence, overrun, pacing, and a two-thread
  * single-producer/single-consumer stress for the lock-free claim. */
+#include "clock.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>

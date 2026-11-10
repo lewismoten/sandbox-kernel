@@ -29,6 +29,11 @@ class DirectoryScan(unittest.TestCase):
         shim.write_text('''#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "kernel.h"
+void open_disk(const char *p);
+void close_disk(void);
+uint32_t read_count(void);
+void fail_sector(uint32_t lba);
 static FILE *f; static uint32_t reads, bad=~0u;
 void open_disk(const char *p){f=fopen(p,"rb");}
 void close_disk(void){fclose(f);}

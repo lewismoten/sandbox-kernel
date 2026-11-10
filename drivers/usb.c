@@ -45,7 +45,10 @@ static const char *init_fail="unavailable";
 static bool id_grounded;static struct usbrole role;
 static char fail_text[32];
 const char *usb_state(void) {if(!initialized)return init_fail;
- if(usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED)return "OTG (KEYBOARD NEXT)";if(suspended)return "suspended";if(!tud_mounted())return "disconnected";return tud_cdc_connected()?"reader":"enumerated";}
+ if(usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED) {return "OTG (KEYBOARD NEXT)";}
+ if(suspended) {return "suspended";}
+ if(!tud_mounted()) {return "disconnected";}
+ return tud_cdc_connected()?"reader":"enumerated";}
 void usb_init(void) {
  uint32_t p[2]={3,3};if(!property(0x28001,p,2)) {{const char *a="USB POWER ",*b=property_fail;unsigned k=0;while(*a&&k<30)fail_text[k++]=*a++;while(*b&&k<30)fail_text[k++]=*b++;fail_text[k]=0;} init_fail=fail_text;error("USB POWER");log_line(property_fail);return;}
  /* Sample the OTG ID pin once, before forcing device: forced mode changes ConIDSts
@@ -70,7 +73,6 @@ void usb_log(const char *s) {
  while(*s)logs[lw++%sizeof(logs)]=*s++;
  logs[lw++%sizeof(logs)]='\n';
 }
-extern bool protocol_busy(void);
 /* OS serial output (docs/serial.md): whole "OS ..." lines join the same ring as
    LOG lines, so the two never mix inside a line. Lines that do not fit wait. */
 static void os_lines(void) {
@@ -81,7 +83,8 @@ static void os_lines(void) {
  }
 }
 void usb_task(void) {
- if(!initialized||inside)return;inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task();
+ if(!initialized||inside) {return;}
+ inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task();
  serial_set_reader(tud_mounted()&&tud_cdc_connected());
  if(!tud_mounted()) {inside=false;return;}
  while(rp!=wp&&tud_cdc_write_available()) {tud_cdc_write_char(replies[rp++%sizeof(replies)]);}

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; native checks of core/mixer.c: tone frequency
  * by zero crossings, duration, tune ticks, two-voice mix with clipping, idle
  * silence, and no ring overrun when pumped against the null backend. */
+#include "clock.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>

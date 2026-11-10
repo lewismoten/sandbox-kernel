@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT; test-only real map/copy failures and queued STOP.
  * No fake allocator; all production phases run before injection. */
+#include "host_exports.h"
 #define us_map probe_real_map
 #define us_arena_prepare probe_real_arena_prepare
 #define us_copy_out probe_real_copy_out
@@ -8,6 +9,10 @@
 #undef us_arena_prepare
 #undef us_copy_out
 #include "os.h"
+/* The production header above was included with the renamed entry points. */
+int us_copy_out(uint64_t va,const void *src,uint32_t bytes);
+int us_arena_prepare(struct aa_owner *o,uint64_t epoch,uint64_t requested,struct aa_checkpoint *cp);
+int us_map(uint32_t va,uint32_t bytes,uint32_t prot);
 static bool late_copy_failure,stop_after_prepare,corrupt_after_prepare;
 void probe_corrupt_after_prepare(void) {corrupt_after_prepare=true;}
 void probe_late_copy_failure(void) {late_copy_failure=true;}

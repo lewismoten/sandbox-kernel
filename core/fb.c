@@ -40,12 +40,12 @@ uint32_t fb_palette_request(uint32_t m[FB_PALETTE_WORDS],uint32_t first,uint32_t
  m[7+count]=0;
  return words;
 }
-static const uint32_t bars[8]={0xffffff,0xffff00,0x00ffff,0x00ff00,0xff00ff,0xff0000,0x0000ff,0x000000};
+static const uint32_t pattern_colors[8]={0xffffff,0xffff00,0x00ffff,0x00ff00,0xff00ff,0xff0000,0x0000ff,0x000000};
 uint32_t fb_pattern_pixel(const struct fb_info *f,uint32_t x,uint32_t y) {
  uint32_t w=f->width,h=f->height;
  if(x<4||y<4||x>=w-4||y>=h-4) return 0xffffff;
  uint32_t c;
- if(y<h*2/3) c=bars[x*8/w];
+ if(y<h*2/3) c=pattern_colors[x*8/w];
  else {uint32_t g=(x*16/w)*17; c=(g<<16)|(g<<8)|g;}
  /* Swapped only if the firmware kept RGB, so the bars read the same either way. */
  return fb_native(f,c);

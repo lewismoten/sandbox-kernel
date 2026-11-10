@@ -5,7 +5,9 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sandbox/syscall.h>
 #define main example_main
+static int example_main(const sbx_startup *start);
 #ifdef EXAMPLE_CLOCK
 #include "../examples/clock/main.c"
 #else
