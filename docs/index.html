@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>sandbox-kernel</title>
+    <meta name="description" content="A small bare-metal kernel for your own OS. Runs on the Raspberry Pi Zero W today. MIT license." />
+    <meta property="og:title" content="sandbox-kernel: a small bare-metal kernel for your own OS" />
+    <meta property="og:description" content="Write your OS as one ordinary program. The kernel owns the hardware and recovers if your OS fails. Runs on the Raspberry Pi Zero W today." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="images/social-preview-1280x640.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="sandbox-kernel: a small bare-metal kernel for your own OS, with a pixel-art chip badge beside a block of colored squares" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="favicon.ico" />
+    <link rel="preload" href="fonts/silkscreen-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Nothing loads from outside. Silkscreen is bundled in fonts/ (SIL OFL 1.1). -->
+    <style>
+      @font-face { font-family: Silkscreen; font-weight: 400; font-display: swap; src: url(fonts/silkscreen-latin-400-normal.woff2) format('woff2'); }
+      @font-face { font-family: Silkscreen; font-weight: 700; font-display: swap; src: url(fonts/silkscreen-latin-700-normal.woff2) format('woff2'); }
+      /* Layout: hero column left, tabbed panel right; one screen on desktop, stacked on a phone. */
+      :root {
+        color-scheme: light dark;
+        --bg: #eef2f8; --panel: #ffffff; --fg: #10131f; --muted: #404a66; --rule: #bcc6dc; --line: #6b7694;
+        --accent: #6e5300; --accent-fill: #f2cf55; --link: #0a5a99; --cyan: #0b6672; --sel: #e3eefc;
+        --warn-bg: #fff4d6; --warn-line: #8a6500; --ok: #0b6b2e; --soon: #6e5300;
+        --pixel: Silkscreen, 'Courier New', monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f121d; --panel: #161b2b; --fg: #f8f3e8; --muted: #b4bddb; --rule: #283052; --line: #6f7ca8;
+          --accent: #f2cf55; --accent-fill: #f2cf55; --link: #8fb8ff; --cyan: #4ccbd8; --sel: #1c2748;
+          --warn-bg: #2a2410; --warn-line: #f2cf55; --ok: #7be39a; --soon: #f2cf55;
+        }
+      }
+      * { box-sizing: border-box; }
+      html { background: var(--bg); }
+      body { margin: 0; font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
+      a { color: var(--link); }
+      a:focus-visible, [role='tab']:focus-visible, summary:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+      a.tgt { display: inline-block; min-height: 24px; }
+      .wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
+      main { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 32px; padding: 20px 0 12px; align-items: start; border-top: 1px solid var(--rule); margin-top: 12px; }
+      .edition { display: flex; align-items: center; gap: 14px; margin: 0 0 8px; }
+      .edition img { width: 64px; height: 64px; flex: none; border-radius: 4px; }
+      .edition span { font: 400 1.05rem/1.2 var(--pixel); color: var(--cyan); letter-spacing: 0.08em; text-transform: uppercase; }
+      h1 { margin: 0; font: 700 clamp(1.7rem, 4.4vw, 2.9rem)/1.05 var(--pixel); text-transform: uppercase; overflow-wrap: anywhere; }
+      h1 em { display: block; font-style: normal; color: var(--accent); }
+      .tag { font: 400 0.95rem/1.4 var(--pixel); letter-spacing: 0.02em; margin: 16px 0 4px; text-transform: uppercase; }
+      .chips { font: 400 0.8rem/1.4 var(--pixel); color: var(--muted); letter-spacing: 0.08em; margin: 0 0 12px; text-transform: uppercase; }
+      .swatches { display: flex; gap: 4px; margin: 14px 0 0; }
+      .swatches i { width: 20px; height: 12px; display: block; border: 1px solid var(--rule); }
+      .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; min-width: 0; }
+      [role='tablist'] { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--rule); }
+      [role='tab'] { font: 400 0.8rem/1.2 var(--pixel); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: none; border: 0; border-bottom: 3px solid transparent; padding: 12px 13px; min-height: 44px; cursor: pointer; }
+      [role='tab'][aria-selected='true'] { color: var(--fg); border-bottom-color: var(--accent-fill); }
+      [role='tabpanel'] { padding: 16px 18px 18px; }
+      [role='tabpanel'][hidden] { display: none; }
+      h2 { font: 700 0.95rem/1.3 var(--pixel); letter-spacing: 0.04em; margin: 16px 0 8px; text-transform: uppercase; color: var(--link); }
+      h2:first-child { margin-top: 0; }
+      p { margin: 0 0 8px; }
+      ol, ul { margin: 0 0 8px; padding-left: 1.3rem; }
+      li { margin: 2px 0; }
+      .small { font-size: 0.92rem; color: var(--muted); }
+      code { font: 0.88em ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+      pre { background: var(--bg); border: 1px solid var(--rule); padding: 8px 10px; overflow-x: auto; font-size: 0.82rem; margin: 6px 0; }
+      .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 0; }
+      figure { margin: 0; min-width: 0; }
+      figure img { display: block; width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; }
+      figcaption { font: 400 0.68rem/1.4 var(--pixel); color: var(--muted); letter-spacing: 0.06em; margin-top: 4px; text-transform: uppercase; }
+      .tablewrap { overflow-x: auto; }
+      table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+      th, td { text-align: left; vertical-align: top; padding: 3px 8px; border-bottom: 1px solid var(--rule); }
+      thead th { font: 400 0.7rem/1.3 var(--pixel); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      td:first-child { white-space: nowrap; font-family: ui-monospace, Menlo, Consolas, monospace; }
+      .st { font-weight: 700; }
+      .st.ok { color: var(--ok); } .st.mid { color: var(--soon); }
+      .note { background: var(--warn-bg); border-left: 4px solid var(--warn-line); padding: 8px 12px; margin: 10px 0; font-size: 0.93rem; }
+      footer { border-top: 1px solid var(--rule); padding: 10px 0 18px; font-size: 0.82rem; color: var(--muted); }
+      footer p { margin: 0 0 4px; }
+      @media (max-width: 900px) {
+        main { grid-template-columns: 1fr; gap: 20px; }
+      }
+      @media (max-width: 520px) {
+        .shots { grid-template-columns: 1fr; }
+        [role='tabpanel'] { padding: 14px 12px; }
+        [role='tab'] { padding: 10px 9px; font-size: 0.72rem; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <main>
+        <section aria-label="About">
+          <p class="edition"><img src="images/chip-mark.png" width="64" height="64" alt="" /><span>SBX / bare metal</span></p>
+          <h1>sandbox- <em>kernel</em></h1>
+          <p class="tag">A small bare-metal kernel for your own OS</p>
+          <p class="chips">Runs on the Raspberry Pi Zero W today</p>
+          <p class="small">Write your operating system as one ordinary program. The kernel handles the hardware and gets you back to a recovery console if your OS fails. MIT license.</p>
+          <div class="swatches" aria-hidden="true"><i style="background:#f8f3e8"></i><i style="background:#f2cf55"></i><i style="background:#4ccbd8"></i><i style="background:#d77cf0"></i><i style="background:#ff7a6a"></i><i style="background:#7b8cff"></i></div>
+        </section>
+
+        <section class="panel" aria-label="Details">
+          <div role="tablist" aria-label="Sections">
+            <button role="tab" id="tab-why" aria-controls="p-why" aria-selected="true">Why</button>
+            <button role="tab" id="tab-boot" aria-controls="p-boot" aria-selected="false" tabindex="-1">Boot</button>
+            <button role="tab" id="tab-start" aria-controls="p-start" aria-selected="false" tabindex="-1">Start your OS</button>
+            <button role="tab" id="tab-status" aria-controls="p-status" aria-selected="false" tabindex="-1">Status</button>
+            <button role="tab" id="tab-built" aria-controls="p-built" aria-selected="false" tabindex="-1">Built on it</button>
+          </div>
+
+          <div role="tabpanel" id="p-why" aria-labelledby="tab-why">
+            <h2>One ordinary program</h2>
+            <p>Your OS is a single ELF program that the kernel loads from the SD card and runs in User mode. It gets what a small program expects, through a POSIX-style system-call interface:</p>
+            <ul>
+              <li><strong>Files</strong> on the FAT32 card.</li>
+              <li><strong>A framebuffer</strong> on HDMI: <code>mmap</code> it, draw, present.</li>
+              <li><strong>Input</strong> events in the Linux style.</li>
+              <li><strong>A clock</strong>: monotonic nanoseconds and <code>sleep_until</code>.</li>
+              <li><strong>Saves</strong> in a folder for each program.</li>
+            </ul>
+            <h2>The kernel owns the hardware</h2>
+            <p>The kernel owns the display, the card, USB and the e-ink panel. It checks your program before it runs, watches its heartbeat, restarts it a limited number of times, and opens a recovery console if it keeps failing. A bad OS does not leave you with a dead board. Kernel updates go to an A or B slot, try a boot, and fall back on their own.</p>
+            <h2>No C needed (experimental)</h2>
+            <p>An experimental JavaScript path exists: Game-Maker OS builds <code>JS.ELF</code>, a program that runs a web-page-like app. See the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#7-make-your-own-javascript-os">guide, section 7</a>.</p>
+            <p class="small">The first board is the Raspberry Pi Zero W v1.1 (BCM2835). Later ports to other Pi models are planned through separate board backends; none exist yet.</p>
+          </div>
+
+          <div role="tabpanel" id="p-boot" aria-labelledby="tab-boot" hidden>
+            <h2>The kernel's own screens</h2>
+            <p class="small">Real renders from the kernel's host tests, drawn by the same code the board runs. The pictures are shown pixel for pixel.</p>
+            <div class="shots">
+              <figure><img src="images/boot/hdmi-boot.png" width="960" height="540" alt="HDMI boot panel: a dark panel with the chip mark and the name sandbox-kernel over a test card of color bars and a gray ramp" /><figcaption>HDMI boot panel over color bars</figcaption></figure>
+              <figure><img src="images/boot/hdmi-recovery.png" width="960" height="540" alt="HDMI recovery console: a header with the chip mark, then lines of status text" /><figcaption>HDMI recovery console</figcaption></figure>
+              <figure><img src="images/boot/eink-starting.png" width="750" height="366" alt="E-ink starting screen, black and white, with the chip mark" /><figcaption>E-ink: starting</figcaption></figure>
+              <figure><img src="images/boot/eink-status.png" width="750" height="366" alt="E-ink status screen, black and white, listing the USB and SD card state" /><figcaption>E-ink: status</figcaption></figure>
+            </div>
+          </div>
+
+          <div role="tabpanel" id="p-start" aria-labelledby="tab-start" hidden>
+            <h2>Read the guide first</h2>
+            <p>The <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md">OS author's guide</a> covers boot step by step, the rules for a program, the card layout, USB development and the limits. A Hello World example is in review and not on develop yet, so it is not linked.</p>
+            <h2>ABI versions</h2>
+            <p class="small">Minors only add; no call changes. Full table: <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#4-what-is-supported-by-abi-version">section 4 of the guide</a>.</p>
+            <div class="tablewrap" tabindex="0" role="region" aria-label="Table">
+              <table>
+                <thead><tr><th>ABI</th><th>Added</th></tr></thead>
+                <tbody>
+                  <tr><td>1.0</td><td>open, read, write, close, ioctl, mmap, exit, getdents, health; <code>/dev/log</code>, <code>/dev/fb0</code>, <code>/dev/input/event0</code></td></tr>
+                  <tr><td>1.1</td><td>Clock and <code>sleep_until</code></td></tr>
+                  <tr><td>1.2</td><td>Framebuffer modes and an 8-bit palette</td></tr>
+                  <tr><td>1.3</td><td><code>seek</code></td></tr>
+                  <tr><td>1.4</td><td>File metadata; bounded cache writes</td></tr>
+                  <tr><td>1.5</td><td>Long file names</td></tr>
+                  <tr><td>1.6</td><td>Opt-in app arena (about 2 MB)</td></tr>
+                  <tr><td>1.7</td><td>Save folders for each program</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h2>Develop over USB</h2>
+            <p>Plug the Pi's USB data port into your computer. <code>scripts/usb_kernel.py</code> needs only Python 3.</p>
+<pre>scripts/usb_kernel.py PORT stop
+scripts/usb_kernel.py PORT put MYOS.ELF
+scripts/usb_kernel.py PORT run MYOS.ELF</pre>
+            <p class="small">Also <code>info</code>, <code>tail</code>, <code>putapp</code>, <code>send</code>. Install is refused while an OS runs, so <code>stop</code> first. See <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#6-developing-over-usb">section 6</a>.</p>
+          </div>
+
+          <div role="tabpanel" id="p-status" aria-labelledby="tab-status" hidden>
+            <h2>Where it stands</h2>
+            <p class="small">Checked against the develop branch. M0 is qualified on the Zero W v1.1; M1 is in progress.</p>
+            <div class="tablewrap" tabindex="0" role="region" aria-label="Table">
+              <table>
+                <thead><tr><th>Feature</th><th>State</th></tr></thead>
+                <tbody>
+                  <tr><td>A/B kernel updates</td><td class="st ok">On develop</td></tr>
+                  <tr><td>Recovery console</td><td class="st ok">On develop</td></tr>
+                  <tr><td>Saves (ABI 1.7)</td><td class="st ok">On develop</td></tr>
+                  <tr><td>E-ink status screen</td><td class="st ok">On develop</td></tr>
+                  <tr><td>OTG detection</td><td class="st ok">On develop (role read at boot)</td></tr>
+                  <tr><td>HDMI audio</td><td class="st mid">In review (a host-only core is merged, not linked into the kernel)</td></tr>
+                  <tr><td>E-ink API for OSes</td><td class="st mid">In review</td></tr>
+                  <tr><td>Two-way serial</td><td class="st mid">In review</td></tr>
+                  <tr><td>HDMI-CEC input</td><td class="st mid">In review</td></tr>
+                  <tr><td>Examples (Hello World)</td><td class="st mid">In review</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note">Not yet: a real USB keyboard or gamepad (input is synthetic over USB for now), Wi-Fi and Bluetooth, and boards other than the Zero W.</p>
+          </div>
+
+          <div role="tabpanel" id="p-built" aria-labelledby="tab-built" hidden>
+            <h2>Game-Maker OS</h2>
+            <p>The first OS built on the kernel is <a href="https://github.com/lewismoten/gamemaker-os">Game-Maker OS</a>, a separate project. Its own site is planned at <a href="https://lewismoten.github.io/gamemaker-os/">lewismoten.github.io/gamemaker-os</a>; the link starts working once Pages is enabled there.</p>
+            <h2>The Pocket</h2>
+            <p>The <a href="https://lewismoten.github.io/gamemaker-pocket/">Game-Maker Pocket</a> is a sister project: a small ESP32 touch-screen player with its own browser flasher. It does not run this kernel.</p>
+            <h2>Yours</h2>
+            <p>The kernel is generic on purpose. Your OS uses the same interface Game-Maker OS does.</p>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>MIT license. Source: <a class="tgt" href="https://github.com/lewismoten/sandbox-kernel">github.com/lewismoten/sandbox-kernel</a>.</p>
+        <p>Art made with ChatGPT (GPT-6.1 Sol, OpenAI) from Lewis Moten's directions. Headings use Silkscreen by The Silkscreen Project Authors, <a class="tgt" href="fonts/OFL-Silkscreen.txt">SIL Open Font License 1.1</a>. The boot screens are renders from the kernel's host tests.</p>
+      </footer>
+    </div>
+    <script>
+      (function () {
+        var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+        function show(t, focus) {
+          tabs.forEach(function (x) {
+            var on = x === t;
+            x.setAttribute('aria-selected', on ? 'true' : 'false');
+            x.tabIndex = on ? 0 : -1;
+            document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+          });
+          if (focus) t.focus();
+        }
+        tabs.forEach(function (t, i) {
+          t.addEventListener('click', function () { show(t); try { history.replaceState(null, '', '#' + t.id.slice(4)); } catch (e) {} });
+          t.addEventListener('keydown', function (e) {
+            var j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+            if (j < 0) return;
+            e.preventDefault();
+            show(tabs[(j + tabs.length) % tabs.length], true);
+          });
+        });
+        function fromHash() { var h = location.hash.slice(1), t = h && document.getElementById('tab-' + h); if (t) show(t); }
+        window.addEventListener('hashchange', fromHash);
+        fromHash();
+      })();
+    </script>
+  </body>
+</html>
