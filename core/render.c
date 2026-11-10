@@ -43,12 +43,23 @@ void render_starting(uint8_t *p) {
  blit(p,4,13,&logo_large);
  plain(p,112,24,"SANDBOX",7); plain(p,112,42,"KERNEL",6); plain(p,112,77,"STARTING...",11);
 }
-void render_status(uint8_t *p,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
+/* title/mark: the running OS's own name and 40x40 mark (ABI 1.9), or NULL for the kernel's. */
+void render_status_ex(uint8_t *p,const char *title,const uint8_t *mark,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  memset(p,255,4000);
- blit(p,4,2,&logo_small);
- plain(p,54,6,"SANDBOX KERNEL",14); plain(p,54,24,build_id,12);
+ if(mark) {struct logo l={40,40,5,mark};blit(p,4,2,&l);} else blit(p,4,2,&logo_small);
+ plain(p,54,6,title?title:"SANDBOX KERNEL",16); plain(p,54,24,build_id,16);
  char up[32]; uptime(up,seconds);
  plain(p,4,48,"UP:",3); plain(p,54,48,up,16);
  plain(p,4,70,"USB:",4); plain(p,54,70,usb,16);
  plain(p,4,92,"ERR:",4); plain(p,54,92,error,16);
+}
+void render_status(uint8_t *p,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
+ render_status_ex(p,NULL,NULL,build_id,usb,error,seconds);
+}
+/* An OS page: 250x122, 32-byte rows, bit 7 = leftmost, 1 = black (the same as struct logo).
+ * kernel_mark: an 8x8 black square in the top-right corner, drawn last, so an OS cannot hide it. */
+void render_page(uint8_t *p,const uint8_t *bits,bool kernel_mark) {
+ memset(p,255,4000);
+ for(unsigned y=0;y<122;y++) for(unsigned x=0;x<250;x++) if(bits[y*32+x/8]&(0x80>>(x%8))) dot(p,x,y);
+ if(kernel_mark) for(unsigned y=0;y<8;y++) for(unsigned x=242;x<250;x++) dot(p,x,y);
 }

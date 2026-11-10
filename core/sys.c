@@ -3,7 +3,9 @@
  * zero on entry; addresses are u64 with zero upper bits; transfers are at
  * most 1 MiB. Handles carry a generation, so a closed id is EBADF forever. */
 #include "kernel.h"
+#include "serial.h"
 #include "clock.h"
+#include "eink.h"
 #include "abi.h"
 #include "assets.h"
 #include "fatput.h"
@@ -29,7 +31,8 @@
 #define ENAMETOOLONG 36
 #define ENOSYS 38
 #define ENOTDIR 20
-enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE,K_AUDIO};
+enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE,K_EINK,K_AUDIO,K_SERIAL};
+static uint8_t eink_stage[EINK_PAGE_BYTES]; /* a page copied in before the rules see it */
 /* One bounded write transaction; never a general filesystem writer. */
 static uint8_t cache_bytes[FATPUT_MAX];
 static char cache_name[13],cache_game[9];static uint32_t cache_used;static bool cache_dirty; /* cache_game "" = /OS/CACHE */
@@ -66,12 +69,14 @@ extern uint32_t boot_generation;
 static void release(unsigned i) {
  if(fds[i].kind==K_ASSET) asset_close(fds[i].asset);
  if(fds[i].kind==K_INPUT) input_close(fds[i].inst);
+ if(fds[i].kind==K_SERIAL) serial_close();
  if(fds[i].kind==K_AUDIO) audio_dev_close();
  fds[i].kind=K_FREE;fds[i].has_pend=false;fds[i].gen=(uint16_t)(fds[i].gen==0xffffu?1:fds[i].gen+1);
 }
 static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
 void sys_reset(void) {
  for(unsigned i=0;i<SYS_HANDLES;i++) release(i);
+ eink_reset(); /* the kernel has the panel back, whatever ended the program */
  surface_mapped=false;surface_bytes=0;sys_presents=0;sys_healths=0;sys_health_seq=0;sys_wake_us=0;
 }
 uint32_t sys_open_handles(void) {uint32_t n=0;for(unsigned i=0;i<SYS_HANDLES;i++) n+=fds[i].kind!=K_FREE;return n;}
@@ -94,6 +99,18 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
   if(!fb_pixels) return -ENODEV;
   for(unsigned j=0;j<SYS_HANDLES;j++) if(fds[j].kind==K_FB) return -EBUSY;
   fds[i].kind=K_FB;
+ }
+ else if(n==12&&!memcmp(p,"/dev/serial0",12)) {
+  if(access==3) return -EINVAL;
+  if(!(flags&0x100u)) return -EINVAL; /* nonblocking only */
+  int e=serial_open(); if(e) return e;
+  fds[i].kind=K_SERIAL;
+ }
+ else if(n==9&&!memcmp(p,"/dev/eink",9)) { /* ABI 1.9: write-only, one handle (docs/eink.md) */
+  if(!eink_available()) return -ENODEV;
+  if(access!=1) return -EACCES;
+  for(unsigned j=0;j<SYS_HANDLES;j++) if(fds[j].kind==K_EINK) return -EBUSY;
+  fds[i].kind=K_EINK;
  }
  else if(n==10&&!memcmp(p,"/dev/audio",10)) { /* ABI 1.8: write-only, one writer */
   if(access!=1) return -EACCES;
@@ -140,6 +157,24 @@ static int io(struct k_io *r,bool write) {
   if(!write) return -EBADF;
   uint8_t line[SYS_LOG_LINE]; uint32_t take=count<SYS_LOG_LINE?count:SYS_LOG_LINE;
   us_copy_in(line,va,take); log_user(line,take); r->transferred=count; return 0;
+ }
+ if(fds[i].kind==K_SERIAL) {
+  uint8_t b[256]; uint32_t done=0;
+  if(write) {
+   while(done<count) {uint32_t t=count-done<sizeof b?count-done:(uint32_t)sizeof b; if(us_copy_in(b,va+done,t)) return -EFAULT; serial_write(b,t); done+=t;}
+   r->transferred=count; return 0;
+  }
+  int got=serial_read(b,count<sizeof b?count:(uint32_t)sizeof b); if(got<0) return got;
+  if(us_copy_out(va,b,(uint32_t)got)) return -EFAULT;
+  r->transferred=(uint32_t)got; return 0;
+ }
+ if(fds[i].kind==K_EINK) {
+  if(!write) return -EBADF;
+  if(!eink_available()) return -ENODEV;
+  if(count!=EINK_PAGE_BYTES) return -EINVAL; /* a whole page or nothing */
+  if(us_copy_in(eink_stage,va,count)) return -EFAULT;
+  int e=eink_page(eink_stage,count,clock_us()); if(e) return e;
+  r->transferred=count; return 0;
  }
  if(fds[i].kind==K_INPUT) {
   if(write) return -EBADF;
@@ -231,6 +266,40 @@ static int ioctl_fb(const struct k_ioctl *r) {
   struct k_fb_palette m; int e=class_in(r->buffer,r->bytes,&m,sizeof m); if(e) return e;
   if(!m.count||m.first>255||m.count>256-m.first) return -EINVAL;
   return fb_set_palette((uint32_t)m.first,(uint32_t)m.count,m.rgb);
+ }
+ return -ENOTTY;
+}
+ static int ioctl_serial(const struct k_ioctl *r) {
+ if(r->request!=0x60000u) return -ENOTTY;
+ struct k_serial_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
+ if(q.transport|q.tx_bytes|q.tx_dropped|q.rx_bytes|q.rx_dropped|q.tx_pending|q.rx_pending) return -EINVAL;
+ if(us_check(r->buffer,sizeof q,U_W)) return -EFAULT;
+ struct serial_counters c; serial_counters(&c);
+ q.transport=c.transport;q.tx_bytes=c.tx_bytes;q.tx_dropped=c.tx_dropped;q.rx_bytes=c.rx_bytes;q.rx_dropped=c.rx_dropped;q.tx_pending=c.tx_pending;q.rx_pending=c.rx_pending;
+ return us_copy_out(r->buffer,&q,sizeof q);
+}
+static int ioctl_eink(const struct k_ioctl *r) {
+ uint64_t now=clock_us();
+ if(!eink_available()) return -ENODEV;
+ if(r->request==0x40000u) {
+  struct k_eink_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
+  if(q.width|q.height|q.page_bytes|q.title_max|q.mark_bytes|q.min_interval_ms|q.max_per_minute|q.flags) return -EINVAL;
+  if(us_check(r->buffer,sizeof q,U_W)) return -EFAULT;
+  q.width=EINK_W;q.height=EINK_H;q.page_bytes=EINK_PAGE_BYTES;q.title_max=EINK_TITLE_MAX;q.mark_bytes=EINK_MARK_BYTES;
+  q.min_interval_ms=EINK_MIN_INTERVAL_US/1000u;q.max_per_minute=EINK_BURST;
+  return us_copy_out(r->buffer,&q,sizeof q);
+ }
+ if(r->request==0x40001u) {
+  struct k_eink_title t; int e=class_in(r->buffer,r->bytes,&t,sizeof t); if(e) return e;
+  if((t.flags&~1ull)||t.name_bytes<1||t.name_bytes>sizeof t.name||t.build_bytes>sizeof t.build) return -EINVAL;
+  for(uint64_t i=t.build_bytes;i<sizeof t.build;i++) if(t.build[i]) return -EINVAL;
+  for(uint64_t i=t.name_bytes;i<sizeof t.name;i++) if(t.name[i]) return -EINVAL;
+  if(!(t.flags&1u)) for(unsigned i=0;i<sizeof t.mark;i++) if(t.mark[i]) return -EINVAL;
+  return eink_title(t.name,(uint32_t)t.name_bytes,(t.flags&1u)?t.mark:NULL,t.build,(uint32_t)t.build_bytes,now);
+ }
+ if(r->request==0x40002u) {
+  struct k_header h; int e=class_in(r->buffer,r->bytes,&h,sizeof h); if(e) return e;
+  return eink_clear(now);
  }
  return -ENOTTY;
 }
@@ -366,6 +435,8 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 5: {
    struct k_ioctl *r=(struct k_ioctl *)rec; int i=lookup(r->fd); if(i<0) return i;
    if(fds[i].kind==K_INPUT) return ioctl_input((unsigned)i,r);
+   if(fds[i].kind==K_SERIAL) return ioctl_serial(r);
+   if(fds[i].kind==K_EINK) return ioctl_eink(r);
    if(fds[i].kind==K_AUDIO) return ioctl_audio(r);
    if(fds[i].kind!=K_FB) return -ENOTTY;
    return ioctl_fb(r);

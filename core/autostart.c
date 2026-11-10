@@ -5,6 +5,7 @@
 #include "autostart.h"
 #include "os.h"
 #include "fb.h"
+#include "eink.h"
 static char picked[20];
 static bool armed; /* the running program came from autostart and is not DIAG */
 static bool cancelled;
@@ -61,6 +62,7 @@ bool autostart_fallback(void) {
 /* Boot policy used by kernel_main: no card, no OS, so the HDMI recovery console comes up at once and says why. */
 bool boot_storage_policy(bool storage_ready) {
  if(storage_ready) return true;
+ eink_reset(); /* no OS will run: the panel is the kernel's (status screen) */
  log_line("SD card not readable; recovery console (USB PUTF and RUN available)");fb_recovery();return false;
 }
 /* The 10 s autostart: a running OS is left alone; if nothing can start, the recovery console. */

@@ -4,6 +4,7 @@
 #include <assert.h>
 #include "../core/usbrole.c"
 #include "../drivers/usb.c"
+#include "../core/serial.c"
 static bool mounted=true,connected=true,busy;
 static unsigned credits,sent,tasks;
 static char wire[8192];
@@ -71,5 +72,11 @@ int main(void) {
   usb_log("after flood");drain(64);
   assert(!strcmp(wire,"LOG after flood\n") && lr==lw && dropped==0);
  }
+ /* OS serial output joins the ring as whole lines, never inside a LOG line. */
+ assert(serial_open()==0);
+ drain(0);usb_log("before");serial_write((const uint8_t *)"a\nb",3);drain(0);usb_log("after");
+ drain(256);
+ assert(!strcmp(wire,"LOG before\nOS a\nOS~ b\nLOG after\n"));
+ connected=false;drain(0);serial_write((const uint8_t *)"x",1);drain(64);assert(sent==0 && lr==lw);
  return 0;
 }

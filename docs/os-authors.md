@@ -165,7 +165,8 @@ sees only that. The art is in `art/boot/` (with its layout notes), baked into
   stopped it) the kernel shows a header and a 60 by 12 box with its own log lines, newest
   at the bottom, redrawn as lines arrive. A program that exits on its own leaves its last
   frame up, as before. The console is 960x540 only.
-- **E-ink:** the starting and status screens below.
+- **E-ink:** the starting and status screens below; a running OS can change the title and
+  mark or show its own page (`docs/eink.md`, section "Show your OS on the e-ink").
 
 `scripts/render_screen.py OUTDIR` renders all of them on the host to PNG.
 
@@ -193,6 +194,34 @@ start, and `OS autostart rejected; trying DIAG.ELF`. Which replies set `ERR:` (`
 
 `STOP` and `INPUT` use `refuse()` for their not-ready cases. A refusal never clears an earlier error.
 The panel redraws only when its content changes, and a full refresh takes seconds.
+
+### Show your OS on the e-ink (ABI 1.9)
+
+While your program runs it can put its own name and mark on the panel, or draw a whole
+250x122 page, through `/dev/eink` (write-only; full rules and limits in `docs/eink.md`):
+
+```c
+#include <sandbox/syscall.h>
+extern const uint8_t my_page[SBX_EINK_PAGE_BYTES]; /* 250x122, 32-byte rows, bit 7 = leftmost, 1 = black */
+
+uint64_t eink;
+if (sbx_open("/dev/eink", 9, SBX_O_WRONLY, &eink) == 0) {
+  sbx_eink_title_rec t;
+  sbx_eink_title(eink, &t, "MY OS", 5, NULL, "V0.4 3A9F2C1");   /* name up to 16 characters; a 200-byte 40x40 mark is optional;
+                                                                   the build line is free text up to 16 (hash, version, date) or NULL */
+  /* a page replaces the status screen; call again for the next frame, at most once a second */
+  while (sbx_eink_page(eink, my_page) == -SBX_EAGAIN) { /* too soon: wait and try again */ }
+}
+```
+
+- **Limits:** one accepted update per second at most and 30 a minute; a refused one returns
+  `-SBX_EAGAIN` and changes nothing. The OS cannot ask for a full refresh; the kernel does a
+  ghost-clearing one itself (after 50 partials, and at least every 23 hours even for a page that never changes).
+- **No panel:** `/dev/eink` and its calls return `-SBX_ENODEV` when no panel driver is running (or it was disabled after a fault).
+- **The kernel wins:** when your program exits, faults or is stopped, the panel goes back to
+  the kernel's status screen. If a kernel error appears while your page is up, the panel shows
+  the kernel screen at its next update; your next page returns with a small black square in
+  the top-right corner (8x8) for as long as `ERR:` is not `none`. Leave that corner white.
 
 ## 3. Writing a program
 
@@ -275,6 +304,8 @@ described in `docs/design.md`.)
 | 1.6 | Opt-in **app arena** (call 21): one fixed block of 2,195,456 bytes at `0x30000000`, read/write, never executable, granted once per run. See `docs/app-arena-abi.md`. |
 | 1.7 | Save folders: write scope `/sd/OS/SAVES/<GAME>/<NAME>` (`EDQUOT` -122 past 64 game folders or 32 files per game); see `docs/saves-storage.md`. |
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 4,096-frame ring (about 85 ms) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. A gap plays silence and counts an underrun. **Today a null backend drains the ring; no sound reaches a speaker or HDMI yet.** See `docs/audio-device.md`. |
+| 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
+| 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
 
 **Not yet:** sound you can hear (`/dev/audio` exists, but only a null backend drains it; the PCM host core in `docs/audio-host-core.md` is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
 only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI audio and HDMI-CEC, and the
@@ -350,6 +381,17 @@ the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 `ERR not-ready` while an OS program is running, and during a kernel update. **Run `stop`
 first**, then install, then `run`. If you are fast, you can also install during the first
 10 s after boot, before autostart. Install a new `JS.ELF` or `GMOS.ELF` the same way.
+
+### Talking to your OS over serial
+
+Your program can send text to the host and receive bytes from it over the same USB link that
+carries the synthetic keyboard, with `/dev/serial0` (ABI 1.10). Open it nonblocking, `write` lines,
+and `read` until you get `EAGAIN`. Output with no listener, or past the 512-byte buffer, is dropped
+and counted, never blocks you. On the Mac, `usb_kernel.py <port> console` shows your output as it
+arrives (kernel `LOG` lines dimmed) and sends what you type, with arrows, Enter, Space, Q and Esc
+also pressed as keys. Wire format, counters and limits are in `docs/serial.md`. An example program
+will go in `examples/` when that folder exists; the core is
+`uint64_t fd; sbx_open("/dev/serial0", 12, 2 | 0x100, &fd);` (read and write, nonblocking), then a write call with `"hello\n"` and its length.
 
 ## 7. Make your own JavaScript OS
 

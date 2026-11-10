@@ -2,14 +2,18 @@
  * register sequence adapted from Waveshare team, permission in licenses/. */
 #include "kernel.h"
 #include "render.h"
+#include "eink.h"
+#include "clock.h"
 #define SPI (PERIPH+0x204000)
 static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos;
 static uint32_t since,delay;
 static bool full=true,disabled;
+static void disable(const char *reason) {disabled=true;eink_set_available(false);error(reason);}
 static bool byte(uint8_t b) {
+ if(disabled)return false;
  REG(SPI)=0xb0; REG(SPI+4)=b; uint32_t t=micros();
- while(!(REG(SPI)&0x10000)) if(expired(t,1000)) {disabled=true;error("SPI timeout");REG(SPI)=0;return false;}
+ while(!(REG(SPI)&0x10000)) if(expired(t,1000)) {disable("SPI timeout");REG(SPI)=0;return false;}
  (void)REG(SPI+4); REG(SPI)=0; return true;
 }
 static void cmd(uint8_t c) { gpio_set(25,false); byte(c); gpio_set(25,true); }
@@ -25,6 +29,7 @@ void panel_start(void) {
  REG(SPI+8)=64; /* 250MHz core /64 = 3.90625 MHz; fixed in config.txt */
  render_starting(desired);memcpy(frame,desired,4000);
  gpio_set(17,true);wait_phase(1,20000);
+ eink_set_available(true);
 }
 bool panel_boot_done(void) {return disabled||!full;}
 void panel_task(const char *state,uint32_t seconds) {
@@ -36,7 +41,7 @@ void panel_task(const char *state,uint32_t seconds) {
  case 3:wait_phase(4,5000000);return;
  case 4:case 5:case 6:case 9:
   if(phase!=4&&!expired(since,10000))return;
-  if(gpio_get(24)) {if(expired(since,5000000)) {disabled=true;error("Panel BUSY timeout");}return;}
+  if(gpio_get(24)) {if(expired(since,5000000)) {disable("Panel BUSY timeout");}return;}
   if(phase==4) {cmd(0x12);wait_phase(5,0);return;}
   if(phase==5) {setup();cmd(0x3c);datum(5);cmd(0x21);datum(0);datum(0x80);cmd(0x18);datum(0x80);wait_phase(6,0);return;}
   if(phase==6) {window();cmd(0x24);pos=0;phase=7;return;}
@@ -46,14 +51,17 @@ void panel_task(const char *state,uint32_t seconds) {
   unsigned stop=pos+128;if(stop>4000)stop=4000;while(pos<stop&&!disabled)datum(frame[pos++]);if(pos<4000)return;
   if(phase==7&&full) {window();cmd(0x26);pos=0;phase=8;return;}
   if(phase==10) {memcpy(shown,frame,4000);full=false;wait_phase(11,10000);return;}
-  cmd(0x22);datum(full?0xf7:0xff);cmd(0x20);wait_phase(9,0);return;
+  cmd(0x22);datum(full?0xf7:0xff);cmd(0x20);
+  /* Count boot and later refreshes at the successful command trigger, never at scheduling. */
+  if(!disabled)eink_note_refresh(full,clock_us());
+  wait_phase(9,0);return;
  }
  case 11:if(!expired(since,delay))return;phase=0;return;
  case 12:if(!expired(since,1000))return;gpio_set(17,true);cmd(0x3c);datum(0x80);setup();cmd(0x24);pos=0;phase=7;return;
  default:break;
  }
  if(phase)return;
- render_status(desired,BUILD_ID,state,last_error,seconds);
- if(!memcmp(desired,shown,4000))return;
+ eink_compose(desired,BUILD_ID,state,last_error,seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
+ {uint64_t now=clock_us();if(!memcmp(desired,shown,4000)&&!(eink_maintenance_due(now)&&eink_full_due(now)))return;full=eink_full_due(now);} /* ghost-clearing full refresh: VERIFY on the board */
  memcpy(frame,desired,4000);gpio_set(17,false);wait_phase(12,1000);
 }

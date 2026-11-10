@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 8u /* 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -69,6 +69,18 @@ enum {
 #define SBX_FB_RGB565 2u   /* 16-bit words rrrrrggggggbbbbb */
 #define SBX_FB_INDEX8 3u   /* bytes, colors from the palette */
 #define SBX_FB_FORMAT_XRGB8888 1u /* 32-bit little-endian words 0x00RRGGBB */
+/* Class 4 (ABI 1.9) is the e-ink panel, /dev/eink, opened write-only: docs/eink.md. A page is
+   written with write() as exactly SBX_EINK_PAGE_BYTES (250x122, 32-byte rows, bit 7 leftmost, 1 = black). */
+#define SBX_IOC_EINK_QUERY SBX_IOC(4, 0)
+#define SBX_IOC_EINK_TITLE SBX_IOC(4, 1) /* sbx_eink_title_rec */
+#define SBX_IOC_EINK_CLEAR SBX_IOC(4, 2) /* a bare sbx_header: back to the kernel's screen */
+#define SBX_EINK_WIDTH 250u
+#define SBX_EINK_HEIGHT 122u
+#define SBX_EINK_PAGE_BYTES 3904u
+#define SBX_EINK_TITLE_MAX 16u
+#define SBX_EINK_BUILD_MAX 16u /* the build line: what fits the status line at 2x */
+#define SBX_EINK_MARK_BYTES 200u /* 40x40, 5-byte rows, same bit order */
+#define SBX_EINK_TITLE_MARK 1u /* sbx_eink_title_rec.flags: a mark follows */
 /* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
 #define SBX_IOC_INPUT_QUERY SBX_IOC(3, 0)
 #define SBX_IOC_INPUT_STATE SBX_IOC(3, 1) /* current state; also empties the queue */
@@ -79,6 +91,11 @@ enum {
 #define SBX_EV_ABS 3u
 #define SBX_SYN_REPORT 0u
 #define SBX_SYN_DROPPED 3u /* events were lost: read the state, then go on */
+/* Class 6 is the serial channel (1.10): /dev/serial0, nonblocking, one owner, a byte stream to the
+   host on the USB link. See docs/serial.md. Bytes that do not fit, or that have no reader, are dropped and counted. */
+#define SBX_IOC_SERIAL_QUERY SBX_IOC(6, 0)
+#define SBX_SERIAL_NONE 0u /* sbx_serial_info.transport: no host has the port open */
+#define SBX_SERIAL_USB 1u  /* the USB CDC link */
 #define SBX_KEY_ESC 1u
 #define SBX_KEY_Q 16u
 #define SBX_KEY_ENTER 28u
@@ -207,6 +224,18 @@ typedef struct sbx_sleep_rec { /* sleep_until (ABI 1.1): not run again before th
   sbx_header h;
   uint64_t deadline; /* absolute monotonic nanoseconds; one already passed returns at once */
 } sbx_sleep_rec;
+typedef struct sbx_eink_info { /* SBX_IOC_EINK_QUERY output (fields zero on entry) */
+  sbx_header h;
+  uint64_t width, height, page_bytes, title_max, mark_bytes, min_interval_ms, max_per_minute, flags;
+} sbx_eink_info;
+typedef struct sbx_eink_title_rec { /* name 1-16 chars (kernel font, capitals), optional mark */
+  sbx_header h;
+  uint64_t flags, name_bytes;
+  char name[16];
+  uint8_t mark[200];
+  uint64_t build_bytes; /* 0-16: the build line under the name; 0 = blank */
+  char build[16];       /* free text: a hash, a version, a date; the kernel font, capitals; anything else shows as ? */
+} sbx_eink_title_rec;
 typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
   uint64_t ns; /* monotonic nanoseconds since the kernel started */
   uint16_t type, code;
@@ -229,6 +258,10 @@ typedef struct sbx_input_state { /* SBX_IOC_INPUT_STATE output */
   uint64_t keys[SBX_INPUT_KEYS / 64]; /* bit (code % 64) of word (code / 64) is set while down */
   int64_t axes[SBX_INPUT_AXES];
 } sbx_input_state;
+typedef struct sbx_serial_info { /* SBX_IOC_SERIAL_QUERY output (1.10) */
+  sbx_header h;
+  uint64_t transport, tx_bytes, tx_dropped, rx_bytes, rx_dropped, tx_pending, rx_pending;
+} sbx_serial_info;
 /* Read-only record whose address is in r0 at entry. Returning from the entry
    point ends the program with r0 as its exit status. */
 typedef struct sbx_startup {
@@ -250,6 +283,7 @@ static inline uint64_t sbx_app_generation(const sbx_startup *s) {
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
+SBX_CHECK(sbx_eink_info, 80); SBX_CHECK(sbx_eink_title_rec, 272); SBX_AT(sbx_eink_title_rec, name, 32); SBX_AT(sbx_eink_title_rec, mark, 48);
 SBX_CHECK(sbx_startup_ext, 48); SBX_AT(sbx_startup_ext, prefix, 0); SBX_AT(sbx_startup_ext, app_generation, 40);
 SBX_CHECK(sbx_app_arena_rec, 48); SBX_AT(sbx_app_arena_rec, h, 0);
 SBX_AT(sbx_app_arena_rec, owner_generation, 16); SBX_AT(sbx_app_arena_rec, requested_bytes, 24);
@@ -296,6 +330,7 @@ SBX_CHECK(sbx_input_event, 16); SBX_AT(sbx_input_event, type, 8); SBX_AT(sbx_inp
 SBX_CHECK(sbx_input_info, 72);
 SBX_AT(sbx_input_info, flags, 16); SBX_AT(sbx_input_info, instance, 24); SBX_AT(sbx_input_info, queue_records, 32);
 SBX_AT(sbx_input_info, keys, 40); SBX_AT(sbx_input_info, axes, 48); SBX_AT(sbx_input_info, axis_min, 56); SBX_AT(sbx_input_info, axis_max, 64);
+SBX_CHECK(sbx_serial_info, 72); SBX_AT(sbx_serial_info, transport, 16); SBX_AT(sbx_serial_info, rx_pending, 64);
 SBX_CHECK(sbx_input_state, 368); SBX_AT(sbx_input_state, keys, 16); SBX_AT(sbx_input_state, axes, 112);
 #undef SBX_CHECK
 #undef SBX_AT
