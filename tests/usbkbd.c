@@ -62,5 +62,32 @@ int main(void) {
  usbkbd_device_gone(3);assert(usbkbd_count()==0&&removes==1&&!usbkbd_ready());
  reset();for(uint8_t i=0;i<USBKBD_MAX;i++) assert(usbkbd_hid_mounted((uint8_t)(i+1),0,true));
  assert(!usbkbd_hid_mounted(9,0,true)&&usbkbd_count()==USBKBD_MAX);                   /* more than the limit: skipped, logged */
+ /* two keyboards interleaved: the OS sees the union, one's release keeps the other's key */
+ reset();usbkbd_attached(1,2);usbkbd_attached(3,4);
+ assert(usbkbd_hid_mounted(2,0,true)&&usbkbd_hid_mounted(3,0,true));
+ uint8_t ka[8]={0,0,0x04},kb2[8]={0,0,0x05},kab[8]={0,0,0x04,0x05},z[8]={0},ma[8]={2,0,0x04};
+ usbkbd_report(2,0,ka,8);assert(ngot==1&&got[0].code==30&&got[0].value==1);
+ ngot=0;usbkbd_report(3,0,kb2,8);assert(ngot==1&&got[0].code==48&&got[0].value==1);
+ ngot=0;usbkbd_report(2,0,z,8);assert(ngot==1&&got[0].code==30&&got[0].value==0);   /* A up; B still held */
+ ngot=0;usbkbd_report(2,0,ka,8);usbkbd_report(2,0,ka,8);assert(ngot==1);              /* A down again, no repeat */
+ ngot=0;usbkbd_report(3,0,z,8);assert(ngot==1&&got[0].code==48&&got[0].value==0);    /* B up; A still held */
+ ngot=0;usbkbd_report(3,0,ka,8);assert(ngot==0);                                       /* both hold A: one key */
+ usbkbd_report(2,0,z,8);assert(ngot==0);                                              /* one lets go, other holds */
+ usbkbd_report(3,0,z,8);assert(ngot==1&&got[0].value==0);
+ /* removal releases only that keyboard's keys, a modifier from the other stays */
+ ngot=0;usbkbd_report(2,0,ma,8);usbkbd_report(3,0,kb2,8);assert(ngot==3);
+ ngot=0;usbkbd_device_gone(2);assert(ngot==2&&usbkbd_ready()&&removes==0);
+ for(unsigned k=0;k<ngot;k++) assert(got[k].value==0&&(got[k].code==42||got[k].code==30));
+ ngot=0;usbkbd_report(3,0,z,8);assert(ngot==1&&got[0].code==48);
+ (void)kab;
+ /* 9-byte reports (a leading report ID) use the boot layout after it; the ID is logged once */
+ reset();usbkbd_attached(1,2);assert(usbkbd_hid_mounted(2,0,true));
+ uint8_t id9[9]={1,0,0,0x52};usbkbd_report(2,0,id9,9);assert(ngot==1&&got[0].code==103&&got[0].value==1);
+ uint8_t id9z[9]={1};ngot=0;usbkbd_report(2,0,id9z,9);assert(ngot==1&&got[0].value==0);
+ /* a longer report without an ID uses its first 8 bytes */
+ reset();assert(usbkbd_hid_mounted(2,0,true));uint8_t l8[8]={0,0,0x52};usbkbd_report(2,0,l8,8);assert(ngot==1);
+ uint8_t l10[10]={0,0,0x52,0x2c};ngot=0;usbkbd_report(2,0,l10,10);assert(ngot==1&&got[0].code==57);
+ /* a 7-byte report is ignored safely, and still re-armed */
+ reset();assert(usbkbd_hid_mounted(2,0,true));uint8_t s7[7]={0,0,4};assert(usbkbd_report(2,0,s7,7)&&ngot==0);
  puts("usbkbd ok");return 0;
 }

@@ -3,9 +3,11 @@
 #include "hidboot.h"
 #include "input.h"
 #include "usblog.h"
+#include <string.h>
 void log_line(const char *s); /* kernel.h, without its hardware inlines */
 /* Up to USBKBD_MAX boot keyboards at once (a hub may hold two plus a receiver); the input queue sees one device. */
-static struct {struct hidboot kb;bool used;uint8_t daddr,idx;} slot[USBKBD_MAX];static unsigned nkb,ndev;
+/* Each keyboard keeps its own last report (kb) and held keys; what the OS sees is the union (sent). */
+static struct {struct hidboot kb;bool used,seen,idrep,shortnote;uint8_t daddr,idx;uint8_t held[16];} slot[USBKBD_MAX];static uint8_t sent[16];static unsigned nkb,ndev;
 static const char *const special[]={"Enter","Esc","Backspace","Tab","Space","-","=","[","]","\\","#",";","'","`",",",".","/","CapsLock"};
 const char *usbkbd_usage_name(uint8_t u) {
  static char one[2],f[4];
@@ -32,7 +34,7 @@ static void note(uint8_t daddr,uint8_t idx,const char *t) { /* "D2 hid1 text": i
  char x[USBLOG_LINE-12]="hid0 ";x[3]=(char)('0'+idx%10);unsigned n=5;while(*t&&n<sizeof x-1)x[n++]=*t++;x[n]=0;
  char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,x);usblog_add(l);}
 static void hex4(char *o,uint16_t v) {for(int i=0;i<4;i++)o[i]="0123456789ABCDEF"[(v>>(12-4*i))&15];}
-void usbkbd_init(void) {usblog_clear();for(unsigned i=0;i<USBKBD_MAX;i++)slot[i].used=false;nkb=0;ndev=0;}
+void usbkbd_init(void) {usblog_clear();for(unsigned i=0;i<USBKBD_MAX;i++)slot[i].used=false;for(unsigned i=0;i<16;i++)sent[i]=0;nkb=0;ndev=0;}
 void usbkbd_host_up(void) {log_line("USB host up");}
 void usbkbd_attached(uint16_t vid,uint16_t pid) {
  char id[10];hex4(id,vid);id[4]=':';hex4(id+5,pid);id[9]=0;ndev++;say("device attached ",id);
@@ -43,22 +45,42 @@ bool usbkbd_hid_mounted(uint8_t daddr,uint8_t idx,bool boot_keyboard) {
  if(!boot_keyboard) {log_line("HID interface skipped (not a boot keyboard)");note(daddr,idx,"HID skipped: not a boot keyboard");return false;}
  if(find(daddr,idx)>=0) {note(daddr,idx,"HID skipped: already mounted");return false;}
  for(unsigned i=0;i<USBKBD_MAX;i++) if(!slot[i].used) {
-  hidboot_init(&slot[i].kb);slot[i].used=true;slot[i].daddr=daddr;slot[i].idx=idx;
+  hidboot_init(&slot[i].kb);memset(slot[i].held,0,16);slot[i].seen=slot[i].idrep=slot[i].shortnote=false;slot[i].used=true;slot[i].daddr=daddr;slot[i].idx=idx;
   if(!nkb++) input_add();
   log_line("keyboard ready");note(daddr,idx,"keyboard ACCEPTED");return true;
  }
  log_line("keyboard skipped (too many)");note(daddr,idx,"keyboard skipped: HID slots full");return false;
 }
+/* Send what changed in the union of every keyboard's held keys: releases first, modifiers before keys on a press. */
+static void sync_union(void) {
+ uint8_t u[16]={0};for(unsigned i=0;i<USBKBD_MAX;i++) if(slot[i].used) for(unsigned j=0;j<16;j++) u[j]|=slot[i].held[j];
+ static const uint16_t mods[8]={29,42,56,125,97,54,100,126};
+ struct input_change ch[128];unsigned n=0;
+ for(int pass=0;pass<4;pass++) for(unsigned k=1;k<128;k++) {
+  unsigned was=(sent[k>>3]>>(k&7))&1u,now=(u[k>>3]>>(k&7))&1u;int m=0;for(unsigned q=0;q<8;q++) if(mods[q]==k) m=1;
+  if(was==now||(pass==0&&(!was||m))||(pass==1&&(!was||!m))||(pass==2&&(was||!m))||(pass==3&&(was||m))) continue;
+  ch[n].type=EV_KEY;ch[n].code=(uint16_t)k;ch[n].value=(int)now;n++;
+ }
+ memcpy(sent,u,16);
+ for(unsigned i=0;i<n;i+=INPUT_FRAME_MAX) {unsigned c=n-i>INPUT_FRAME_MAX?INPUT_FRAME_MAX:n-i;(void)input_frame(ch+i,c);}
+}
+static void note_len(uint8_t daddr,uint8_t idx,const char *t,uint32_t len) {
+ char x[24];unsigned n=0;while(*t&&n<14)x[n++]=*t++;char d[11];unsigned k=0;do d[k++]=(char)('0'+len%10);while((len/=10)&&k<10);while(k)x[n++]=d[--k];x[n]=0;note(daddr,idx,x);
+}
 bool usbkbd_report(uint8_t daddr,uint8_t idx,const uint8_t *rep,uint32_t len) {
  int i=find(daddr,idx);if(i<0) return false;
- struct hidboot probe=slot[i].kb;struct input_change ch[HIDBOOT_CHANGES_MAX];
- int n=hidboot_diff(&probe,rep,len,ch);
+ if(!slot[i].seen) {slot[i].seen=true;slot[i].idrep=len==HIDBOOT_REPORT+1;note_len(daddr,idx,"first report len ",len);
+  if(slot[i].idrep) note(daddr,idx,"report ID byte stripped");}
+ if(len<HIDBOOT_REPORT) {if(!slot[i].shortnote) {slot[i].shortnote=true;note_len(daddr,idx,"short report ignored len ",len);}return true;}
+ if(slot[i].idrep&&len>HIDBOOT_REPORT) {rep++;len--;}   /* leading report ID */
+ struct input_change ch[HIDBOOT_CHANGES_MAX];
+ int n=hidboot_diff(&slot[i].kb,rep,HIDBOOT_REPORT,ch);
  for(int k=0;k<n;k++) if(ch[k].value==1) say("key ",code_name(ch[k].code));
- hidboot_feed(&slot[i].kb,rep,len);
+ hidboot_held(slot[i].kb.prev,slot[i].held);sync_union();
  return true;
 }
 static void drop_slot(unsigned i,const char *why) {
- hidboot_release_all(&slot[i].kb);slot[i].used=false;
+ memset(slot[i].held,0,16);slot[i].used=false;sync_union();
  if(!--nkb) input_remove();
  log_line(why);note(slot[i].daddr,slot[i].idx,why);
 }

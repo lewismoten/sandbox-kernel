@@ -68,6 +68,11 @@ int hidboot_feed(struct hidboot *s,const uint8_t *rep,uint32_t len) {
  }
  return 0;
 }
+void hidboot_held(const uint8_t *rep,uint8_t out[16]) {
+ for(unsigned i=0;i<16;i++) out[i]=0;
+ for(unsigned b=0;b<8;b++) if((rep[0]>>b)&1u) out[mods[b]>>3]|=(uint8_t)(1u<<(mods[b]&7));
+ for(unsigned i=2;i<HIDBOOT_REPORT;i++) {uint16_t k=rep[i]>=4?hidboot_linux_key(rep[i]):0;if(k&&k<128) out[k>>3]|=(uint8_t)(1u<<(k&7));}
+}
 int hidboot_release_all(struct hidboot *s) {
  static const uint8_t zero[HIDBOOT_REPORT]={0};
  return hidboot_feed(s,zero,HIDBOOT_REPORT);

@@ -18,6 +18,8 @@ uint16_t hidboot_linux_key(uint8_t usage);
 int hidboot_diff(struct hidboot *s,const uint8_t *rep,uint32_t len,struct input_change *out);
 /* hidboot_diff, then input_frame in frames of INPUT_FRAME_MAX. Returns 0 or a negative errno. */
 int hidboot_feed(struct hidboot *s,const uint8_t *rep,uint32_t len);
+/* Every Linux key code (below 128) the 8-byte report holds down, as bits in out[16]; modifiers included. */
+void hidboot_held(const uint8_t *rep,uint8_t out[16]);
 /* All keys up (device removed or reset): releases whatever is held. Same return as hidboot_feed. */
 int hidboot_release_all(struct hidboot *s);
 #endif

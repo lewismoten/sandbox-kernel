@@ -218,8 +218,11 @@ def read_usblog(port):
     """USBLOG: the host kernel's USB.TXT, fetched piece by piece (a reply is short)."""
     print(handshake(port));parts=[];i=0;total=1
     while i<total:
-        port.send(f'USBLOG {i}\n'.encode());line=port.reply(5)
-        while line.startswith('INFO 2 '): line=port.reply(5)
+        for attempt in range(4):   # the card can be busy for a moment (saving, or the OS reading): ask again
+            port.send(f'USBLOG {i}\n'.encode());line=port.reply(5)
+            while line.startswith(('INFO 2 ','LOG ')): line=port.reply(5)
+            if line!='ERR usblog-unreadable': break
+            time.sleep(0.5)
         if line.startswith('ERR '): print(line);return 1
         m=re.fullmatch(r'USBLOG (\d+)/(\d+) ?(.*)',line)
         if not m: print(line);return 1
