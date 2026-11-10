@@ -1,10 +1,9 @@
-
-ABI minor 1.8 adds this device (and `SBX_IOC_AUDIO_QUERY`); the saves slice keeps 1.7 (`docs/saves-storage.md`). Both headers say minor 8.
 # ABI 1.8 `/dev/audio` (slice 1: ring and null backend)
 
-No sound hardware yet. This is the app-facing device and the ring behind it;
-a PWM or HDMI backend later replaces `audio_null_tick` with a DMA refill and
-keeps everything above it. Design: docs/design.md (`/dev/audio`).
+ABI 1.8 introduced this device and `SBX_IOC_AUDIO_QUERY`; the current kernel
+and SDK report 1.10. The HDMI backend below is linked and replaces the null
+drain when initialization succeeds. PWM is not implemented. Listening, load
+and recovery qualification remain hardware-untested. See [design.md](design.md).
 
 - **Format:** stereo, signed 16-bit little-endian, interleaved, 48000 frames
   a second, fixed. Mono callers duplicate samples. A frame is 4 bytes.
@@ -15,7 +14,7 @@ keeps everything above it. Design: docs/design.md (`/dev/audio`).
   blocks. It queues what fits and returns that many bytes; nothing fitting is
   `EAGAIN` (wait a little, retry). A zero-byte write is a no-op.
 - **Level:** `ioctl(fd, SBX_IOC_AUDIO_QUERY /* 0x20000 */, sbx_audio_info)`:
-  rate, capacity (4096 frames, about 85 ms), queued, played, underruns,
+  rate, capacity (16384 frames, about 341 ms), queued, played, underruns,
   overruns, overrun frames. Output fields must be zero on entry.
 - **Underrun:** the backend asks for more than is queued, plays zeros for the
   missing frames (never stale data) and adds one to `underruns`. Nothing counts
@@ -40,7 +39,7 @@ underrun, overrun, one writer, close while playing, program end, bad records).
 The older `core/audio_core.c` (docs/audio-host-core.md) stays unlinked and is
 not used by this slice.
 
-**Sample word length (IEC 958, not yet on any wire).** The ring is 16-bit PCM. In a subframe it
+**Sample word length (IEC 958, linked HDMI packer).** The ring is 16-bit PCM. In a subframe it
 sits in bits 12-27 of the 24-bit sample slot (low 8 bits zero, `core/iec958.c`), and channel status
 byte 4 says the same: max length 20 bits, 16 used (`0x02`). The status bits, preambles and N/CTS
 values are marked VERIFY in the code and stay outside acceptance until a test on an HDMI TV.
@@ -48,8 +47,8 @@ values are marked VERIFY in the code and stay outside acceptance until a test on
 # Slice 3: mixer and PC-speaker voice (kernel-internal)
 
 No new app-facing ABI: `include/mixer.h` and `core/mixer.c` are kernel
-internals, so `docs/os-authors.md` is unchanged. Nothing calls the mixer yet; a
-later slice feeds `/dev/audio` from it.
+internals. The HDMI `TONE` test command uses the mixer; applications still
+write PCM to `/dev/audio`, with no public mixer syscall.
 
 - **Mixer:** 8 voices, each with a Q8 volume (256 = full), supporting the full
   uint16 range 0..65535 in tone, tune, and volume updates. `mixer_render`
@@ -113,7 +112,9 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
   frames a second, DMA starvation, DMA errors, ring underruns, MAI_CTL).
   `scripts/usb_kernel.py <port> tone 440 1000` / `audio`.
 - **Hardware (2026-11-09, second Pi):** the FIFO drains at 47.5-48 kframes/s, no DMA errors, no
-  starvation, no ring underruns over seconds of silence.
+  starvation, no ring underruns over seconds of silence. This is drain-counter
+  evidence only; audible TV output, concurrent storage/display load, unplug/reconnect
+  and OS-fault silence remain hardware-untested.
 
 Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_regs.h`,
 `vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);

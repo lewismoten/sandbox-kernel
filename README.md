@@ -23,7 +23,7 @@ Goals:
 
 - A familiar, versioned POSIX-style system-call subset and device paths.
 - MMU isolation, bounded driver operations, watchdog recovery, and visible errors.
-- HDMI graphics, e-ink status, storage, input, and eventually audio and wireless.
+- HDMI graphics, e-ink status/pages, storage, input and buffered audio; wireless is planned.
 - Verified USB updates with A/B kernel and OS slots and automatic fallback.
 - A small image, measured in MB rather than GB; size targets await implementation.
 - Original MIT code and audited permissive dependencies, developed independently
@@ -32,10 +32,18 @@ Goals:
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
 The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
-An [unlinked PCM host core](docs/audio-host-core.md) is available for qualification
-only; it does not enable HDMI sound, a device path or a new ABI.
-Build with `make`, run host checks with `make test`, and assemble a boot folder
-and card image with `make boot`. The default compiler is the requested Arm GNU
+The current SDK is **ABI 1.10**: [audio](docs/audio-device.md) arrived in 1.8,
+[OS e-ink titles/pages](docs/eink.md) in 1.9, and [two-way USB serial](docs/serial.md)
+in 1.10. HDMI audio is linked with a null fallback; recorded board evidence is
+limited to DMA drain counters, with listening and sustained-load qualification
+still hardware-untested. The separate [PCM host core](docs/audio-host-core.md)
+remains unlinked. [CEC](docs/cec.md) remains host-only and hardware-untested.
+Build the default `USB_ROLE=device` Mac CDC link with `make`;
+`make USB_ROLE=host all` builds the [USB boot-keyboard role](docs/usb-host-keyboard.md)
+(hardware-untested, no CDC, trial-only and never confirmed). `make boot` refuses
+a host runtime. Run host checks with `make test`, and assemble a boot folder
+and card image with `make boot`. On 2026-11-10, test discovery finds 440 cases;
+optional-tool skips are reported by the runner. The default compiler is the requested Arm GNU
 15.3.rel2 installation. Dependencies are pinned and fetched without git.
 See [M0 build, wire formats and board handoff](docs/m0.md) for commands, layout,
 recovery policy and remaining physical tests. [M1 slice 1](docs/m1.md) adds the HDMI

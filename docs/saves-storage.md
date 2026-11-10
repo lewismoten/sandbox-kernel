@@ -1,6 +1,9 @@
 # ABI 1.7: per-game save folders, `/sd/OS/SAVES/<GAME>/`
 
-ABI minor 1.7: `/OS/SAVES/<GAME>/` write scope. Major stays 1; both independent headers (`include/abi.h`, `sdk/include/sandbox/abi.h`) say minor 7, and the startup record reports 1.7. No new call numbers or records. Older applications are unaffected.
+ABI 1.7 introduced the `/OS/SAVES/<GAME>/` write scope. The current independent
+kernel/SDK headers and startup record report **1.10**. This scope added no call
+numbers or records. Older applications are unaffected; physical save writes
+and power cuts remain hardware-untested.
 
 Applications get a second, narrow write scope next to the cache (`docs/cache-storage.md`).
 It is **not general SD write access**. The same calls apply (open `0x601`, write, `sbx_fsync`,

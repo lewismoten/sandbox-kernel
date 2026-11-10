@@ -1,9 +1,12 @@
 # Kernel design
 
-Design baseline: November 6, 2026. This remains the long-term design. M0 has a
-buildable implementation, with physical acceptance pending; its exact formats and
-FAT-file storage override are specified in [m0.md](m0.md). Other milestones below
-remain proposed behavior. The initial target is Raspberry Pi Zero W v1.1. Original
+Design baseline: November 6, 2026; implementation status updated November 10.
+M0 is board-qualified for the recorded boot/status/USB/update paths; timed cold
+boots and power-cut campaigns remain hardware-untested. Exact formats and the
+FAT-file storage override are specified in [m0.md](m0.md). M1 remains in progress.
+The current ABI and device tables below describe the code; the remaining
+architecture, manifests, durable store, paired OS updates and policy sections
+are long-term proposals unless [m1.md](m1.md) records an implementation. The initial target is Raspberry Pi Zero W v1.1. Original
 kernel and SDK work is MIT.
 
 ## Ownership and execution model
@@ -64,6 +67,12 @@ web reader could not retrieve the full later architecture manuals during design.
 
 ## Memory map and protection
 
+The table below is the planned layout. The runtime still uses a privileged low
+identity map, an ELF window at `0x08000000`, a 16 MiB user pool, an 8 MiB image
+quota, a 1 MiB stack and 16 syscall handles; see [m1.md](m1.md#address-space).
+ABI 1.6 adds a fixed arena at `0x30000000`. These implementation limits override
+the proposed 64 MiB/64-handle defaults below.
+
 Initial AArch32 virtual layout (4 KiB pages):
 
 | Virtual range | Use |
@@ -104,13 +113,14 @@ produce `EFAULT`; unrelated kernel faults trigger panic recovery. DMA always use
 kernel-owned descriptors and bounded buffers. CPU page tables do not constrain
 DMA on Zero, so no raw DMA or arbitrary physical `mmap` is available.
 
-## System-call ABI, draft version 1.0
+## System-call ABI, current version 1.10
 
 This is a POSIX-style source interface, not Linux binary compatibility or full
-POSIX compliance. The MIT SDK will provide C wrappers and translate negative
-kernel errors to `-1` plus thread-local or single-thread `errno`. No C++ objects
-cross the boundary. Publish SDK headers and binary layout tests before freezing
-1.0; the draft numbers below are reserved for that implementation.
+POSIX compliance. The MIT SDK supplies C wrappers returning zero or negative
+`SBX_E*` values directly; it does not set libc `errno`. No C++ objects cross the
+boundary. Kernel and SDK declarations are independently checked by layout tests.
+Startup reports major 1/minor 10. Calls 0, 7, 8, 10 and 15 remain unimplemented
+(`ENOSYS`); their proposed records are not a public implemented contract.
 
 For ARM32, execute ARM-state `svc #0` with `r7` = call number, `r0` = pointer to
 request record, `r1` = record byte size, and `r2` = ABI major (1). `r3–r6` must be
@@ -135,84 +145,77 @@ there. Signed values are `i64`. Counts, offsets, and times never depend on C
 in order below; unused output fields are zero on entry. No output is valid on
 error except where a later explicit extension says otherwise.
 
-| Number | Call | Payload slots, inputs then outputs | Semantics |
-| --- | --- | --- | --- |
-| 0 | `query` | selector, buffer address, capacity; required bytes | Version, limits, feature list, or device inventory |
-| 1 | `open` | path address, path bytes, open flags, mode; fd | Absolute UTF-8 path; explicit length, no embedded NUL |
-| 2 | `read` | fd, buffer, count; transferred | Short reads allowed; zero means EOF |
-| 3 | `write` | fd, buffer, count; transferred | Short writes allowed; success does not imply durability |
-| 4 | `close` | fd | Release handle and cancel its outstanding operations |
-| 5 | `ioctl` | fd, request, buffer, bytes | Sized, device-class-specific record; never an untyped register operation |
-| 6 | `mmap` | fd, offset, length, protection, map flags; address | Kernel chooses address; anonymous or approved shared buffer only |
-| 7 | `munmap` | address, length | Whole mapping release initially |
-| 8 | `poll` | array address, entry count, deadline ns; ready count | Absolute monotonic deadline; zero is immediate, all-ones is infinite |
-| 9 | `seek` | fd, signed offset, whence; new offset | Regular files only; devices return `ESPIPE` |
-| 10 | `stat` | fd, output buffer, bytes | Sized type/size/mode record, no host `struct stat` |
-| 11 | `getdents` | fd, buffer, bytes; transferred | Directory records with length, type, name length, UTF-8 name and 8-byte padding |
-| 12 | `fsync` | fd | Complete the supported object's durability operation |
-| 13 | `clock_gettime` | clock selector; nanoseconds | Selector 0 is monotonic time since kernel start |
-| 14 | `sleep_until` | deadline ns | Sleep without busy waiting |
-| 15 | `spawn` | path address, path bytes, argument address, argument bytes | Replace current OS through supervisor; argument blob limited to 4 KiB |
-| 16 | `exit` | signed status | Does not return; supervisor applies restart policy |
-| 17 | `health` | boot generation, sequence | OS readiness/heartbeat report; cannot alone confirm a kernel trial |
-| 18 | `replace` | path address, path bytes, data address, data bytes, expected generation; new generation | Atomic settings/save replacement through durable store |
+| Number | Call | Current contract |
+| --- | --- | --- |
+| 1 | `open` | Absolute path, explicit byte length; output generation-tagged fd |
+| 2 | `read` | Checked buffer/count; output transferred bytes |
+| 3 | `write` | Checked buffer/count; short audio writes permitted |
+| 4 | `close` | Release handle; unflushed cache/save bytes are discarded |
+| 5 | `ioctl` | Sized device-class record |
+| 6 | `mmap` | Only `/dev/fb0`, offset 0, read/write, shared; no anonymous mapping |
+| 9 | `seek` | ABI 1.3: absolute regular-file position, 0 through EOF |
+| 11 | `getdents` | Short aliases, 8-byte entry header, name and 8-byte padding |
+| 12 | `fsync` | ABI 1.4: commit staged cache/save writer |
+| 13 | `clock_gettime` | ABI 1.1: clock 0, monotonic nanoseconds |
+| 14 | `sleep_until` | ABI 1.1: absolute monotonic deadline; heartbeat keeps running |
+| 16 | `exit` | Signed status, supervisor termination policy |
+| 17 | `health` | Boot generation and strictly increasing sequence; readiness/heartbeat |
+| 18 | `getdents_meta` | ABI 1.4: short aliases with 24-byte metadata header |
+| 19 | `rename` | ABI 1.4/1.7: copy/publish within one cache or save folder |
+| 20 | `getdents_long_meta` | ABI 1.5: validated VFAT UTF-8 names, 24-byte metadata header |
+| 21 | `app_arena` | ABI 1.6: generation-bound fixed 2,195,456-byte arena |
 
-`query` selectors: 0 = ABI/build/architecture information, 1 = limits, 2 =
-feature records, 3 = device records. Query output starts with `u32 size`,
-`u16 major`, `u16 minor`; following records are length-delimited with stable
-numeric type IDs. If capacity is insufficient, return `ENOSPC` and the required
-bytes as the sole defined error output. Unknown selectors return `EINVAL`.
-Capabilities enumerate operations, board-supported device classes, limits,
-USB role, PCM formats, display modes, and granted rights. Enumeration is a
-snapshot; device disappearance is reported through poll and subsequent calls.
+The SDK wrappers in `sdk/include/sandbox/syscall.h` describe the exact records.
+ABI 1.2 adds framebuffer mode/palette ioctls, 1.7 save scope, 1.8 audio, 1.9
+e-ink and 1.10 serial. No implemented `replace` call occupies number 18.
+`query` and feature/inventory enumeration remain proposed; inspect startup
+major/minor and handle device errors instead. AArch64 above is a proposed profile.
 
-ABI major mismatch returns `EPROTONOSUPPORT` and prevents loading an incompatible
-OS. Minors add fields/calls/features; existing field meanings and numbers never
+A syscall ABI major mismatch returns `EPROTONOSUPPORT`. The current raw ELF
+loader has no ABI manifest to reject an incompatible program at load time. Minors add fields/calls/features; existing field meanings and numbers never
 change. Old records are accepted; missing trailing fields default to zero.
 Unknown trailing nonzero fields/flags are rejected. Unknown calls return `ENOSYS`;
-unsupported device requests return `ENOTTY`. A newer OS must require only features
-reported by the running kernel. Feature availability is separate from privilege:
-handles receive manifest-limited rights, never greater rights through `ioctl`.
+unsupported device requests return `ENOTTY`. A newer OS must check startup major/minor before using optional features.
+Manifest-limited rights and capability enumeration remain proposed; the current
+dispatcher enforces its fixed path allowlists and device rules.
 
 Base errors use these fixed POSIX-style values: `EPERM=1`, `ENOENT=2`, `EIO=5`,
 `EBADF=9`, `EAGAIN=11`, `ENOMEM=12`, `EACCES=13`, `EFAULT=14`, `EBUSY=16`,
 `EEXIST=17`, `ENODEV=19`, `ENOTDIR=20`, `EINVAL=22`, `EMFILE=24`, `ENOTTY=25`,
 `ENOSPC=28`, `ESPIPE=29`, `EROFS=30`, `EPIPE=32`, `ENAMETOOLONG=36`,
 `ENOSYS=38`, `EPROTONOSUPPORT=93`, `ETIMEDOUT=110`. No signals initially.
-Transfers larger than 1 MiB are rejected; paths are at most 255 bytes and poll
-arrays at most 64 entries. An I/O error after some bytes transferred returns a
+Transfers larger than 1 MiB are rejected; paths are at most 255 bytes. Poll
+array limits remain a proposal because `poll` is unimplemented. An I/O error after some bytes transferred returns a
 successful short count; a later call reports the remaining error.
 
 Open flags: read-only 0, write-only 1, read/write 2, nonblocking `0x100`;
-unsupported bits fail. Creation through `open` is initially unsupported; mode
-must be zero. `seek` origins are start 0, current 1, end 2. Mapping protections
-are read 1, write 2, execute 4; map flags are shared 1 or private 2, with anonymous
-`0x20` and fd = all-ones. No fixed-address, file-executable, or writable/executable
-mapping. Anonymous mappings are private. `poll` entries are `{u32 fd, u16 events,
-u16 revents}` with readable 1, writable 4, error 8, hangup 16, invalid 32.
-Invalid handles set the invalid bit. Timeouts return success with zero ready
-entries. Nonblocking operations return `EAGAIN` when no progress is possible.
-Device removal sets hangup/error; stale handle IDs cannot refer to new devices.
+mode must be zero. Only `WRONLY|CREAT|TRUNC` (`0x601`) creates staged files in
+the canonical cache/save scopes. Only seek origin 0 is implemented. Mapping
+protections read 1/write 2 and shared flag 1 are supported for the framebuffer;
+executable mappings are refused. `poll`, blocking input reads and general
+anonymous allocation remain unavailable; the app arena is a separate call.
 
 ## Program-visible device tree
 
 This is the VFS namespace, distinct from a firmware flattened device tree.
-The kernel consumes board descriptions; programs see generic class records.
+The current backend is fixed to the Zero W; programs use generic class records.
 Missing hardware means an absent node or `ENODEV`, never fabricated support.
 
-| Path | Contract |
+| Path | Current contract |
 | --- | --- |
-| `/dev/fb0` | Mode query reports dimensions, pitch, pixel format and buffer bytes. `mmap` exposes a bounded RAM drawing surface; present ioctl copies/flips through the driver. Status rendering can reclaim output after an OS fault. No arbitrary physical framebuffer access. |
-| `/dev/audio` | PCM format query/configure, bounded queued writes, drain/stop and underrun query. Start with signed 16-bit little-endian mono PCM through PWM; rate is negotiated. Silence on underrun. HDMI is a later backend. |
-| `/dev/input/eventN` | Linux-style event types/codes for keys, buttons, axes and synchronization; capability/axis queries and per-open queues. Keyboard, pad, IR and CEC drivers normalize here. |
-| `/dev/spi0` | Kernel-managed SPI messages: device selector, mode, speed, bounded TX/RX buffers. Only manifest-granted chip selects; no controller registers. |
-| `/dev/gpio` | Request/release permitted lines, read/write values and edge events. Kernel claims e-ink, storage, audio and radio pins first; programs cannot steal them. |
-| `/dev/i2c0` | Optional bounded kernel-managed bus transfers to granted addresses. |
-| `/dev/epaper0` | Geometry/status query, bitmap submission, full/partial refresh and completion polling. Kernel can override content for faults. |
-| `/dev/ttyGS0` | CDC-ACM byte stream in USB device mode. Kernel owns enumeration, logging and update parsing; an optional OS console channel is framed and demultiplexed. |
-| `/dev/log` | Rate-limited OS log writes; no ability to impersonate kernel severity/source. |
-| `/sd/...` | FAT assets and directories, initially read-only. `/sd/games` is an ordinary content directory, not a kernel-specific format. |
-| `/state/settings/...`, `/state/saves/...` | Logical durable files, read through normal handles and updated through `replace`; per-OS quotas and path ownership. |
+| `/dev/fb0` | One handle; query, mode/palette, mapped RAM drawing surface and rectangle present. Kernel reclaims display on faults. |
+| `/dev/audio` | ABI 1.8: one write-only owner, fixed stereo S16_LE at 48 kHz, 16384-frame ring, nonblocking short writes and counters. Linked HDMI DMA backend with silent null fallback; full qualification is hardware-untested. See [audio-device.md](audio-device.md). |
+| `/dev/input/event0` | One nonblocking reader, 16-byte events and state query; synthetic USB source in device role, boot-keyboard glue in host role (hardware-untested). CEC cores remain unlinked. |
+| `/dev/eink` | ABI 1.9: one write-only handle, title/mark/build line or whole 3904-byte page; kernel refresh limits and fault override. OS API is hardware-untested. See [eink.md](eink.md). |
+| `/dev/serial0` | ABI 1.10: one nonblocking owner, USB CDC OS byte stream using OS/OS~ and TX framing; bounded dropped-byte counters. Hardware-untested. See [serial.md](serial.md). |
+| `/dev/log` | Write-only bounded sanitized OS log lines. |
+| `/sd/...` | Read-only FAT32 files/directories, seek, short and VFAT long names. |
+| `/sd/OS/CACHE/NAME` | ABI 1.4: bounded staged 8.3 writes, fsync and same-folder copy/publish rename. Physical power cuts are hardware-untested. |
+| `/sd/OS/SAVES/<GAME>/<NAME>` | ABI 1.7: per-game save scope sharing the cache writer, with folder/file caps. Physical writes/power cuts are hardware-untested. |
+
+`/dev/spi0`, `/dev/gpio`, `/dev/i2c0`, `/dev/epaper0`, `/dev/ttyGS0` and
+`/state/...` are not implemented paths. The latter names in the long-term
+sections describe proposals, not aliases for the current devices/storage.
 
 Input records have a fixed 16-byte layout: `u64 monotonic_ns`, `u16 type`,
 `u16 code`, `i32 value`. Numeric event conventions follow Linux input UAPI
@@ -220,15 +223,16 @@ semantics, independently declared in the SDK; this is not Linux's native
 `struct input_event`, whose timestamp layout varies. A read returns whole
 records; too-small buffers fail. Overflow emits `SYN_DROPPED`; the OS queries
 current key/axis state before consuming a new `SYN_REPORT` group. IDs are not
-stable across boots; inventory includes device identity and supported controls.
+stable across boots; the input query reports the current instance and control
+limits. It still reports the synthetic flag even in the host keyboard build;
+there is no device-inventory syscall.
 The semantic reference is the upstream
 [Linux input event documentation](https://docs.kernel.org/input/event-codes.html).
 
-Ioctl IDs use `(class << 16) | operation`; classes 1 framebuffer, 2 audio,
-3 input, 4 SPI, 5 GPIO, 6 e-paper. Operation 0 is a sized class query; subsequent
-operations follow the verbs in the table. Exact class record layouts must be
-specified with the implementation before enabling their capability bits.
-No driver may invent an undocumented ioctl under ABI 1.0.
+Ioctl IDs use `(class << 16) | operation`: class 1 framebuffer (query,
+present, set mode, palette), 2 audio (query), 3 input (query, state), 4 e-ink
+(query, title, clear), 6 serial (query). SPI/GPIO have no allocated implemented
+class records. Unsupported requests return `ENOTTY`.
 
 ### V4 e-ink hardware baseline
 
@@ -488,9 +492,9 @@ honest people honest; they are not security against someone with the SD card in 
 
 ### ABI reservations
 
-Call numbers and record layouts for `gate_check`, `gate_register`, `profile_get`, `profile_set`,
-`latch_get` and `latch_set` are reserved in the 1.0 table (implementations may return `ENOSYS` until a
-milestone needs them). `query` selector `profile` returns the active profile id and its age range.
+`gate_check`, `gate_register`, `profile_get`, `profile_set`, `latch_get`,
+`latch_set` and a profile query selector remain design proposals. No call numbers
+or record layouts for them are allocated in the current SDK or dispatcher.
 
 ## Board support layering
 
@@ -527,8 +531,8 @@ The MIT project license does not replace upstream terms.
 | --- | --- | --- |
 | Original kernel and SDK | MIT, Lewis Moten | Startup, protection, ABI, supervisor, drivers and recovery written here |
 | [Broadcom BCM2835 manual](https://www.raspberrypi.com/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf), Raspberry Pi and Arm manuals linked above | Copyrighted technical references | Hardware facts; no copied manual prose/code; consult errata and specific core manuals |
-| [TinyUSB](https://github.com/hathach/tinyusb), [license](https://github.com/hathach/tinyusb/blob/master/LICENSE) | MIT; audit BSP dependencies | CDC-ACM/DWC2 device first, HID host later; board glue and real Zero testing required |
-| [FatFs](https://elm-chan.org/fsw/ff/), [terms](https://elm-chan.org/fsw/ff/doc/appnote.html#license) | ChaN's permissive BSD-style notice, retain exact text | FAT asset access; supplies neither SD controller nor power-loss journaling |
+| [TinyUSB](https://github.com/hathach/tinyusb), [license](https://github.com/hathach/tinyusb/blob/master/LICENSE) | MIT; audit BSP dependencies | CDC-ACM/DWC2 device and separate HID host-role builds; host keyboard is hardware-untested |
+| [FatFs](https://elm-chan.org/fsw/ff/), [terms](https://elm-chan.org/fsw/ff/doc/appnote.html#license) | ChaN's permissive BSD-style notice, retain exact text | Candidate only; current FAT reader/writers are original code, not FatFs |
 | [Waveshare V4](https://github.com/waveshareteam/e-Paper/blob/master/RaspberryPi_JetsonNano/c/lib/e-Paper/EPD_2in13_V4.c) | MIT permission notice in source | Panel sequence only, with original kernel SPI/GPIO adapter |
 | [lwIP](https://github.com/lwip-tcpip/lwip), [license](https://github.com/lwip-tcpip/lwip/blob/master/COPYING) | BSD-3-Clause | M3 IP stack; does not supply Wi-Fi, TLS or SSH |
 | [John Cronin SD work](https://github.com/jncronin/rpi-boot) | MIT candidate; verify chosen files | Optional upstream SD reference; no extraction from Circle or GPL SDHOST |

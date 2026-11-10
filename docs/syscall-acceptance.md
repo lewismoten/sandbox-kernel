@@ -4,9 +4,13 @@ Final branch results and shared portability fixes are recorded in
 [M1 host acceptance integration](m1-host-acceptance.md). Baseline results below
 are retained as evidence of the standalone test contribution.
 
-Scope: M1 slice 2, baseline `aac205c699c26a98641894dadd4ba97e6964115b`.
+Historical scope: M1 slice 2, baseline `aac205c699c26a98641894dadd4ba97e6964115b`.
 The implemented calls are open (1), read (2), write (3), close (4), ioctl (5),
-mmap (6), and exit (16). These tests exercise the actual dispatcher, ABI
+mmap (6), and exit (16) at that baseline. The current dispatcher implements
+1–6, 9, 11–14 and 16–21 (ABI 1.10). The generic `records()` matrix now includes
+seek (9) and long metadata (20), not every current call; feature-specific tests
+cover the later calls/devices. “All seven calls” below labels the original scope.
+These tests exercise the actual dispatcher, ABI
 checker, user-range translator, asset reader and framebuffer code through the
 existing host build. They do not execute ARM instructions or establish board
 qualification.
@@ -89,11 +93,12 @@ mutants are not production changes or part of the branch.
 
 Explicit gaps:
 
-- **Older-minor executable compatibility is not established.** This baseline is
+- **Older-minor ARM execution remains hardware-untested.** This historical baseline is
   ABI 1.0 (`K_ABI_MINOR == 0`), with no older minor. Zero-extended records exercise
   the documented forward-extension rule, not an older-minor application running
-  under 1.1. A real versioned test app must wait for an actual newer ABI; no
-  fabricated minor or skip is presented as acceptance.
+  under 1.1. That run could not qualify a versioned older app. ABI 1.10 now exists;
+  current native supervisor/arena tests cover old ELF loading and SDK startup
+  gating, which does not execute ARM instructions.
 - No ARM User-mode execution, timer/preemption guarantee, board protection,
   crash-during-I/O, panel refresh, readiness/health/input, or OS A/B fallback is
   established by these direct host calls. Acceptance tests 3 and 5 and exhaustion
