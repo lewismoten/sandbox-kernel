@@ -9,6 +9,7 @@
 #include "fatput.h"
 #include "fb.h"
 #include "input.h"
+#include "audio_null.h"
 #include "sys.h"
 #include "uspace.h"
 #include "os.h"
@@ -18,6 +19,7 @@
 #define EACCES 13
 #define EFAULT 14
 #define EBUSY 16
+#define EAGAIN 11
 #define ENODEV 19
 #define EINVAL 22
 #define EMFILE 24
@@ -27,7 +29,7 @@
 #define ENAMETOOLONG 36
 #define ENOSYS 38
 #define ENOTDIR 20
-enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE};
+enum {K_FREE,K_LOG,K_FB,K_ASSET,K_INPUT,K_CACHE,K_AUDIO};
 /* One bounded write transaction; never a general filesystem writer. */
 static uint8_t cache_bytes[FATPUT_MAX];
 static char cache_name[13],cache_game[9];static uint32_t cache_used;static bool cache_dirty; /* cache_game "" = /OS/CACHE */
@@ -64,6 +66,7 @@ extern uint32_t boot_generation;
 static void release(unsigned i) {
  if(fds[i].kind==K_ASSET) asset_close(fds[i].asset);
  if(fds[i].kind==K_INPUT) input_close(fds[i].inst);
+ if(fds[i].kind==K_AUDIO) audio_dev_close();
  fds[i].kind=K_FREE;fds[i].has_pend=false;fds[i].gen=(uint16_t)(fds[i].gen==0xffffu?1:fds[i].gen+1);
 }
 static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
@@ -91,6 +94,11 @@ static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
   if(!fb_pixels) return -ENODEV;
   for(unsigned j=0;j<SYS_HANDLES;j++) if(fds[j].kind==K_FB) return -EBUSY;
   fds[i].kind=K_FB;
+ }
+ else if(n==10&&!memcmp(p,"/dev/audio",10)) { /* ABI 1.8: write-only, one writer */
+  if(access!=1) return -EACCES;
+  int e=audio_dev_open(); if(e) return e;
+  fds[i].kind=K_AUDIO;
  }
  else if(n==17&&!memcmp(p,"/dev/input/event0",17)) {
   if(access) return -EACCES;
@@ -140,6 +148,24 @@ static int io(struct k_io *r,bool write) {
   int got=input_read(fds[i].inst,ev,max); if(got<0) return got;
   if(us_copy_out(va,ev,(uint32_t)got*16u)) return -EFAULT;
   r->transferred=(uint32_t)got*16u; return 0;
+ }
+ if(fds[i].kind==K_AUDIO) {
+  /* Whole stereo S16 frames only. Never blocks: takes what fits and says how
+     many bytes; nothing fitting is EAGAIN (the app retries after a short wait). */
+  static uint8_t pcm[2048];
+  if(!write) return -EBADF;
+  if(count&3u) return -EINVAL;
+  uint32_t done=0;
+  while(done<count) {
+   uint32_t room=audio_ring_free(&audio0.ring)*AUDIO_FRAME_BYTES;
+   uint32_t take=count-done; if(take>sizeof pcm) take=sizeof pcm; if(take>room) take=room;
+   if(!take) break;
+   if(us_copy_in(pcm,va+done,take)) return -EFAULT;
+   done+=audio_dev_write(pcm,take)*AUDIO_FRAME_BYTES;
+  }
+  if(done<count) audio_ring_refuse(&audio0.ring,(count-done)/AUDIO_FRAME_BYTES);
+  if(!done&&count) return -EAGAIN;
+  r->transferred=done; return 0;
  }
  if(fds[i].kind==K_CACHE) {
   if(!write)return -EBADF;
@@ -207,6 +233,16 @@ static int ioctl_fb(const struct k_ioctl *r) {
   return fb_set_palette((uint32_t)m.first,(uint32_t)m.count,m.rgb);
  }
  return -ENOTTY;
+}
+static int ioctl_audio(const struct k_ioctl *r) {
+ if(r->request!=0x20000u) return -ENOTTY;
+ struct k_audio_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
+ if(q.flags|q.rate|q.capacity_frames|q.queued_frames|q.played_frames|q.underruns|q.overruns|q.overrun_frames) return -EINVAL;
+ if(us_check(r->buffer,sizeof q,U_W)) return -EFAULT;
+ const struct audio_ring *a=&audio0.ring;
+ q.rate=AUDIO_RING_RATE;q.capacity_frames=AUDIO_RING_FRAMES;q.queued_frames=audio_ring_queued(a);
+ q.played_frames=a->played;q.underruns=a->underruns;q.overruns=a->overruns;q.overrun_frames=a->overrun_frames;
+ return us_copy_out(r->buffer,&q,sizeof q);
 }
 static int ioctl_input(unsigned i,const struct k_ioctl *r) {
  if(r->request==0x30000u) {
@@ -330,6 +366,7 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 5: {
    struct k_ioctl *r=(struct k_ioctl *)rec; int i=lookup(r->fd); if(i<0) return i;
    if(fds[i].kind==K_INPUT) return ioctl_input((unsigned)i,r);
+   if(fds[i].kind==K_AUDIO) return ioctl_audio(r);
    if(fds[i].kind!=K_FB) return -ENOTTY;
    return ioctl_fb(r);
   }

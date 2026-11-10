@@ -48,3 +48,17 @@ class Check(unittest.TestCase):
         self.assertEqual(self.check(self.rec(size=56,tail=bytes(8))),0)   # newer minor, zero tail
         self.assertEqual(self.check(self.rec(size=56,tail=b'\1'+bytes(7))),-22)
         self.assertEqual(self.c.abi_check(None,48,1,48,48),-14)
+
+class Advice(unittest.TestCase):
+    def test_public_minor_advice_matches_abi_history(self):
+        import re
+        hist={int(m.group(1)) for m in re.finditer(r'^\| 1\.(\d+) \|',(ROOT/'docs/os-authors.md').read_text(),re.M)}
+        top=int(re.search(r'K_ABI_MINOR (\d+)u',(ROOT/'include/abi.h').read_text()).group(1))
+        for f in (ROOT/'sdk/include').rglob('*.h'):
+            t=f.read_text()
+            for m in re.finditer(r'minor\s*>=\s*(\d+)',t):
+                n=int(m.group(1))
+                self.assertLessEqual(n,top,f.name)
+                self.assertIn(n,hist,'%s: minor >= %d is not in the ABI history table'%(f.name,n))
+                tag=re.findall(r'/\*\s*1\.(\d+):',t[:m.start()])
+                if tag: self.assertEqual(n,int(tag[-1]),'%s: advice minor >= %d disagrees with its 1.%s comment'%(f.name,n,tag[-1]))

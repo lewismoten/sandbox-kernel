@@ -6,6 +6,7 @@
 #include "clock.h"
 #include "input.h"
 #include "fb_art.h"
+#include "audio_null.h"
 void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
@@ -56,7 +57,7 @@ void kernel_main(void) {
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  clock_us();usb_task();protocol_task();os_task();
+  clock_us();audio_null_task();usb_task();protocol_task();os_task();
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
