@@ -21,9 +21,28 @@ class SenderTests(unittest.TestCase):
             self.assertTrue(old_sender_accepts(info));usb_kernel.check_updates(usb_kernel.info_fields(info))
     def _bad(self,info):
         with self.assertRaises(ValueError): usb_kernel.check_updates(usb_kernel.info_fields(info))
+    def test_modern_info_prefers_updates_and_reports_os_independently(self):
+        for state in ('none','running','stopped'):
+            for legacy in ('',' features=kernel,no-os'):
+                with self.subTest(os=state,features=legacy):
+                    fields=usb_kernel.info_fields('INFO 2 zero-w armv6 pending=0 updates=ready os='+state+legacy)
+                    self.assertEqual(fields['os'],state)
+                    usb_kernel.check_updates(fields)
+            # a legacy field that contradicts updates=ready, or repeats, still fails closed
+            for legacy in (' features=locked',' features=locked features=kernel,no-os'):
+                with self.subTest(os=state,contradiction=legacy):
+                    self._bad('INFO 2 zero-w armv6 pending=0 updates=ready os='+state+legacy)
+        for status in ('locked','busy','','unknown'):
+            self._bad('INFO 2 zero-w armv6 pending=0 updates='+status+' os=none features=kernel,no-os')
+    def test_old_info_uses_exact_legacy_readiness(self):
+        usb_kernel.check_updates(usb_kernel.info_fields('INFO 2 zero-w armv6 pending=0 features=kernel,no-os'))
+        for legacy in ('locked','kernel','no-os','no-os,kernel','kernel,no-os,extra',''):
+            with self.subTest(features=legacy):
+                self._bad('INFO 2 zero-w armv6 pending=0 features='+legacy)
+        self._bad('INFO 2 zero-w armv6 pending=1 features=kernel,no-os')
     def test_conflicting_or_odd_update_fields_fail_closed(self):
         for t in ('updates=ready updates=locked features=locked','updates=locked updates=ready features=locked','updates=ready updates= features=locked',
-                  'updates= features=kernel,no-os','updates=maybe','updates=READY','updates=busy','updates=ready features=locked','updates=ready updates=ready',
+                  'updates= features=kernel,no-os','updates=maybe','updates=READY','updates=busy','updates=ready updates=ready',
                   'xupdates=ready','note=updates=ready','features=kernel','features=locked','features=kernel,no-os features=kernel,no-os',''):
             self._bad('INFO 2 t '+t)
     def test_busy_fails_closed_with_a_clear_message_and_sends_no_put2(self):

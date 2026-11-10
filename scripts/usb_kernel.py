@@ -71,8 +71,9 @@ def info_fields(info):
     return {k:(v[0] if len(v)==1 else v) for k,v in out.items()}
 
 def check_updates(f):
-    """Fail closed: exactly one updates= field saying ready, or (legacy kernels, no updates= field)
-    exactly one features=kernel,no-os. features= is legacy; features=locked contradicts ready."""
+    """Fail closed. Prefer updates=; only old kernels without it use features=kernel,no-os.
+    os= describes program state, independently of kernel update readiness. features= is legacy,
+    but a repeated features= or features=locked beside updates=ready still refuses (contradiction)."""
     for k in ('updates','features','pending'):
         if isinstance(f.get(k),list): raise ValueError(f'Device INFO repeats {k}=; refusing to update')
     if 'pending' in f:  # a kernel that reports pending= must say 0 (decimal) before an update starts

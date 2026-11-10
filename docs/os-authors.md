@@ -321,17 +321,29 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 **The `INFO` fields:** `updates=ready` means this kernel accepts update requests (a capability);
 `updates=locked` means it does not; `updates=busy` means a new kernel is already pending, so wait
 for its confirmation. `os=running` is an OS program running now, `os=stopped` one ran and was
-stopped, `os=none` none has run since boot. `features=` is **legacy**, kept for compatibility:
-it still reads `kernel,no-os` when updates are ready (it never meant "no OS") and `locked`
-otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
+stopped, `os=none` none has run since boot. New code should read `updates=` for kernel
+update readiness and `os=` for program state.
+
+`features=` is **legacy**, with its bytes preserved for old Mac senders. Its tokens mean:
+
+| Token | Legacy meaning |
+| --- | --- |
+| `kernel` | Kernel updating is enabled; emitted together with `no-os` |
+| `no-os` | Historical marker accompanying kernel update readiness; it does **not** mean no OS program exists or is running |
+| `locked` | Kernel updating is disabled; replaces the entire `kernel,no-os` value |
+
+In `core/protocol.c`, `updates_ready` selects exactly `features=kernel,no-os` or
+`features=locked`. The legacy value does not report program state or distinguish a
+pending update: it can accompany `os=running` or `updates=busy`.
 
 **When `PUT2` is admitted:** `INFO` was sent this session, storage is ready, `updates=ready`
 (not locked) and no update slot is pending. Otherwise `ERR not-ready`. `os=running` alone does
 not block a kernel update. `usb_kernel.py send` parses `INFO` into exact fields and refuses
-before sending if `updates=`, `features=` or `pending=` repeats, `updates=` is not exactly `ready`
-(including `busy`), `features=locked` contradicts it, or a `pending=` field is not a plain
-decimal 0. With no `updates=` field it accepts
-only the exact legacy `features=kernel,no-os`. The web page (`web/src/piRemote/protocol.ts`, in
+before sending if `updates=` or `pending=` repeats, `updates=` is not exactly `ready`
+(including `busy`), or a `pending=` field is not a plain decimal 0. When `updates=` is
+present, it is authoritative and `features=` is ignored. With no `updates=` field,
+the fallback for old kernels accepts only one exact legacy `features=kernel,no-os`.
+`os=` is parsed independently and does not gate kernel updates. The web page (`web/src/piRemote/protocol.ts`, in
 the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 
 **The not-ready rule:** `PUTF` (and so `put`, `putgame`, `putapp`) is refused with
