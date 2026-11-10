@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 9u /* 1.9: /dev/eink e-ink title and page; 1.8: audio (in review); 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 9u /* 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -57,6 +57,14 @@ enum {
 #define SBX_IOC_FB_PRESENT SBX_IOC(1, 1)
 #define SBX_IOC_FB_SET_MODE SBX_IOC(1, 2) /* 1.2: sbx_fb_set_rec; the firmware scales the mode to HDMI */
 #define SBX_IOC_FB_PALETTE SBX_IOC(1, 3)  /* 1.2: sbx_fb_palette_rec, for SBX_FB_INDEX8 */
+/* 1.8: open "/dev/audio" write-only for the one writer (a second open is EBUSY).
+   write() takes whole stereo frames of signed 16-bit little-endian PCM (L,R,L,R...)
+   at SBX_AUDIO_RATE, takes what fits and returns that many bytes, or EAGAIN when
+   none fit (wait a little, retry). It never blocks and never overwrites queued audio.
+   When the ring runs dry the device plays silence and counts an underrun. close()
+   drops whatever is still queued. Check sbx_startup.minor >= 8 first. */
+#define SBX_IOC_AUDIO_QUERY SBX_IOC(2, 0)
+#define SBX_AUDIO_RATE 48000u
 #define SBX_FB_XRGB8888 1u /* sbx_fb_mode.format: 32-bit words 0x00RRGGBB */
 #define SBX_FB_RGB565 2u   /* 16-bit words rrrrrggggggbbbbb */
 #define SBX_FB_INDEX8 3u   /* bytes, colors from the palette */
@@ -228,6 +236,13 @@ typedef struct sbx_input_event { /* 16 bytes; read returns whole records */
   uint16_t type, code;
   int32_t value; /* key: 0 up, 1 down, 2 repeat; axis: position */
 } sbx_input_event;
+typedef struct sbx_audio_info { /* SBX_IOC_AUDIO_QUERY output; counters are for this open */
+  sbx_header h;
+  uint64_t flags, rate, capacity_frames, queued_frames, played_frames;
+  uint64_t underruns;      /* drains that found the ring short */
+  uint64_t overruns;       /* writes that did not fit whole */
+  uint64_t overrun_frames; /* frames those writes were refused */
+} sbx_audio_info;
 typedef struct sbx_input_info { /* SBX_IOC_INPUT_QUERY output */
   sbx_header h;
   uint64_t flags, instance, queue_records, keys, axes;

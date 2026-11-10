@@ -4,7 +4,7 @@ from tests/harness.c), shared by the M0 and M1 test files."""
 import pathlib, subprocess, sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 SOURCES=['core/util.c','core/divide.c','core/store.c','core/protocol.c','core/assets.c','core/font.c','core/logo_data.c','core/fb_art.c','core/fb.c','core/abi.c','core/render.c','core/eink.c',
-         'core/uspace.c','core/app_arena_core.c','core/elf.c','core/sys.c','core/os.c','core/autostart.c','core/clock.c','core/input.c','core/fatput.c','tests/harness.c']
+         'core/uspace.c','core/app_arena_core.c','core/elf.c','core/sys.c','core/os.c','core/autostart.c','core/clock.c','core/input.c','core/audio_ring.c','core/audio_null.c','core/fatput.c','tests/harness.c']
 def build(out, supervisor_probe=False):
     # ELF interposition can otherwise bind kernel error() to glibc's unrelated
     # variadic error(), corrupting calls from protocol.c. Darwin binds locally.
