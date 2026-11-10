@@ -75,6 +75,36 @@ static void idle(void) {
     mixer_render(&m, buf, 1000);
     for (int i = 0; i < 1000; i++) assert(buf[i] == 0);
 }
+/* Independent 64-bit amplitude oracle, with clipping only after scaling. */
+static uint32_t volume_sample(uint32_t volume, int tune_voice, unsigned sample) {
+    int64_t amplitude = INT64_C(32767) * volume;
+    amplitude = tune_voice ? amplitude * 31 / 65536 : amplitude / 256;
+    /* At 12000 Hz the phase step is just under a quarter cycle. */
+    int64_t value = sample % 4 < 2 ? amplitude : -amplitude;
+    if (value > 32767) value = 32767;
+    if (value < -32768) value = -32768;
+    uint32_t packed = (uint16_t)value;
+    return packed | (packed << 16);
+}
+static void all_volumes(void) {
+    static const uint16_t freq = 12000;
+    for (int tune_voice = 0; tune_voice <= 1; tune_voice++) {
+        for (uint32_t volume = 0; volume <= UINT16_MAX; volume++) {
+            struct mixer m; mixer_init(&m);
+            int voice = tune_voice ? mixer_tune(&m, &freq, 1, (uint16_t)volume)
+                                   : mixer_tone(&m, freq, 0, (uint16_t)volume);
+            assert(voice == 0);
+            mixer_render(&m, buf, 8);
+            for (unsigned i = 0; i < 8; i++)
+                assert(buf[i] == volume_sample(volume, tune_voice, i));
+            uint32_t updated = UINT16_MAX - volume;
+            mixer_set_volume(&m, voice, (uint16_t)updated);
+            mixer_render(&m, buf, 8);
+            for (unsigned i = 0; i < 8; i++)
+                assert(buf[i] == volume_sample(updated, tune_voice, i + 8));
+        }
+    }
+}
 static void pump_null(void) {
     audio_dev_init(); assert(audio_dev_open() == 0);
     struct mixer m; mixer_init(&m); mixer_tone(&m, 440, 0, 256);
@@ -92,4 +122,4 @@ static void pump_null(void) {
     assert(mixer_pump_dev(&m, 100) == 0 && audio0.ring.overruns == 0);
     audio_dev_close();
 }
-int main(void) { frequency(); duration(); tune(); mix_clip(); idle(); pump_null(); puts("mixer ok"); return 0; }
+int main(void) { frequency(); duration(); tune(); mix_clip(); idle(); all_volumes(); pump_null(); puts("mixer ok"); return 0; }
