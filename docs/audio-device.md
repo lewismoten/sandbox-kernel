@@ -44,3 +44,38 @@ not used by this slice.
 sits in bits 12-27 of the 24-bit sample slot (low 8 bits zero, `core/iec958.c`), and channel status
 byte 4 says the same: max length 20 bits, 16 used (`0x02`). The status bits, preambles and N/CTS
 values are marked VERIFY in the code and stay outside acceptance until a test on an HDMI TV.
+
+# Slice 3: mixer and PC-speaker voice (kernel-internal)
+
+No new app-facing ABI: `include/mixer.h` and `core/mixer.c` are kernel
+internals, so `docs/os-authors.md` is unchanged. Nothing calls the mixer yet; a
+later slice feeds `/dev/audio` from it.
+
+- **Mixer:** 8 voices, each with a Q8 volume (256 = full), supporting the full
+  uint16 range 0..65535 in tone, tune, and volume updates. `mixer_render`
+  sums them in a 32-bit accumulator and saturates to S16, then writes the same
+  sample to left and right at 48000 Hz. Tune gain uses a 64-bit product before
+  shifting; even eight maximum-volume voices fit the 32-bit sum. Integer only:
+  no floats, and no 64-bit divide (a tone's phase step is
+  `hz * 89478 + hz * 485 / 1000`, which is
+  `hz * 2^32 / 48000`). With nothing active it writes silence.
+- **Tone:** a square wave (`mixer_tone`, hz and milliseconds, 0 ms = until
+  stopped). Under 20 Hz is refused as inaudible.
+- **PC-speaker tune:** `mixer_tune` plays a Game-Maker `.SND` effect: 36
+  frequencies in Hz, one per timer tick of 1193180 / 8191 Hz (about 145.67
+  ticks a second, 329.5 frames), 0 or under 20 Hz meaning silence, over 20000
+  clamped, gain 0.12. These are taken from the engine's TypeScript, not
+  invented: `web/packages/engine/src/formats/sound.ts` (36 frequencies, one per
+  1/145.6 s tick), `audio/engine.ts` `playSpeaker` (square wave, 20 Hz floor,
+  20000 Hz ceiling, gain 0.12, Borland `sound()` programs the PIT) and
+  `audio/cmfPlayer.ts` `TICK_RATE = 1193180 / floor(65535 / 8)`. The tick
+  boundary is found by cross-multiplication, so it stays exact.
+  `code/GM` has only the sound-card header (`SBCVOICE.H`), no speaker timing.
+- **Pump:** `mixer_pump_dev(m, max)` renders only what the ring has room for
+  (up to `max`) and writes through `audio_dev_write`, so it never overruns.
+- **Tests:** `tests/test_audio_mixer.py` (`tests/mixer.c`): zero crossings over
+  1 s at five frequencies, duration to the frame, tune ticks (tone, silent
+  ticks, second tone, end), two voices summing with clipping, equal-volume sums,
+  all 65536 volumes against a widened-integer oracle for tones, tunes, and
+  volume updates, the voice limit, idle silence, and a 2 s null-backend run
+  with no overrun or underrun.
