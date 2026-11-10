@@ -279,6 +279,20 @@ the stack closes its endpoints and releases its address and keys, waits 200 ms (
 A physical reconnect starts a fresh retry budget. Unplugging the hub clears its queued
 changes and recovery state. These delays do not block keyboard polling or USB events.
 
+A refused hub interrupt-IN submission gets at most three retries after 20/40/80 ms
+(four submissions total). Deadlines use elapsed time, not host-task call counts;
+even a late task schedules the next delay from the actual refusal, without catch-up
+bursts. Each refusal schedules one diagnostic, so repeated calls before its deadline
+produce neither submissions nor logs. Exhaustion logs once, closes the hub and its
+downstream devices, and marks the hub's upstream port for the same bounded
+200/400 ms reset-and-re-enumerate sequence. For a root-connected hub this uses the
+OTG root port (`hub0 port0`) and the existing root reset sequence; failed root
+enumerations also use this two-retry budget. No interrupt submissions resume on the
+closed device. A successful submission clears its poll retry count/deadline; hub
+close clears them too. Successful enumeration clears the upstream reset budget.
+A root disconnect also cancels its pending reset and clears that budget, so a
+physical reconnect can start fresh.
+
 Examples (addresses, port, request and retry count vary):
 
 ```text
@@ -288,6 +302,13 @@ D1 NOT MOUNTED: enumeration failed (see CTRL/retry lines)
 hub5 port2 enum reset retry 1/2
 hub5 port2 enum recovered 1/2
 D5 enumeration complete
+hub5 poll refused retry=1 wait=20ms
+hub5 poll refused retry=2 wait=40ms
+hub5 poll refused retry=3 wait=80ms
+hub5 poll exhausted: reset retry=3
+hub0 port0 enum reset retry 1/2
+hub0 port0 enum reset retry 2/2
+hub0 port0 enum exhausted 2/2
 ```
 
 The CTRL line gives `bmRequestType/bRequest`, `wValue`, `wIndex`, and `wLength`;
@@ -298,11 +319,19 @@ If both port retries fail, expect `hub5 port2 enum exhausted 2/2`; the other por
 continue. The four-second `NOT MOUNTED` watchdog remains for incomplete enumeration,
 without claiming every incomplete enumeration was a control failure. An accepted
 keyboard interface is not proof that all interfaces finished configuring.
+If a refused interrupt submission recovers before exhaustion, expect e.g.
+`hub5 poll recovered retry=2` instead of the exhaustion/reset lines. A successful
+root retry reports `hub0 port0 enum recovered 1/2` (or `2/2`).
 
 `tests/test_usbhost_retry.py` compiles the actual patched host/hub stack with a fake
 HCD and deterministic time: backoff deadlines, refused submits, success/exhaustion,
 STALL, optional string refusal, microsecond clock wrap, disconnect cancellation,
-deferred multi-port changes, cleanup and a fresh PORT_RESET after enumeration failure. It requires `make deps` (otherwise skipped).
+deferred multi-port changes, cleanup and a fresh PORT_RESET after enumeration failure.
+It also checks 10,000 fixed-time poll refusals, exact backoff boundaries, late-task
+non-burst behavior, poll exhaustion through root reset and bounded reset exhaustion,
+upstream-port recovery dispatch, downstream cleanup, successful recovery, close
+and root-unplug cancellation, and poll
+deadline wrap. It requires `make deps` (otherwise skipped).
 These tests do not qualify the hub, receiver, bus power or split transactions on hardware.
 
 Read it from a Mac with the normal kernel running (no adapter): `usb_kernel.py <port> usblog`

@@ -18,6 +18,10 @@ int main(void) {
  usblog_fmt_control(l,1,0x80,6,0x100,0,18,2,0,"recovered");
  assert(strstr(l,"recovered retry=2"));
  usblog_fmt_port_retry(l,5,2,2,"exhausted");assert(!strcmp(l,"hub5 port2 enum exhausted 2/2"));
+ usblog_fmt_poll_retry(l,5,1,20,"refused");assert(!strcmp(l,"hub5 poll refused retry=1 wait=20ms"));
+ usblog_fmt_poll_retry(l,5,3,0,"exhausted: reset");assert(!strcmp(l,"hub5 poll exhausted: reset retry=3"));
+ usblog_fmt_poll_retry(l,5,2,0,"recovered");assert(!strcmp(l,"hub5 poll recovered retry=2"));
+ usblog_fmt_port_retry(l,0,0,1,"reset retry");assert(!strcmp(l,"hub0 port0 enum reset retry 1/2"));
  usblog_clear();assert(usblog_version()>0);uint32_t v=usblog_version();
  usblog_add("one");usblog_add("two\nthree");assert(usblog_version()!=v);
  assert(!strcmp(usblog_text(&n),"one\ntwo three\n")&&n==14);

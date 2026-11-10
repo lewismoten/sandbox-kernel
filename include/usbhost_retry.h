@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #define USBHOST_CONTROL_RETRIES 3
+#define USBHOST_POLL_RETRIES 3
 #define USBHOST_PORT_RETRIES 2
 static inline uint32_t usbhost_backoff(unsigned retry) {return 20u << (retry-1);}
 static inline bool usbhost_due(uint32_t now,uint32_t deadline) {return (int32_t)(now-deadline)>=0;}
