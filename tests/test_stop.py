@@ -23,6 +23,15 @@ class Stop(ProtocolBase):
         self.c.protocol_task()
         return self.c.take_output().decode()
 
+    def test_pending_slot_reports_busy_and_refuses_put2(self):
+        control=(C.c_uint32*128).in_dll(self.c,'control');old=control[4]
+        try:
+            control[4]=0
+            info=self.command('INFO');self.assertIn(' updates=busy ',info);self.assertIn(' features=kernel,no-os',info)
+            self.assertEqual(self.command('PUT2 kernel zero-w-armv6 64 00000000'),'ERR not-ready\n')
+        finally: control[4]=old
+        self.assertIn(' updates=ready ',self.command('INFO'))
+
     def test_active_stop_waits_for_safe_boundary(self):
         self.assertIn('INFO 2 ',self.command('INFO'))
         self.assertIn('OK file',self.put(program()))

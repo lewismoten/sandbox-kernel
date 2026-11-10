@@ -26,6 +26,13 @@ class SenderTests(unittest.TestCase):
                   'updates= features=kernel,no-os','updates=maybe','updates=READY','updates=busy','updates=ready features=locked','updates=ready updates=ready',
                   'xupdates=ready','note=updates=ready','features=kernel','features=locked','features=kernel,no-os features=kernel,no-os',''):
             self._bad('INFO 2 t '+t)
+    def test_busy_fails_closed_with_a_clear_message_and_sends_no_put2(self):
+        info='INFO 2 t confirmed=1 pending=2 updates=busy os=none features=kernel,no-os'
+        p=FakePort([info,info])
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/'runtime.ski';f.write_bytes(image.pack(b'X'*64,'sender'))
+            with self.assertRaisesRegex(ValueError,'pending update'): usb_kernel.send_kernel(p,f)
+        self.assertFalse(any(s.startswith(b'PUT2') for s in p.sent))
     def test_unrelated_fields_do_not_block_legacy(self):
         for t in ('xupdates=locked features=kernel,no-os','note=updates=locked features=kernel,no-os'):
             usb_kernel.check_updates(usb_kernel.info_fields('INFO 2 t '+t))
