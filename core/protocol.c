@@ -11,6 +11,7 @@ static inline uint32_t tud_cdc_read(void *b,uint32_t n) {(void)b;(void)n;return 
 static inline void tud_cdc_read_flush(void) {}
 #endif
 #include "serial.h"
+#include "audio_null.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
 extern uint32_t boot_slot,boot_generation;
@@ -113,6 +114,10 @@ static void command_line(void) {
  if(!strcmp(line,"STOP")) {
   if(!session) {refuse("not-ready");return;}
   os_request_stop();waiting_stop=true;return;
+ }
+ if(!strcmp(line,"AUDIO")||(used>=5&&!memcmp(line,"TONE ",5))) {
+  if(!session) {refuse("not-ready");return;}
+  char r[160];if(audio_command(line,r,sizeof r)) {usb_reply(r);return;}
  }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}

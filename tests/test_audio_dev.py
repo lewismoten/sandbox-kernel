@@ -9,7 +9,7 @@ import unittest
 import test_m1_user as m1
 
 EAGAIN = 11
-FRAMES = 4096
+FRAMES = 16384
 INFO = ('flags', 'rate', 'capacity', 'queued', 'played', 'underruns', 'overruns', 'overrun_frames')
 
 

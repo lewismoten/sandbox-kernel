@@ -73,6 +73,7 @@ void irq_init(void) {
 void irq_handler(void) {
  if(REG(PERIPH+0x3000)&2) { REG(PERIPH+0x3000)=2; REG(PERIPH+0x3010)=micros()+10000; ticks++; }
 #ifndef SELECTOR
+ if(REG(PERIPH+0xb204)&0x007e0000u) { extern void hdmi_audio_irq(void); hdmi_audio_irq(); }
  if(REG(PERIPH+0xb204)&(1<<9)) { extern void usb_irq(void); usb_irq(); }
 #endif
 }

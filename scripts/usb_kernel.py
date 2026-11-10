@@ -238,6 +238,8 @@ def main():
     p=sub.add_parser('axis',help='AXIS <code> <value> on the synthetic device');p.add_argument('code',type=int);p.add_argument('value',type=int)
     p=sub.add_parser('input',help='add or remove the synthetic device');p.add_argument('state',choices=('add','remove'))
     sub.add_parser('console',help='two-way session: typed keys and arrows go to the OS as input, OS serial output shows live, LOG lines dimmed')
+    p=sub.add_parser('tone',help='TONE <hz> <ms>: quiet test tone through the mixer (HDMI audio)');p.add_argument('hz',type=int);p.add_argument('ms',type=int)
+    sub.add_parser('audio',help='AUDIO: backend state, drain rate, underruns')
     a=ap.parse_args();port=Serial(a.port)
     try:
         if a.action=='send': return send_kernel(port,a.kernel)
@@ -250,6 +252,8 @@ def main():
         if a.action=='axis': return send_command(port,f'AXIS {a.code} {a.value}')
         if a.action=='console': return console(port)
         if a.action=='input': return send_command(port,f'INPUT {a.state}')
+        if a.action=='tone': return send_command(port,f'TONE {a.hz} {a.ms}')
+        if a.action=='audio': return send_command(port,'AUDIO')
         print(handshake(port),flush=True)
         if a.action=='tail':
             while True:

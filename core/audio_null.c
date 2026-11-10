@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; Copyright (c) 2026 Lewis Moten
  * Original work (Claude Sonnet 5.5). See include/audio_null.h. */
 #include "audio_null.h"
+#include <string.h>
 #include "clock.h"
 struct audio_dev audio0;
 void audio_dev_init(void) { audio_ring_init(&audio0.ring); audio0.open = 0; audio0.clocked = 0; audio0.frac = 0; audio0.wrote = 0; }
@@ -40,4 +41,22 @@ void audio_null_tick(uint64_t now_us) {
         frames -= n;
     }
 }
-void audio_null_task(void) { audio_null_tick(clock_us()); }
+struct audio_hw audio_hw;
+void audio_null_task(void) { if (audio_hw.task) audio_hw.task(); else audio_null_tick(clock_us()); }
+static void put(char *out, size_t cap, const char *s) { size_t n = 0; while (out[n]) n++; while (*s && n + 1 < cap) out[n++] = *s++; out[n] = 0; }
+static int dec(const char **p, uint32_t *v) { uint32_t x = 0; if (**p < '0' || **p > '9') return 0; while (**p >= '0' && **p <= '9') { if (x > 99999999u) return 0; x = x * 10 + (uint32_t)(**p - '0'); (*p)++; } *v = x; return 1; }
+int audio_command(const char *line, char *reply, size_t cap) {
+    if (!cap) return 0;
+    reply[0] = 0;
+    if (!strcmp(line, "AUDIO")) {
+        put(reply, cap, "OK audio ");
+        if (audio_hw.report) audio_hw.report(reply, cap); else put(reply, cap, "backend=null");
+        put(reply, cap, "\n"); return 1;
+    }
+    for (unsigned i = 0; i < 5; i++) if (line[i] != "TONE "[i]) return 0;
+    const char *p = line + 5; uint32_t hz, ms;
+    if (!dec(&p, &hz) || *p++ != ' ' || !dec(&p, &ms) || *p || hz < 50 || hz > 4000 || ms < 1 || ms > 1000) { put(reply, cap, "ERR tone args (TONE <50-4000 Hz> <1-1000 ms>)\n"); return 1; }
+    if (!audio_hw.tone) { put(reply, cap, "ERR tone no-hdmi\n"); return 1; }
+    put(reply, cap, audio_hw.tone(hz, ms) ? "ERR tone busy\n" : "OK tone\n");
+    return 1;
+}

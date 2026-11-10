@@ -16,3 +16,13 @@ void audio_dev_close(void);        /* flushes the ring: queued audio is dropped,
  * underrun) while nobody has the device open, so silence between games is free. */
 void audio_null_tick(uint64_t now_us);
 void audio_null_task(void);        /* main-loop hook: audio_null_tick(clock_us()) */
+
+/* A hardware backend (HDMI) installs these; all null means the null backend runs.
+ * audio_null_task calls task instead of draining when it is set. */
+struct audio_hw { void (*task)(void); int (*tone)(uint32_t hz, uint32_t ms); void (*report)(char *out, size_t cap); };
+extern struct audio_hw audio_hw;
+/* USB test commands. `line` is the command without its newline. Returns 0 when it
+ * is not an audio command; else 1 and fills `reply` (one line, with "\n"):
+ *   TONE <hz> <ms>   quiet test tone through the mixer (50..4000 Hz, 1..1000 ms)
+ *   AUDIO            backend state and counters */
+int audio_command(const char *line, char *reply, size_t cap);
