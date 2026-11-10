@@ -21,9 +21,8 @@ int main(void) {
  assert(!usbkbd_hid_mounted(1,0,false));                 /* mouse */
  assert(usbkbd_hid_mounted(1,1,true));                   /* keyboard, not the first interface */
  assert(!usbkbd_hid_mounted(1,2,false));                 /* consumer */
- assert(!usbkbd_hid_mounted(1,3,true));                  /* a second keyboard interface: not polled */
+ assert(usbkbd_hid_mounted(1,3,true)&&usbkbd_count()==2); /* a second keyboard is polled too (one queue device) */
  assert(!usbkbd_report(1,0,A,8)&&!held(KEY_A));           /* a mouse report is never read as keys */
- assert(!usbkbd_report(1,3,A,8)&&!held(KEY_A));
  assert(usbkbd_report(1,1,A,8)&&held(KEY_A));
  usbkbd_hid_unmounted(1,0);usbkbd_hid_unmounted(1,2);usbkbd_hid_unmounted(1,3); /* others leaving keep the keyboard */
  assert(usbkbd_ready()&&input_present()&&held(KEY_A));
@@ -33,13 +32,13 @@ int main(void) {
  assert(usbkbd_hid_mounted(1,0,true)&&!usbkbd_hid_mounted(1,1,false)&&usbkbd_report(1,0,A,8)&&held(KEY_A));
  /* R4: a refused re-arm after a held key removes the keyboard: key released, status truthful. */
  usbkbd_attached(1,2);
- usbkbd_poll_failed();
+ usbkbd_poll_failed(1,0);
  assert(!usbkbd_ready()&&!input_present()&&!strcmp(usbkbd_status(),"HOST: device, no keyboard"));
  assert(!usbkbd_report(1,0,NONE,8));                      /* nothing is read after the removal */
  /* a refused first poll removes it too, and a replug starts clean */
  input_init();usbkbd_init();
- assert(usbkbd_hid_mounted(1,0,true));usbkbd_poll_failed();assert(!usbkbd_ready()&&!input_present());
+ assert(usbkbd_hid_mounted(1,0,true));usbkbd_poll_failed(1,0);assert(!usbkbd_ready()&&!input_present());
  input_add();assert(usbkbd_hid_mounted(1,0,true)&&usbkbd_report(1,0,A,8)&&held(KEY_A));
- usbkbd_device_gone();assert(!usbkbd_ready());
+ usbkbd_device_gone(1);assert(!usbkbd_ready());
  puts("usbhost regress ok");return 0;
 }

@@ -35,12 +35,12 @@ bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const 
 }
 void usb_irq(void) {if(initialized)tuh_int_handler(0,true);}
 void tuh_mount_cb(uint8_t daddr) {uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);}
-void tuh_umount_cb(uint8_t daddr) {(void)daddr;usbkbd_device_gone();usbkbd_detached();}
+void tuh_umount_cb(uint8_t daddr) {usbkbd_device_gone(daddr);usbkbd_detached();}
 /* R4: arm the interrupt endpoint, retrying a refused submit a few times; if it stays refused the
    keyboard is removed (keys released, status truthful) rather than left ready with no poll. */
 static void arm(uint8_t daddr,uint8_t idx) {
  for(unsigned n=0;n<3;n++) if(tuh_hid_receive_report(daddr,idx)) return;
- usbkbd_poll_failed();
+ usbkbd_poll_failed(daddr,idx);
 }
 void tuh_hid_mount_cb(uint8_t daddr,uint8_t idx,const uint8_t *desc,uint16_t len) {
  (void)desc;(void)len;
@@ -52,7 +52,16 @@ void tuh_hid_umount_cb(uint8_t daddr,uint8_t idx) {usbkbd_hid_unmounted(daddr,id
 void tuh_hid_report_received_cb(uint8_t daddr,uint8_t idx,const uint8_t *report,uint16_t len) {
  if(usbkbd_report(daddr,idx,report,len)) arm(daddr,idx);
 }
-const char *usb_state(void) {return initialized?usbkbd_status():init_fail;}
+bool usb_mounted(void) {return false;}
+bool usb_id_grounded(void) {return true;}
+void usb_set_boot_note(const char *t) {(void)t;}
+/* "KEYBOARD MODE", then the number of boot keyboards found once any is ready: 16 display columns. */
+const char *usb_state(void) {
+ static char t[20];if(!initialized) return init_fail;
+ unsigned n=usbkbd_count();const char *s="KEYBOARD MODE";unsigned i=0;while(*s)t[i++]=*s++;
+ if(n){t[i++]=' ';t[i++]=(char)('0'+(n>9?9:n));}
+ t[i]=0;return t;
+}
 void usb_init(void) {
  uint32_t p[2]={3,3};
  if(!property(0x28001,p,2)) {init_fail="USB POWER";error("USB POWER");log_line(property_fail);return;}

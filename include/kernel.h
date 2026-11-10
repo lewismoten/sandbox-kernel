@@ -68,6 +68,9 @@ bool usb_healthy(void);
 bool usb_host_wanted(void);
 void usb_device_stop(void);
 bool host_companion_launch(void);
+bool usb_mounted(void);       /* a Mac data link is up (device role); always false in the host role */
+bool usb_id_grounded(void);   /* the OTG adapter grounded the ID pin at boot (device role) */
+void usb_set_boot_note(const char *text); /* e-ink USB line while no Mac link is up; NULL clears */
 void usb_task(void);
 const char *usb_state(void);
 void protocol_task(void);

@@ -3,7 +3,8 @@
 #include "hidboot.h"
 #include "input.h"
 void log_line(const char *s); /* kernel.h, without its hardware inlines */
-static struct hidboot kb;static bool ready,attached;static uint8_t kb_daddr,kb_idx;
+/* Up to USBKBD_MAX boot keyboards at once (a hub may hold two plus a receiver); the input queue sees one device. */
+static struct {struct hidboot kb;bool used;uint8_t daddr,idx;} slot[USBKBD_MAX];static unsigned nkb,ndev;
 static const char *const special[]={"Enter","Esc","Backspace","Tab","Space","-","=","[","]","\\","#",";","'","`",",",".","/","CapsLock"};
 const char *usbkbd_usage_name(uint8_t u) {
  static char one[2],f[4];
@@ -27,32 +28,40 @@ static void say(const char *a,const char *b) {
  char t[48];unsigned n=0;while(*a&&n<30)t[n++]=*a++;while(b&&*b&&n<46)t[n++]=*b++;t[n]=0;log_line(t);
 }
 static void hex4(char *o,uint16_t v) {for(int i=0;i<4;i++)o[i]="0123456789ABCDEF"[(v>>(12-4*i))&15];}
-void usbkbd_init(void) {hidboot_init(&kb);ready=false;attached=false;}
+void usbkbd_init(void) {for(unsigned i=0;i<USBKBD_MAX;i++)slot[i].used=false;nkb=0;ndev=0;}
 void usbkbd_host_up(void) {log_line("USB host up");}
 void usbkbd_attached(uint16_t vid,uint16_t pid) {
- char id[10];hex4(id,vid);id[4]=':';hex4(id+5,pid);id[9]=0;attached=true;say("device attached ",id);
+ char id[10];hex4(id,vid);id[4]=':';hex4(id+5,pid);id[9]=0;ndev++;say("device attached ",id);
 }
-void usbkbd_detached(void) {attached=false;log_line("device removed");}
+void usbkbd_detached(void) {if(ndev)ndev--;log_line("device removed");}
+static int find(uint8_t daddr,uint8_t idx) {for(unsigned i=0;i<USBKBD_MAX;i++)if(slot[i].used&&slot[i].daddr==daddr&&slot[i].idx==idx)return (int)i;return -1;}
 bool usbkbd_hid_mounted(uint8_t daddr,uint8_t idx,bool boot_keyboard) {
  if(!boot_keyboard) {log_line("HID interface skipped (not a boot keyboard)");return false;}
- if(ready) return false; /* one keyboard at a time */
- hidboot_init(&kb);input_add();ready=true;kb_daddr=daddr;kb_idx=idx;log_line("keyboard ready");return true;
+ if(find(daddr,idx)>=0) return false;
+ for(unsigned i=0;i<USBKBD_MAX;i++) if(!slot[i].used) {
+  hidboot_init(&slot[i].kb);slot[i].used=true;slot[i].daddr=daddr;slot[i].idx=idx;
+  if(!nkb++) input_add();
+  log_line("keyboard ready");return true;
+ }
+ log_line("keyboard skipped (too many)");return false;
 }
-static bool polled(uint8_t daddr,uint8_t idx) {return ready&&daddr==kb_daddr&&idx==kb_idx;}
 bool usbkbd_report(uint8_t daddr,uint8_t idx,const uint8_t *rep,uint32_t len) {
- if(!polled(daddr,idx)) return false;
- struct hidboot probe=kb;struct input_change ch[HIDBOOT_CHANGES_MAX];
+ int i=find(daddr,idx);if(i<0) return false;
+ struct hidboot probe=slot[i].kb;struct input_change ch[HIDBOOT_CHANGES_MAX];
  int n=hidboot_diff(&probe,rep,len,ch);
- for(int i=0;i<n;i++) if(ch[i].value==1) say("key ",code_name(ch[i].code));
- hidboot_feed(&kb,rep,len);
+ for(int k=0;k<n;k++) if(ch[k].value==1) say("key ",code_name(ch[k].code));
+ hidboot_feed(&slot[i].kb,rep,len);
  return true;
 }
-static void drop(const char *why) {
- if(!ready) return;
- hidboot_release_all(&kb);input_remove();ready=false;log_line(why);
+static void drop_slot(unsigned i,const char *why) {
+ hidboot_release_all(&slot[i].kb);slot[i].used=false;
+ if(!--nkb) input_remove();
+ log_line(why);
 }
-void usbkbd_hid_unmounted(uint8_t daddr,uint8_t idx) {if(polled(daddr,idx)) drop("keyboard removed");}
-void usbkbd_device_gone(void) {drop("keyboard removed");}
-void usbkbd_poll_failed(void) {drop("keyboard poll failed");}
-bool usbkbd_ready(void) {return ready;}
-const char *usbkbd_status(void) {return ready?"HOST: keyboard":attached?"HOST: device, no keyboard":"HOST: no device";}
+void usbkbd_hid_unmounted(uint8_t daddr,uint8_t idx) {int i=find(daddr,idx);if(i>=0) drop_slot((unsigned)i,"keyboard removed");}
+/* The device is gone, whichever interface: every keyboard on that device address. */
+void usbkbd_device_gone(uint8_t daddr) {for(unsigned i=0;i<USBKBD_MAX;i++) if(slot[i].used&&slot[i].daddr==daddr) drop_slot(i,"keyboard removed");}
+void usbkbd_poll_failed(uint8_t daddr,uint8_t idx) {int i=find(daddr,idx);if(i>=0) drop_slot((unsigned)i,"keyboard poll failed");}
+bool usbkbd_ready(void) {return nkb>0;}
+unsigned usbkbd_count(void) {return nkb;}
+const char *usbkbd_status(void) {return nkb?"HOST: keyboard":ndev?"HOST: device, no keyboard":"HOST: no device";}

@@ -9,6 +9,11 @@
 #include "audio_null.h"
 #include "hdmi_audio.h"
 #include "usbrole.h"
+#include "assets.h"
+#include "bootrec.h"
+#if USB_ROLE_HOST
+#include "usbkbd.h"
+#endif
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
@@ -54,23 +59,31 @@ void kernel_main(void) {
   error("Companion metadata mismatch");for(;;){}
  }
  usb_init();
+ if(storage_ready) {asset_mount();bootrec_boot(BD_KEYBOARD,false);}
 #else
  /* Decide before framebuffer/audio/OS startup: no running DMA or program to
     quiesce. ID is latched at boot; a live device link always cancels intent. */
  if(!boot_trial&&updates_ready&&boot_slot==control[3]) {
   (void)usb_host_wanted(); /* anchor the debounce before any USB task work */
   uint32_t since=micros();
+  enum usb_companion_action action=USB_COMPANION_NONE;
+  /* Keep asking for USBROLE_DECISION_WINDOW_US (well past the debounce) while the ID pin says an adapter is
+     there and no Mac link has come up. No adapter, or a Mac link, is decided at once. */
   do {
-   usb_task(); /* no protocol commands during the short boot decision window */
+   usb_task(); /* no protocol commands during the boot decision window */
+   if(usb_mounted()||!usb_id_grounded()) break;
    enum usb_role intent=usb_host_wanted()?USB_ROLE_HOST_WANTED:USB_ROLE_DEVICE;
-   enum usb_companion_action action=usbrole_companion_action(intent,control[9]!=0,true);
-   if(action!=USB_COMPANION_NONE) {
-    if(action==USB_COMPANION_MISSING||!host_companion_launch())
-     log_line("OTG: keyboard kernel missing or invalid; install host companion over Mac USB");
-    break;
-   }
-  } while(!expired(since,USBROLE_HOST_STABLE_US+1000u));
- }
+   action=usbrole_companion_action(intent,control[9]!=0,true);
+   if(action!=USB_COMPANION_NONE) break;
+  } while(!expired(since,USBROLE_DECISION_WINDOW_US));
+  enum boot_decision d=usb_mounted()?BD_LINK:!usb_id_grounded()?BD_NO_ADAPTER:action==USB_COMPANION_HANDOFF?BD_KEYBOARD:action==USB_COMPANION_MISSING?BD_INSTALL_KBD:BD_NO_ADAPTER;
+  log_line(usb_id_grounded()?"OTG ID pin: grounded (adapter)":"OTG ID pin: floating (no adapter)");
+  if(storage_ready) {asset_mount();bootrec_boot(d,true);}
+  usb_set_boot_note(bootinfo_status(d));
+  {char t[40]="Boot decision: ";const char *w=bootinfo_decision_name(d);memcpy(t+15,w,strlen(w)+1);log_line(t);}
+  if(action==USB_COMPANION_MISSING||(action==USB_COMPANION_HANDOFF&&!host_companion_launch()))
+   log_line("OTG: keyboard kernel missing or invalid; install host companion over Mac USB");
+ } else if(storage_ready) {asset_mount();bootrec_boot(BD_NONE,false);}
 #endif
  /* M1 probes: HDMI framebuffer and read-only assets. Neither touches USB,
     the panel or any card sector; failures are logged, never fatal. */
@@ -88,9 +101,17 @@ void kernel_main(void) {
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]==1&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
+#if USB_ROLE_HOST
+ unsigned kbd_seen=0,kbd_saved=0;uint32_t kbd_since=micros();
+#endif
  if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
   clock_us();audio_null_task();usb_task();protocol_task();os_task();
+#if USB_ROLE_HOST
+  /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
+  if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}
+  else if(kbd_seen!=kbd_saved&&expired(kbd_since,2000000)) {if(storage_ready&&!os_running()) {kbd_saved=kbd_seen;char t[28]="Keyboards found: ";t[17]=(char)('0'+(kbd_seen>9?9:kbd_seen));t[18]=0;log_line(t);bootrec_keyboards(kbd_seen);}}
+#endif
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;

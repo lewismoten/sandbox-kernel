@@ -3,7 +3,9 @@
 The normal kernel provides the Mac USB link. A separate `USB_ROLE=host` kernel
 can stay installed in the idle A/B slot as a **host companion**. On each power-on,
 the normal kernel samples the OTG adapter's ID pin. Grounded ID and no enumerated
-USB device link for 500 ms select the companion for that boot. No confirmed slot,
+USB device link select the companion for that boot. The debounce is 300 ms and the boot decision
+window is 1.5 s (`USBROLE_HOST_STABLE_US`, `USBROLE_DECISION_WINDOW_US`; the window must clearly outlast the
+debounce, which the first hardware test on 2026-11-10 showed). No adapter or a Mac link is decided at once. No confirmed slot,
 trial attempt or boot-control record is changed by this handoff. Without the
 adapter, the next power-on runs the normal kernel and its Mac link again.
 
@@ -143,7 +145,7 @@ debounce at the wrap. Tests cover the wrap and exactly 500 ms across it. (TinyUS
 `tusb_time_millis_api` still does `micros()/1000`, so its millisecond counter jumps at the
 wrap; not changed here.)
 - Hot-plug is not implemented: the ID level is sampled once at boot and latched; only the
-  "no computer enumerated" half of the decision is live (500 ms debounce, `usbrole_step`).
+  "no computer enumerated" half of the decision is live (300 ms debounce, `usbrole_step`).
   Live hot-plug sampling needs a brief un-force window (or the A/B-device change
   interrupt); that disturbs a gadget link, so it is slice 2.
 
@@ -174,7 +176,18 @@ verified companion starts that stack.
 Build: `make USB_ROLE=host all`. The default `USB_ROLE=device` is the Mac link.
 A role change relinks everything through `build/usb_role.stamp`. Each runtime
 has one fixed USB role; the automatic boot decision selects between images.
-There is no CDC link or hub support in a host image.
+There is no CDC link in a host image. It has one hub (`CFG_TUH_HUB 1`, up to four devices behind it) and takes up to
+`USBKBD_MAX` (4) boot keyboards at once on any device; a receiver's mouse and consumer interfaces are skipped.
+
+## Boot record, name and the e-ink
+
+Every boot writes one line to `/OS/SAVES/KERNEL/BOOT.TXT`: `n<boot counter>,<decision>,k<keyboards found>`
+(decisions: `link`, `no-adapter`, `install-kbd`, `keyboard`). The e-ink USB line says `KEYBOARD MODE` (plus the
+number of keyboards once found, host role), `NO OTG ADAPTER`, or `OTG: INSTALL KBD`. The host kernel rewrites
+the line once the keyboard count has held for 2 s. `INFO` adds `name= boot= lastboot=` (the previous boot's
+record) and the `LASTBOOT` command prints them; `usb_kernel.py lastboot` sends it. A Pi's short name
+(`usb_kernel.py name PI-2`, 1 to 8 of A-Z 0-9 -, `/OS/NAME.TXT`, ignored if invalid) is drawn in the status screen's
+bottom-right corner and shown in INFO.
 
 What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
 device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the

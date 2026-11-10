@@ -235,6 +235,8 @@ def main():
     p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
+    p=sub.add_parser('name',help='give this Pi a short name (1-8 of A-Z 0-9 -), shown on the e-ink and in INFO; stored as /OS/NAME.TXT');p.add_argument('text')
+    sub.add_parser('lastboot',help='the previous boot\'s decision and keyboards found, and this boot\'s')
     sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
     p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('putapp',help='install an app folder as /OS/APPS/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
@@ -251,6 +253,13 @@ def main():
         if a.action=='send': return send_kernel(port,a.kernel)
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())
         if a.action=='run': return run_program(port,a.name.upper(),a.seconds)
+        if a.action=='lastboot': return send_command(port,'LASTBOOT')
+        if a.action=='name':
+            import tempfile
+            n=a.text.upper()
+            if not re.fullmatch(r'[A-Z0-9-]{1,8}',n): raise ValueError(f'{a.text!r}: a name is 1 to 8 of A-Z 0-9 -')
+            with tempfile.TemporaryDirectory() as d:
+                f=pathlib.Path(d)/'NAME.TXT';f.write_text(n+'\n');return send_file(port,f,'NAME.TXT')
         if a.action=='stop': return stop_program(port)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')

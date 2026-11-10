@@ -25,13 +25,24 @@ class HostRegress(unittest.TestCase):
 
     def test_r4_arm_failure_removes_keyboard(self):
         src = (ROOT / 'drivers/usb_host.c').read_text()
-        self.assertIn('usbkbd_poll_failed();', src)
+        self.assertIn('usbkbd_poll_failed(daddr,idx);', src)
         self.assertEqual(len(re.findall(r'tuh_hid_receive_report', src)), 1)  # every arm goes through the checked helper
 
     def test_r2_config_has_room_for_a_composite(self):
         cfg = (ROOT / 'include/tusb_config.h').read_text()
         self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_HID (\d+)', cfg).group(1)), 3)
         self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_ENDPOINT_MAX (\d+)', cfg).group(1)), 8)
+
+    def test_hub_and_several_devices(self):
+        cfg = (ROOT / 'include/tusb_config.h').read_text()
+        self.assertEqual(int(re.search(r'#define CFG_TUH_HUB (\d+)', cfg).group(1)), 1)
+        self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_DEVICE_MAX (\d+)', cfg).group(1)), 4)
+        self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_HID (\d+)', cfg).group(1)), 6)
+
+    def test_boot_decision_window_outlasts_debounce(self):
+        main = (ROOT / 'core/main.c').read_text()
+        self.assertIn('USBROLE_DECISION_WINDOW_US', main)
+        self.assertNotIn('USBROLE_HOST_STABLE_US+1000u', main)
 
     def test_r1_host_image_has_no_confirmation_path(self):
         host = preprocess('-DUSB_ROLE_HOST=1')

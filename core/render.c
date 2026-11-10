@@ -38,6 +38,9 @@ static void blit(uint8_t *p,unsigned x,unsigned y,const struct logo *l) {
 static void plain(uint8_t *p,unsigned x,unsigned y,const char *s,unsigned max) {
  for(;*s&&max--;s++) { draw_char(p,x,y,*s); x+=*s==' '?SPACE_ADV:ADV; }
 }
+static char tag[9];
+/* A Pi's short name, drawn small in the bottom-right corner of the status screen; empty draws nothing. */
+void render_set_tag(const char *name) {unsigned i=0;while(name&&name[i]&&i<8){tag[i]=name[i];i++;}tag[i]=0;}
 void render_starting(uint8_t *p) {
  memset(p,255,4000);
  blit(p,4,13,&logo_large);
@@ -52,6 +55,7 @@ void render_status_ex(uint8_t *p,const char *title,const uint8_t *mark,const cha
  plain(p,4,48,"UP:",3); plain(p,54,48,up,16);
  plain(p,4,70,"USB:",4); plain(p,54,70,usb,16);
  plain(p,4,92,"ERR:",4); plain(p,54,92,error,16);
+ if(tag[0]) {unsigned n=0;while(tag[n])n++;plain(p,250-2-n*ADV,108,tag,8);}
 }
 void render_status(uint8_t *p,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  render_status_ex(p,NULL,NULL,build_id,usb,error,seconds);

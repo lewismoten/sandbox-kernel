@@ -44,10 +44,15 @@ void tud_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr) {
 static const char *init_fail="unavailable";
 static bool id_grounded;static struct usbrole role;
 static char fail_text[32];
+bool usb_mounted(void) {return initialized&&tud_mounted();}
+bool usb_id_grounded(void) {return id_grounded;}
+static const char *decision_note;
+void usb_set_boot_note(const char *t) {decision_note=t;}
 bool usb_host_wanted(void) {return initialized&&usbrole_step(&role,id_grounded,tud_mounted(),micros())==USB_ROLE_HOST_WANTED;}
 void usb_device_stop(void) {initialized=false;tud_deinit(0);}
 const char *usb_state(void) {if(!initialized)return init_fail;
  if(usb_host_wanted()) {return USBROLE_MISSING_COMPANION;}
+ if(decision_note&&!tud_mounted()) {return decision_note;}
  if(suspended) {return "suspended";}
  if(!tud_mounted()) {return "disconnected";}
  return tud_cdc_connected()?"reader":"enumerated";}

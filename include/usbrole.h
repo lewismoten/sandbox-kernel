@@ -8,7 +8,11 @@ enum usb_role { USB_ROLE_DEVICE, USB_ROLE_HOST_WANTED };
 #define USBROLE_MISSING_COMPANION "OTG: INSTALL KBD" /* 16 display columns */
 enum usb_companion_action { USB_COMPANION_NONE, USB_COMPANION_MISSING, USB_COMPANION_HANDOFF };
 enum usb_companion_action usbrole_companion_action(enum usb_role role,bool installed,bool confirmed_device_boot);
-#define USBROLE_HOST_STABLE_US 500000u /* wanted must hold this long (us) before HOST_WANTED */
+#define USBROLE_HOST_STABLE_US 300000u /* wanted must hold this long (us) before HOST_WANTED */
+/* The boot decision loop (core/main.c) keeps asking for this long. It must be well past the debounce:
+   the first hardware test (2026-11-10) closed the window at the debounce time and never decided. */
+#define USBROLE_DECISION_WINDOW_US 1500000u
+_Static_assert(USBROLE_DECISION_WINDOW_US>=3u*USBROLE_HOST_STABLE_US,"boot window must clearly outlast the debounce");
 struct usbrole { enum usb_role role; bool cand; uint32_t since; };
 #define USBROLE_GOTGCTL 0x20980000u
 #define USBROLE_GUSBCFG 0x2098000cu

@@ -45,6 +45,17 @@ class Eink(unittest.TestCase):
     def view(self, fn, *args):
         buf = (C.c_uint8 * 4000)(); fn(buf, *args); plane = bytes(buf)
         return {(lx, ly) for ly in range(122) for lx in range(250) if not plane[lx * 16 + (121 - ly) // 8] & (0x80 >> ((121 - ly) % 8))}
+    def test_name_tag_corner(self):
+        corner = lambda dots: {d for d in dots if d[0] >= 190 and d[1] >= 107}
+        self.L.render_set_tag(b'')
+        none = self.view(self.L.render_status, b'5CA68D431228', b'KEYBOARD MODE', b'none', C.c_uint32(3))
+        self.assertFalse(corner(none))
+        self.L.render_set_tag(b'PI-2')
+        tagged = self.view(self.L.render_status, b'5CA68D431228', b'KEYBOARD MODE', b'none', C.c_uint32(3))
+        self.assertTrue(corner(tagged) and tagged - corner(tagged) == none)   # only the corner changes
+        xs = [x for x, y in corner(tagged)]; ys = [y for x, y in corner(tagged)]
+        self.assertTrue(min(xs) >= 196 and max(xs) <= 248 and max(ys) <= 121)
+        self.L.render_set_tag(b'')
     def test_starting(self):
         want = pbm('eink-starting-template-250x122.pbm') | text(112, 24, 'SANDBOX') | text(112, 42, 'KERNEL') | text(112, 77, 'STARTING...')
         self.assertEqual(self.view(self.L.render_starting), want)

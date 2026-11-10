@@ -15,7 +15,7 @@ CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-u
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 ifeq ($(USB_ROLE),host)
-USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/host/usbh.c $(TUSB)/class/hid/hid_host.c $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
+USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c $(TUSB)/host/usbh.c $(TUSB)/host/hub.c $(TUSB)/class/hid/hid_host.c $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
 USBDRV := drivers/usb_host.c core/usbkbd.c
 CFLAGS += -DUSB_ROLE_HOST=1
 else ifeq ($(USB_ROLE),device)
@@ -24,7 +24,7 @@ USBDRV := drivers/usb.c
 else
 $(error USB_ROLE must be device or host)
 endif
-KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c core/serial.c core/eink.c core/iec958.c core/hdmi_audio_plan.c drivers/hdmi_audio.c $(USBDRV) core/protocol.c core/main.c $(USB)
+KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c core/bootinfo.c core/bootrec.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c core/serial.c core/eink.c core/iec958.c core/hdmi_audio_plan.c drivers/hdmi_audio.c $(USBDRV) core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
 .PHONY: all clean deps boot test test-asan programs examples FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski programs

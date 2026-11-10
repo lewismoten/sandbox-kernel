@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "tusb.h"
 #include "fatput.h"
+#include "bootinfo.h"
 #include "os.h"
 #include "autostart.h"
 #include "input.h"
@@ -130,6 +131,9 @@ static void command_line(void) {
   log_line(line[6]=='a'?"INPUT event0 added (synthetic)":"INPUT event0 removed");
   usb_reply(line[6]=='a'?"OK input add\n":"OK input remove\n");return;
  }
+ if(!strcmp(line,"LASTBOOT")) { /* the previous boot's record (decision, keyboards found), then this boot's */
+  usb_reply("LASTBOOT name=");usb_reply(bootinfo_name());usb_reply(" previous=");usb_reply(bootinfo_prev());usb_reply(" this=");usb_reply(bootinfo_this());usb_reply("\n");return;
+ }
  if(!strcmp(line,"INFO")) {
   session=true;
   usb_reply("INFO 2 zero-w armv6 ABI=1.0 profile=zero-w-armv6 capacity=2097152 active=");field(boot_slot);
@@ -141,6 +145,7 @@ static void command_line(void) {
   usb_reply(os_running()?" os=running":os_starts?" os=stopped":" os=none");
   /* features= is legacy, kept so old usb_kernel.py clients still update; read updates= and os= */
   usb_reply(updates_ready?" features=kernel,no-os":" features=locked");
+  usb_reply(" name=");usb_reply(bootinfo_name());usb_reply(" boot=");usb_reply(bootinfo_this());usb_reply(" lastboot=");usb_reply(bootinfo_prev());
   usb_reply(" install_timeout=120 serial=");usb_reply(serial_transport_name());usb_reply("\n");return;
  }
  const char *p=line;uint32_t size,crc=0;

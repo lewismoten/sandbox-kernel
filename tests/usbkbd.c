@@ -42,9 +42,9 @@ int main(void) {
  nlines=0;uint8_t sh[8]={2,0,0x04};usbkbd_report(1,1,sh,8);
  assert(nlines==2&&!strcmp(lines[0],"key LShift")&&!strcmp(lines[1],"key A"));
  /* hold a key, then unplug: the release is sent and the device removed, no stuck key */
- ngot=0;usbkbd_device_gone();
+ ngot=0;usbkbd_device_gone(1);
  assert(ngot==2&&got[0].value==0&&got[1].value==0&&removes==1&&!usbkbd_ready()&&has("keyboard removed"));
- usbkbd_device_gone();assert(removes==1);   /* the device-gone callback after it is harmless */
+ usbkbd_device_gone(1);assert(removes==1);   /* the device-gone callback after it is harmless */
  usbkbd_detached();assert(has("device removed")&&!strcmp(usbkbd_status(),"HOST: no device"));
  /* replug works as a new device */
  usbkbd_attached(0x1a2c,0x0c);assert(usbkbd_hid_mounted(1,1,true)&&adds==2);
@@ -54,5 +54,13 @@ int main(void) {
  /* every usage has a name or none; names are short */
  for(unsigned u=0;u<256;u++) {const char *n=usbkbd_usage_name((uint8_t)u);assert(!n||(strlen(n)>0&&strlen(n)<12));}
  assert(!strcmp(usbkbd_usage_name(0x52),"Up")&&!strcmp(usbkbd_usage_name(0x27),"0")&&!strcmp(usbkbd_usage_name(0x45),"F12")&&!strcmp(usbkbd_usage_name(0x3a),"F1"));
+ /* two keyboards on two devices (behind a hub) plus a receiver's mouse: both polled, one queue device */
+ reset();usbkbd_attached(1,2);usbkbd_attached(0x1997,0x2433);
+ assert(usbkbd_hid_mounted(2,0,true)&&usbkbd_hid_mounted(3,0,true)&&!usbkbd_hid_mounted(3,1,false)&&usbkbd_count()==2&&adds==1);
+ uint8_t b[8]={0,0,0x05};assert(usbkbd_report(3,0,b,8)&&usbkbd_report(2,0,b,8)==true);
+ usbkbd_device_gone(2);assert(usbkbd_count()==1&&removes==0&&usbkbd_ready());   /* one keyboard leaving keeps the other */
+ usbkbd_device_gone(3);assert(usbkbd_count()==0&&removes==1&&!usbkbd_ready());
+ reset();for(uint8_t i=0;i<USBKBD_MAX;i++) assert(usbkbd_hid_mounted((uint8_t)(i+1),0,true));
+ assert(!usbkbd_hid_mounted(9,0,true)&&usbkbd_count()==USBKBD_MAX);                   /* more than the limit: skipped, logged */
  puts("usbkbd ok");return 0;
 }
