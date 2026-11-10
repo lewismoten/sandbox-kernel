@@ -8,13 +8,11 @@
 #include "fb_art.h"
 #include "audio_null.h"
 #include "hdmi_audio.h"
-void asset_probe(void);
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
 void log_line(const char *s) {console_log(s);uart_puts(s);uart_puts("\r\n");usb_log(s);}
 void error(const char *s) {last_error=s;log_line(s);}
-extern bool panel_boot_done(void),verify_confirmed(void),protocol_busy(void),usb_healthy(void),control_healthy(void);
 void kernel_main(void) {
  uint32_t boot_time=micros();
  uint32_t h[8];memcpy(h,(const void *)0x7000,sizeof(h));

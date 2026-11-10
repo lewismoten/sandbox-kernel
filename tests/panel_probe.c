@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT. Real panel driver over simulated SPI and GPIO.
  * Timer and error reporting come from the shared syscall harness. */
+#include "host_exports.h"
 #include "kernel.h"
 #include "clock.h"
 static uint32_t spi[4];

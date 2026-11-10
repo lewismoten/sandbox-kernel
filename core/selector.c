@@ -23,7 +23,9 @@ void selector_main(void) {
  }
  {uint32_t sdb[8]; sd_export(sdb); memcpy((void *)0x7040,sdb,32);} /* card state for the runtime */
  volatile uint32_t *h=(volatile uint32_t *)0x7000;
- h[0]=HANDOFF_MAGIC;h[1]=1;h[2]=slot;h[3]=trial;h[4]=generation;h[5]=REG(PERIPH+0x100020);h[6]=ram[1];h[7]=crc32((const void *)h,28);
+ h[0]=HANDOFF_MAGIC;h[1]=1;h[2]=slot;h[3]=trial;h[4]=generation;h[5]=REG(PERIPH+0x100020);h[6]=ram[1];
+ uint32_t handoff[7];for(unsigned i=0;i<7;i++)handoff[i]=h[i];
+ h[7]=crc32(handoff,sizeof handoff);
  uart_puts(trial?"Launch trial\r\n":"Launch confirmed/recovery\r\n");
  watchdog_feed(); barrier();
  uint32_t z=0; __asm__ volatile("mcr p15,0,%0,c7,c5,0\n mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c5,4"::"r"(z):"memory");

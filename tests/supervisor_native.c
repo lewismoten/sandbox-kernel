@@ -30,6 +30,8 @@ static void start(const char *path) {
  assert(us_check(0x30000000,1,U_R)==-14);
  uint32_t r[8]={0};r[2]=1;r[7]=22;assert(sys_call(r)==-38);
 }
+/* Also included with main renamed by the arena native probe. */
+int main(int argc,char **argv);
 int main(int argc,char **argv) {
  assert(argc==3);uint32_t *k=kernel_table();
  for(unsigned i=0;i<128;i++)k[i]=(i<<20)|0x402|(i?8:0);

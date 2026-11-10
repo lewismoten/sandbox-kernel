@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT; Copyright (c) 2026 Lewis Moten */
 /* Review findings R2-R4 of the host-role keyboard, with the real usbkbd, hidboot and input code. */
+#include "kernel.h"
+#include "clock.h"
 #include "usbkbd.h"
 #include "input.h"
 #include <assert.h>

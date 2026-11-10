@@ -35,3 +35,17 @@ void tud_task(void);
 void tud_cdc_write_char(char c);
 void tud_cdc_write_str(const char *s);
 void tud_cdc_write_flush(void);
+
+/* Device callbacks supplied by the production USB glue under test. */
+const uint8_t *tud_descriptor_device_cb(void);
+const uint8_t *tud_descriptor_configuration_cb(uint8_t index);
+const uint8_t *tud_descriptor_device_qualifier_cb(void);
+const uint8_t *tud_descriptor_other_speed_configuration_cb(uint8_t index);
+const uint16_t *tud_descriptor_string_cb(uint8_t index,uint16_t lang);
+void tud_mount_cb(void);
+void tud_umount_cb(void);
+void tud_suspend_cb(bool remote);
+void tud_resume_cb(void);
+void tud_cdc_line_state_cb(uint8_t itf,bool dtr,bool rts);
+void tud_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr);
+uint32_t tusb_time_millis_api(void);

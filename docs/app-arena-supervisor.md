@@ -1,4 +1,10 @@
-# Supervisor reclaim — Slice B, not a live app arena
+# Supervisor reclaim — historical Slice B boundary
+
+Current status: Slice C now exposes the app arena through ABI 1.6 call 21 and
+a 48-byte startup extension; the current ABI is 1.10. See
+[app-arena-abi.md](app-arena-abi.md). The lifecycle below remains in use;
+statements about unavailable allocation describe the original B-only slice.
+Physical cleanup timing and MMU/cache/TLB behavior remain hardware-untested.
 
 Original MIT work: Lewis Moten with Hermes Agent / OpenAI Codex GPT-6.1 Sol
 (`gpt-6.1-sol`, `openai-codex`). No third-party implementation adapted.

@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include "audio_null.h"
+#include "clock.h"
 #include "hdmi_audio.h"
 #include "mixer.h"
 #include "iec958.h"

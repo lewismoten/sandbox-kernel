@@ -106,7 +106,7 @@ bool sd_init_after_handoff(const uint32_t in[8]) {
  return false;
 }
 uint32_t sd_sectors(void) { return capacity; }
-static bool transfer(uint32_t lba,void *p,bool write) {
+static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
  if(lba>=capacity) return false;
  if(!wait_bits(0x24,3,0,100000)) return false;
  R(0x04)=(1<<16)|512;
@@ -115,15 +115,17 @@ static bool transfer(uint32_t lba,void *p,bool write) {
  while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)) return false; }
  if(R(0x30)&0xffff8000u) return false;
  R(0x30)=ready;
- uint8_t *b=p;
- for(unsigned i=0;i<128;i++) { uint32_t w; if(write) { memcpy(&w,b+i*4,4); R(0x20)=w; } else { w=R(0x20); memcpy(b+i*4,&w,4); } }
+ uint8_t *b=read_data;
+ const uint8_t *out=write_data;
+ for(unsigned i=0;i<128;i++) { uint32_t w; if(write) { memcpy(&w,out+i*4,4); R(0x20)=w; } else { w=R(0x20); memcpy(b+i*4,&w,4); } }
  t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)) return false; }
- if(R(0x30)&0xffff8000u) return false; R(0x30)=2;
+ if(R(0x30)&0xffff8000u) { return false; }
+ R(0x30)=2;
  /* CMD13 polls card programming state: host DATA_DONE alone is insufficient. */
  if(write) {
   t=micros(); do { if(!command(13,rca,0x1a0000)) return false; uint32_t status=R(0x10); if(status&0xfdffe008u) return false; if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); return false;
  }
  return true;
 }
-bool sd_read(uint32_t lba,void *p) { return transfer(lba,p,false); }
-bool sd_write(uint32_t lba,const void *p) { return transfer(lba,(void *)p,true); }
+bool sd_read(uint32_t lba,void *p) { return transfer(lba,p,NULL,false); }
+bool sd_write(uint32_t lba,const void *p) { return transfer(lba,NULL,p,true); }

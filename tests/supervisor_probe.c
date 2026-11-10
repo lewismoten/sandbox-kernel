@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT; test-only observation of actual supervisor. */
+#include "host_exports.h"
 #include "../core/os.c"
 uint64_t probe_epoch(void) {return owner.active;}
 uint64_t probe_last(void) {return owner.last;}

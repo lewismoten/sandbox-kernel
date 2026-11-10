@@ -5,8 +5,9 @@ This page is the API that lets the running OS change what it shows, and the rule
 the panel and the kernel's own screens safe. Source: `core/eink.c` (rules, no hardware),
 `core/render.c` (drawing), `drivers/panel.c` (SPI), `core/sys.c` (the device).
 
-ABI minor: **1.9**. Develop was 1.7 (saves) and audio claims 1.8 (in review), so this took
-the next free minor. If the order of merges changes, only the one ABI commit moves.
+Introduced in **ABI 1.9**, after saves (1.7) and audio (1.8); the current
+kernel and SDK report **1.10**. The OS API and refresh-care rules are
+hardware-untested; M0 board qualification covers the kernel boot/status screens.
 
 ## The screen
 

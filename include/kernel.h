@@ -56,14 +56,20 @@ void log_line(const char *s);
 void cpu_speed(void); /* the ARM clock to its maximum (firmware mailbox), branch prediction on; logs both */
 void boot_note(const char *s); /* log now and again for each new USB reader */
 void boot_summary(void);
+void asset_probe(void);
 extern const char *last_error;
 void error(const char *s);
 void panel_start(void);
+bool panel_boot_done(void);
 void panel_task(const char *state,uint32_t seconds);
 void usb_init(void);
+void usb_irq(void);
+bool usb_healthy(void);
 void usb_task(void);
 const char *usb_state(void);
 void protocol_task(void);
+bool protocol_busy(void);
+bool verify_confirmed(void);
 void protocol_reset(void);
 void usb_reply(const char *s);
 void usb_log(const char *s);
@@ -86,6 +92,7 @@ extern const uint32_t *sd_handoff_block; /* runtime: selector card state (8 word
 bool file_read(const struct file_extent *f,uint32_t sector,void *data);
 bool file_write(const struct file_extent *f,uint32_t sector,const void *data);
 bool control_commit(const uint32_t next[128]);
+bool control_healthy(void);
 bool slot_load(unsigned slot,uint8_t *dest,uint32_t *bytes);
 void selector_main(void) __attribute__((noreturn));
 void kernel_main(void) __attribute__((noreturn));

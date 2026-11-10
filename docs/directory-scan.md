@@ -34,8 +34,8 @@ not a Raspberry Pi time measurement. Five native x86_64/stdio samples gave media
 unverified. The actual production scanner still performs its normal discovery,
 CRC duplicate checks and library enrichment.
 
-This optimization **does not implement** the separate requirement for an on-card
-`GAMES.IDX`. That needs a metadata/persistence ABI, explicit install invalidation
-(the USB writer currently uses fixed FAT timestamps), bounded cache decoding and
-board FAT transaction/failure-recovery tests. Do not equate this invocation-local
-read buffer with that requested cache, or host rename with media durability.
+This optimization itself does not persist `GAMES.IDX`. ABI 1.4 subsequently
+added metadata, bounded cache writes and USB-install invalidation; see
+[cache-storage.md](cache-storage.md). Cache decoding belongs to the OS. Board
+FAT transaction/failure-recovery and real-card speedup remain hardware-untested;
+this invocation-local read buffer does not establish media durability.
