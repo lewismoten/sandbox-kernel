@@ -26,6 +26,9 @@ static struct { int active, ch; uint32_t cs; } hw;
 static struct dma_cb cbs[HDMI_DMA_SEGS] __attribute__((aligned(32)));
 static uint32_t buf[HDMI_DMA_SEGS * SEG_WORDS] __attribute__((aligned(32)));
 static uint32_t pcm[HDMI_DMA_SEG_FRAMES];
+static uint32_t silence[SEG_WORDS], packed[SEG_WORDS];
+static volatile uint8_t ready[HDMI_DMA_SEGS];
+static volatile uint32_t irq_starved; /* completed segments played without a task refill */
 static uint8_t stL[24], stR[24];
 static struct mixer mx;
 static volatile uint32_t completions; /* single writer: segment-complete IRQ */
@@ -60,10 +63,31 @@ static void read_pcm(void) {
  for (uint32_t i = n; i < HDMI_DMA_SEG_FRAMES; i++) pcm[i] = 0;
 }
 
+/* Only the bounded publication copy excludes IRQs. Packing/ring consumption
+ * stays in the foreground. Preserve the caller's IRQ state. */
+static uint32_t irq_save(void) {
+ uint32_t flags, masked;
+ __asm__ volatile("mrs %0,cpsr\n\torr %1,%0,#0x80\n\tmsr cpsr_c,%1"
+                  : "=r"(flags), "=r"(masked) :: "memory", "cc");
+ return flags;
+}
+static void irq_restore(uint32_t flags) {
+ __asm__ volatile("msr cpsr_c,%0" :: "r"(flags) : "memory", "cc");
+}
 static void fill(uint32_t seg) {
  read_pcm();
- iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, buf + seg * SEG_WORDS);
- /* The segment always starts a block: 384 = 2 * 192, so the frame counter restarts at 0. */
+ iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, packed);
+ /* Every segment starts a block (384 = 2 * 192). DMA keeps moving while
+  * IRQs are masked: exclude both its current and next segment, leaving at
+  * least 8 ms for this fixed 3 KiB copy and write-buffer drain. */
+ uint32_t flags = irq_save();
+ uint32_t current = dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS);
+ if (seg != current && seg != ((current + 1u) & (HDMI_DMA_SEGS - 1u))) {
+  for (uint32_t i = 0; i < SEG_WORDS; i++) buf[seg * SEG_WORDS + i] = packed[i];
+  drain();
+  ready[seg] = 1;
+ }
+ irq_restore(flags);
 }
 
 /* Keep the chain circular; INTEN reports each completed segment without
@@ -77,6 +101,15 @@ static void build_ring(void) {
 void hdmi_audio_irq(void) {
  if (hw.ch < 1 || !(dma(DMA_CS) & 4u)) return;
  dmaw(DMA_CS, (dma(DMA_CS) & ~0x102u) | 4u); /* W1C INT; preserve ACTIVE/priorities, leave END/error */
+ /* CONBLK identifies the block DMA is reading now; only retire its
+  * predecessor, which has a full seven segments before reuse. Never use pcm
+  * or packed here: the task may be preparing audio when interrupted. */
+ uint32_t current = dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS);
+ uint32_t seg = (current + HDMI_DMA_SEGS - 1u) & (HDMI_DMA_SEGS - 1u);
+ if (!ready[seg]) irq_starved++;
+ for (uint32_t i = 0; i < SEG_WORDS; i++) buf[seg * SEG_WORDS + i] = silence[i];
+ drain();
+ ready[seg] = 0;
  completions++;
 }
 
@@ -117,7 +150,13 @@ int hdmi_audio_init(void) {
  }
  /* Silence in every segment, then the looping DMA ring. */
  mixer_init(&mx);
- for (uint32_t i = 0; i < HDMI_DMA_SEGS; i++) { for (uint32_t k = 0; k < HDMI_DMA_SEG_FRAMES; k++) pcm[k] = 0; iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, buf + i * SEG_WORDS); }
+ for (uint32_t k = 0; k < HDMI_DMA_SEG_FRAMES; k++) pcm[k] = 0;
+ iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, silence);
+ for (uint32_t i = 0; i < HDMI_DMA_SEGS; i++) {
+  for (uint32_t k = 0; k < SEG_WORDS; k++) buf[i * SEG_WORDS + k] = silence[k];
+  ready[i] = 1; /* initial silence is intentional */
+ }
+ irq_starved = 0;
  build_ring();
  drain();
  hd(HD_MAI_CTL, hdmi_mai_ctl_run());
@@ -160,9 +199,9 @@ void hdmi_audio_task(void) {
  if (dma(DMA_CS) & 0x100u) { errors++; dmaw(DMA_CS, (dma(DMA_CS) & ~6u) | 0x100u); }
  /* Only seven buffers are behind DMA; never refill its current segment.
   * Account for drains missed before those buffers, including their underruns,
-  * then prepare the most recent completed segments as in the original ring. */
+  * then prepare the most recent completed segments. fill rechecks hardware
+  * ownership after packing, since an IRQ may advance DMA during this task. */
  uint32_t refill = adv < HDMI_DMA_SEGS ? adv : HDMI_DMA_SEGS - 1u;
- if (adv >= HDMI_DMA_SEGS) starved++;
  for (uint32_t i = refill; i < adv; i++) read_pcm();
  for (uint32_t i = completed - refill; i != completed; i++) fill(i & (HDMI_DMA_SEGS - 1u));
  last_completed = completed;
@@ -180,7 +219,7 @@ void hdmi_audio_report(char *out, size_t cap) {
  uint32_t frames = segs_played * HDMI_DMA_SEG_FRAMES;
  uint32_t fps = el ? (frames / el) * 1000u + (frames % el) * 1000u / el : 0;
  const struct { const char *k; uint32_t v; } f[] = {
-  {"backend=hdmi segs=", segs_played}, {" drain_fps=", fps}, {" starved=", starved}, {" dma_err=", errors},
+  {"backend=hdmi segs=", segs_played}, {" drain_fps=", fps}, {" starved=", starved + irq_starved}, {" dma_err=", errors},
   {" ring_underruns=", (uint32_t)audio0.ring.underruns}, {" ring_queued=", audio_ring_queued(&audio0.ring)}, {" tones=", tones}, {" mixer_active=", mixer_active(&mx)}};
  for (unsigned i = 0; i < sizeof f / sizeof *f; i++) {
   for (const char *s = f[i].k; *s && n + 1 < cap;) out[n++] = *s++;
