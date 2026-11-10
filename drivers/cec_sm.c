@@ -119,6 +119,8 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
         cec_build_report_power_status(&r, s->laddr, from, CEC_POWER_ON); push(s, &r); break;
     case CEC_OP_GET_CEC_VERSION:
         cec_build_cec_version(&r, s->laddr, from, CEC_VERSION_1_4); push(s, &r); break;
+    case CEC_OP_MENU_REQUEST:                        /* we show no menu for the TV to drive */
+        cec_build_menu_status(&r, s->laddr, from, CEC_MENU_DEACTIVATED); push(s, &r); break;
     case CEC_OP_FEATURE_ABORT: break;                /* never abort an abort */
     default:                                         /* Give Device Vendor ID and the rest */
         cec_build_feature_abort(&r, s->laddr, from, (uint8_t)op, CEC_ABORT_UNRECOGNIZED); push(s, &r);

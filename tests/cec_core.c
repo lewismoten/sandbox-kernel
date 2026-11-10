@@ -20,8 +20,8 @@ static void test_msg(void) {
     struct cec_msg m;
     static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04};
     assert(cec_build_report_physical_address(&m, 4, 0x1000, CEC_DEVTYPE_PLAYBACK) == 0); eq(&m, rpa, 5);
-    static const uint8_t osd[] = {0x40, 0x47, 'G','a','m','e','-','M','a','k','e','r'};
-    assert(cec_build_set_osd_name(&m, 4, 0, "Game-Maker") == 0); eq(&m, osd, 12);
+    static const uint8_t osd[] = {0x40, 0x47, 'G','a','m','e',' ','M','a','k','e','r'};
+    assert(cec_build_set_osd_name(&m, 4, 0, "Game Maker") == 0); eq(&m, osd, 12);
     assert(cec_build_set_osd_name(&m, 4, 0, "FifteenCharsNam") < 0 && cec_build_set_osd_name(&m, 4, 0, "") < 0);
     static const uint8_t fa[] = {0x40, 0x00, 0x8C, 0x00};
     assert(cec_build_feature_abort(&m, 4, 0, 0x8C, 0) == 0); eq(&m, fa, 4);
@@ -135,6 +135,8 @@ static void test_sm(void) {
     r = mk(other, 2); cec_sm_rx(&s, &r); assert(!tx(&s, &m));        /* to someone else */
     r = mk(pwr, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x90 && m.b[2] == 0); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ver, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[1] == 0x9E && m.b[2] == 5); cec_sm_tx_done(&s, last_tx_id, 1);
+    static const uint8_t mreq[] = {0x04, 0x8D, 0x02};
+    r = mk(mreq, 3); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x8E && m.b[2] == 1); cec_sm_tx_done(&s, last_tx_id, 1);
     /* user control */
     static const uint8_t ucp[] = {0x04, 0x44, 0x04}, ucr[] = {0x04, 0x45};
     r = mk(ucp, 3); assert(cec_sm_rx(&s, &r) == CEC_SM_EV_KEY_PRESSED && s.ui_code == 4 && !tx(&s, &m));

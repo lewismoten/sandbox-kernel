@@ -78,3 +78,8 @@ int cec_build_cec_version(struct cec_msg *m, unsigned src, unsigned dst, uint8_t
     m->b[2] = version; m->len = 3;
     return 0;
 }
+int cec_build_menu_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t state) {
+    if (start(m, src, dst, CEC_OP_MENU_STATUS) < 0) return -1;
+    m->b[2] = state; m->len = 3;
+    return 0;
+}

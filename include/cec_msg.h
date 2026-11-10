@@ -30,6 +30,8 @@
 #define CEC_OP_SET_STREAM_PATH 0x86u
 #define CEC_OP_DEVICE_VENDOR_ID 0x87u
 #define CEC_OP_GIVE_DEVICE_VENDOR_ID 0x8Cu
+#define CEC_OP_MENU_REQUEST 0x8Du
+#define CEC_OP_MENU_STATUS 0x8Eu
 #define CEC_OP_GIVE_POWER_STATUS 0x8Fu
 #define CEC_OP_REPORT_POWER_STATUS 0x90u
 #define CEC_OP_CEC_VERSION 0x9Eu
@@ -37,6 +39,8 @@
 
 #define CEC_ABORT_UNRECOGNIZED 0u
 #define CEC_POWER_ON 0u
+#define CEC_MENU_ACTIVATED 0u
+#define CEC_MENU_DEACTIVATED 1u
 
 struct cec_msg {
     uint8_t len;               /* 1..16; header only = a poll */
@@ -62,5 +66,6 @@ int cec_build_feature_abort(struct cec_msg *m, unsigned src, unsigned dst, uint8
 int cec_build_image_view_on(struct cec_msg *m, unsigned src, unsigned dst);
 int cec_build_active_source(struct cec_msg *m, unsigned src, uint16_t phys);
 int cec_build_report_power_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t status);
+int cec_build_menu_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t state);
 int cec_build_cec_version(struct cec_msg *m, unsigned src, unsigned dst, uint8_t version);
 #endif

@@ -9,7 +9,7 @@
 #define CEC_SM_QUEUE 6u
 #define CEC_SM_TX_TIMEOUT_MS 1000u
 #define CEC_SM_POLL_RETRIES 2u
-#define CEC_SM_OSD_NAME "Game-Maker"
+#define CEC_SM_OSD_NAME "Game Maker"
 
 enum cec_sm_state { CEC_SM_POLL, CEC_SM_CLAIMED, CEC_SM_NO_ADDRESS };
 enum cec_sm_event { CEC_SM_EV_NONE, CEC_SM_EV_KEY_PRESSED, CEC_SM_EV_KEY_RELEASED };
