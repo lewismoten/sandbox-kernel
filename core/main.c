@@ -19,8 +19,15 @@ void kernel_main(void) {
  uint32_t h[8];memcpy(h,(const void *)0x7000,sizeof(h));
  if(h[0]!=HANDOFF_MAGIC||h[1]!=1||h[2]>1||h[3]>1||h[6]<128*1024*1024u||h[7]!=crc32(h,28)) {uart_init();uart_puts("Invalid selector handoff\r\n");for(;;){}}
  boot_slot=h[2];boot_generation=h[4];boot_trial=h[3];
+#if USB_ROLE_HOST
+ /* R1: a host-role image only ever runs as a consumed trial. Entered any other way (a confirmed or
+    metadata-lost boot) it does nothing: no USB, no confirmation. The watchdog the selector armed
+    resets the board every few seconds, and the UART names the reason. */
+ if(!h[3]) {uart_init();uart_puts("Host-role image is not on trial; not running. Restore the device kernel (card reader).\r\n");for(;;){}}
+#endif
  /* The first visible image is completed before USB, SD or timer IRQ setup.
     System-timer free-running hardware is used only for bounded panel delays. */
+ input_init(); /* R3: before USB or SD can deliver a keyboard report; the OS-facing note stays below */
  panel_start();while(!panel_boot_done())panel_task("starting",0);
  mmu_init();uart_init();irq_init();usb_init();
  log_line("sandbox-kernel " BUILD_ID " Zero W v1.1 RASPPI=1");
@@ -42,7 +49,7 @@ void kernel_main(void) {
  /* M1 probes: HDMI framebuffer and read-only assets. Neither touches USB,
     the panel or any card sector; failures are logged, never fatal. */
  /* Slice 3: the synthetic input device (USB KEY/AXIS), present from boot. */
- input_init();boot_note("INPUT /dev/input/event0 synthetic (USB KEY, AXIS)");
+ boot_note("INPUT /dev/input/event0 synthetic (USB KEY, AXIS)");
  watchdog_feed();cpu_speed();fb_start();
  if(storage_ready)asset_probe();
  watchdog_feed();
@@ -74,11 +81,18 @@ void kernel_main(void) {
    if(!storage_ready||!updates_ready||!usb_healthy()||!control_healthy())health_failed=true;
    /* Read and compare the authoritative record before trial confirmation. */
    if(health_failed) {error("Trial storage health failed");for(;;)service_io();}
+#if USB_ROLE_HOST
+   /* A host-role image has no Mac link to replace it, so it never confirms: it stays a
+      trial, and a power cycle returns to the confirmed device-role kernel. */
+   (void)c;
+   if(expired(diagnostics_start,30000000)) {trial=false;log_line("Host-role test image: not confirmed; power off and on to return to the device kernel");}
+#else
    if(expired(diagnostics_start,30000000)) {
     memcpy(c,control,512);c[3]=boot_slot;c[6]=boot_generation;c[4]=NO_SLOT;c[5]=0;c[7]=0;memcpy(c+16,c+24,32);memset(c+24,0,32);
     if(!control_commit(c)) {error("Confirmation failed");for(;;)service_io();}
     trial=false;boot_trial=0;log_line("Trial confirmed after 30 seconds");
    }
+#endif
   }
  }
 }

@@ -5,7 +5,14 @@ import hashlib, json, pathlib, shutil
 from fetch import ROOT, firmware, FIRMWARE_TAG, FIRMWARE_COMMIT
 from image import MAX_IMAGE, validate, control_record, fat_image
 
+def refuse_host_role(stamp=None):
+    """R1: the factory image is confirmed slot A, and a host-role image never confirms; refuse it here."""
+    stamp=stamp or ROOT/'build/usb_role.stamp'
+    role=stamp.read_text().strip() if stamp.exists() else 'device'
+    if role!='device': raise SystemExit('refusing to assemble a card image from a USB_ROLE=%s runtime: send a host image from a device-role kernel as a trial instead'%role)
+
 def main():
+    refuse_host_role()
     firmware()
     build=ROOT/'build';dest=build/'boot';dest.mkdir(parents=True,exist_ok=True)
     # All output names fit FAT 8.3. No DTBs or GPL firmware-side kernel payloads.

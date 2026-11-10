@@ -100,3 +100,57 @@ cheapest, though the design file asks to audit its BSP needs.
   `hidboot_release_all` releases held keys on unplug.
 - Tests: `tests/hidboot.c`, run by `tests/test_hidboot.py`. Nothing calls these yet; the host
   controller slices will. The OS-facing ABI does not change.
+
+## Slice 2: the host-role build (keyboard on the OTG port)
+
+Build: `make USB_ROLE=host all` (the default, `USB_ROLE=device`, is the Mac link and is unchanged;
+the Makefile follows the existing `PANEL_ROTATE_180 ?=` style of variables). A role change
+relinks everything (`build/usb_role.stamp`). The role is fixed at build time: there is no ID
+autodetect, no hub and no Mac link in a host image (the one port cannot be both), so the
+serial reader and the protocol see nothing. So a host image never confirms its A/B trial:
+after 30 s it logs "Host-role test image: not confirmed", and the next power cycle boots the
+confirmed device-role kernel again, Mac link included.
+
+How that is enforced, and where it stops (review R1): the confirm code is not compiled into a host
+image (`tests/test_usbhost_regress.py` preprocesses `core/main.c` both ways). A host image that the
+selector starts as anything but a consumed trial (a confirmed boot, or both control records lost)
+does nothing: it prints "not on trial" on the UART and lets the watchdog reset the board, and it
+never starts USB. `make boot` (`scripts/assemble_boot.py`) refuses a `USB_ROLE=host` runtime, so a
+factory card never has a host image in confirmed slot A. The selector itself does not know roles.
+The fallback on the next boot needs the consumed record to be intact (`docs/m0.md`); if the card
+loses both control records while the host image sits in the slot the selector tries first, the board
+boots it unconfirmed and needs the card reader. Power cuts and card faults are not tested here. Send it from a device-role kernel as
+usual; to test again, send it again.
+
+What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
+device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
+host-testable glue. TinyUSB sets boot protocol on a boot-subclass HID interface before its
+mount callback; the glue arms the interrupt endpoint (a refused submit is retried three times, then the keyboard is removed: keys released, status `HOST: device, no keyboard`), `hidboot_feed` turns reports into
+`input_frame` changes, and an unmount calls `hidboot_release_all` then `input_remove`.
+`include/tusb_config.h` carries the host settings and a one-line `dwc2_int_set` shim,
+because TinyUSB 0.21's `dwc2_bcm.h` has only the device interrupt switch.
+
+What the HDMI console shows, in order (the e-ink status line shows `HOST: no device`,
+`HOST: device, no keyboard` or `HOST: keyboard`):
+1. `USB host up`: the stack started (it did not hang before this).
+2. `device attached VID:PID`: the port reset and enumeration reached the device descriptor.
+3. `keyboard ready`: a boot keyboard interface mounted and polling started. If the device has
+   no boot keyboard interface the line is `HID interface skipped (not a boot keyboard)`.
+4. `key NAME` for each press (`key Up`, `key Space`, `key LShift`); releases are not shown.
+5. `keyboard removed` / `device removed` when it is unplugged.
+Stopping at 1 with a device plugged in means the port never saw it (power or reset); stopping at
+2 means set-up or HID mounting failed.
+
+Tests: `tests/usbkbd.c` (`make test`) drives the glue with fakes: stage lines, skipped
+non-keyboard interfaces, press names, no stuck key on unplug, replug, rollover and short reports.
+
+Unverified on hardware: whether TinyUSB's `hcd_dwc2.c` runs on the Zero's BCM2835 core at all,
+the FIFO split, VBUS being powered, and the keyboard dongle being full speed.
+
+## Composite dongles and start-up (review R2, R3)
+
+`CFG_TUH_HID` counts interfaces, so it is 4: a mouse or consumer-control interface before or after
+the keyboard no longer uses up the slot. The first boot-protocol keyboard interface is the one
+polled; its (device, interface) pair is remembered, so reports from, and the unmount of, any other
+interface are ignored. A keyboard that offers no boot protocol is skipped. `input_init()` now runs
+before USB or the SD card can deliver a report, so a key held at mount is kept.
