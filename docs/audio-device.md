@@ -17,8 +17,10 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   rate, capacity (16,384 frames, about 341 ms; `include/audio_ring.h:20`), queued, played, underruns,
   overruns, overrun frames. Output fields must be zero on entry.
 - **Underrun:** the backend asks for more than is queued, plays zeros for the
-  missing frames (never stale data) and adds one to `underruns`. Nothing counts
-  before the first write of an open, or while closed.
+  missing frames and adds one to `underruns`. During long SD operations over
+  about 64 ms, foreground refill can stall and the HDMI DMA chain can replay
+  its last buffered audio until refill resumes. Nothing counts before the
+  first write of an open, or while closed.
 - **Overrun:** the ring never overwrites unread audio. A write that does not
   fit is cut at the last whole frame that fits; each refused write adds one to
   `overruns` and its refused frames to `overrun_frames`. The app sees the short count.

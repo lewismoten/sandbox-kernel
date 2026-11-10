@@ -24,6 +24,15 @@ class SerialSys(u.CallsBase):
         v=struct.unpack_from('<7Q',peek(self.c,q,72),16);self.assertEqual(v,(1,3,0,2,0,3,0))
         poke(self.c,q,self.hdr(72)+struct.pack('<Q',1)+bytes(48));self.assertEqual(self.ioctl(fd,0x60000,q,72),-EINVAL)
         self.assertEqual(self.ioctl(fd,0x60001,q,72),-ENOTTY)
+    def test_query_preserves_dropped_count_above_32_bits(self):
+        r,fd=self.open('/dev/serial0',2|NB);self.assertEqual(r,0)
+        self.c.serial_set_reader(False)
+        for _ in range(4097):
+            self.c.serial_write(None,1<<20)  # disconnected: source is unused
+        q=self.BUF+0x400;poke(self.c,q,self.hdr(72)+bytes(56))
+        self.assertEqual(self.ioctl(fd,0x60000,q,72),0)
+        self.assertEqual(struct.unpack_from('<7Q',peek(self.c,q,72),16),
+                         (0,0,4097*(1<<20),0,0,0,0))
     def test_program_end_releases_it(self):
         self.assertEqual(self.open('/dev/serial0',2|NB)[0],0);self.c.sys_reset()
         self.assertEqual(self.open('/dev/serial0',2|NB)[0],0)

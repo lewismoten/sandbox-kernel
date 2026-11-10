@@ -12,7 +12,7 @@
 #define SERIAL_LINE_MAX 272u   /* worst framed line, with its newline and a terminator */
 #define SERIAL_NONE 0u
 #define SERIAL_USB 1u
-struct serial_counters {uint32_t transport,tx_bytes,tx_dropped,rx_bytes,rx_dropped,tx_pending,rx_pending;};
+struct serial_counters {uint32_t transport; uint64_t tx_bytes,tx_dropped,rx_bytes,rx_dropped; uint32_t tx_pending,rx_pending;};
 int serial_open(void);                 /* 0, or -EBUSY (one owner at a time) */
 void serial_close(void);               /* the owner is done: buffers are emptied */
 void serial_set_reader(bool connected);/* USB: a host has the port open; false drops what waits */
