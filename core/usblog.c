@@ -51,3 +51,8 @@ void usblog_fmt_port_retry(char *o,uint8_t hub,uint8_t port,unsigned retry,const
  unsigned a=0;o[0]=0;a=put(o,a,"hub");a=dec(o,a,hub);a=put(o,a," port");a=dec(o,a,port);
  a=put(o,a," enum ");a=put(o,a,outcome);a=put(o,a," ");a=dec(o,a,retry);(void)put(o,a,"/2");
 }
+void usblog_fmt_poll_retry(char *out,uint8_t hub,unsigned retry,unsigned delay_ms,const char *outcome) {
+ unsigned offset=0;out[0]=0;offset=put(out,offset,"hub");offset=dec(out,offset,hub);offset=put(out,offset," poll ");offset=put(out,offset,outcome);
+ offset=put(out,offset," retry=");offset=dec(out,offset,retry);
+ if(delay_ms){offset=put(out,offset," wait=");offset=dec(out,offset,delay_ms);(void)put(out,offset,"ms");}
+}

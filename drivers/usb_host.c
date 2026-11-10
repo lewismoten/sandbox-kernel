@@ -133,6 +133,9 @@ void tuh_enumeration_result_cb(uint8_t d,uint8_t hub,uint8_t port,bool success) 
 void tuh_hub_retry_cb(uint8_t hub,uint8_t port,unsigned retry,const char *outcome) {
  char l[USBLOG_LINE];usblog_fmt_port_retry(l,hub,port,retry,outcome);lg(l);
 }
+void tuh_hub_poll_retry_cb(uint8_t hub,unsigned retry,unsigned delay_ms,const char *outcome) {
+ char line[USBLOG_LINE];usblog_fmt_poll_retry(line,hub,retry,delay_ms,outcome);lg(line);
+}
 void usb_task(void) {if(initialized){tuh_task();watchdog();}}
 /* The counters of attach/remove events, for the closing line of USB.TXT. */
 void usb_host_events(uint32_t *attach,uint32_t *remove) {*attach=ev_attach;*remove=ev_remove;}

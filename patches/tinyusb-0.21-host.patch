@@ -1,6 +1,6 @@
 --- usbh.c
 +++ usbh.c
-@@ -32,6 +32,10 @@
+@@ -32,6 +32,11 @@
  #include "tusb.h"
  #include "usbh_pvt.h"
  #include "hub.h"
@@ -8,6 +8,7 @@
 +#include "usbhost_hooks.h"
 +void hub_task(void);
 +void hub_enum_result(uint8_t hub, uint8_t port, bool success);
++void hub_root_removed(uint8_t rhport);
  
  //--------------------------------------------------------------------+
  // Configuration
@@ -63,6 +64,14 @@
      // Drain pending async control xfers. Slot transitions and dispatch are
      // decoupled: completion / abort / device_close set stage = IDLE via
      // control_xfer_set_stage() and the actual FIFO drain happens here in the
+@@ -806,4 +819,7 @@
+       case HCD_EVENT_DEVICE_REMOVE:
+         TU_LOG_USBH("[%u:%u:%u] USBH Device Removed\r\n", event.rhport, event.connection.hub_addr, event.connection.hub_port);
+         process_remove_event(&event);
++#if CFG_TUH_HUB
++        if (!event.connection.hub_addr) hub_root_removed(event.rhport);
++#endif
+         break;
 @@ -987,8 +999,7 @@
    }
  
@@ -200,9 +209,21 @@
      enum_full_complete(false); // failed to enum
      return;
    }
-@@ -2229,16 +2262,22 @@
+@@ -2228,18 +2261,33 @@
+   }
  }
  
++#if CFG_TUH_HUB
++void usbh_hub_poll_failed(uint8_t daddr) {
++  tuh_bus_info_t bus;
++  if (!tuh_bus_info_get(daddr, &bus)) return;
++  remove_device_tree(bus.rhport, bus.hub_addr, bus.hub_port);
++  hcd_device_close(bus.rhport, 0);
++  _usbh_data.dev0_bus = bus;
++  hub_enum_result(bus.hub_addr, bus.hub_port, false);
++}
++#endif
++
  static void enum_full_complete(bool success) {
 -  (void)success;
 +  uint8_t daddr = _usbh_data.enumerating_daddr;
@@ -217,28 +238,29 @@
 -  // Hub status is already requested in case of successful enumeration
 -  if (!success && _usbh_data.dev0_bus.hub_addr != 0) {
 -    hub_edpt_status_xfer(_usbh_data.dev0_bus.hub_addr);
-+  if (bus.hub_addr != 0) {
-+    if (!success) {
-+      // Release addresses, class endpoints and held keys before resetting the port.
-+      remove_device_tree(bus.rhport, bus.hub_addr, bus.hub_port);
-+      hcd_device_close(bus.rhport, 0);
-+    }
-+    hub_enum_result(bus.hub_addr, bus.hub_port, success);
-   }
+-  }
++  if (!success) {
++    // Release addresses, class endpoints and held keys before resetting the port.
++    remove_device_tree(bus.rhport, bus.hub_addr, bus.hub_port);
++    hcd_device_close(bus.rhport, 0);
++  }
++  hub_enum_result(bus.hub_addr, bus.hub_port, success);
    #endif
  }
+
 --- hub.c
 +++ hub.c
-@@ -32,6 +32,8 @@
+@@ -32,6 +32,9 @@
  #include "usbh.h"
  #include "usbh_pvt.h"
  #include "hub.h"
 +#include "usbhost_retry.h"
 +#include "usbhost_hooks.h"
++void usbh_hub_poll_failed(uint8_t daddr);
  
  // Debug level, TUSB_CFG_DEBUG must be at least this level for debug message
  #define HUB_DEBUG   2
-@@ -49,6 +51,10 @@
+@@ -49,6 +52,12 @@
    uint8_t bPwrOn2PwrGood_2ms; // port power on to good, in 2ms unit
    // uint16_t wHubCharacteristics;
    bool mtt;
@@ -246,10 +268,29 @@
 +  bool want_poll, processing, poll_active;
 +  uint8_t retry_port, retries[8];
 +  uint32_t retry_at;
++  uint8_t poll_retries;
++  uint32_t poll_retry_at;
    hub_port_status_response_t port_status;
  } hub_interface_t;
  
-@@ -266,6 +272,13 @@
+@@ -59,6 +68,8 @@
+
+ static tuh_xfer_cb_t user_complete_cb = NULL;
+ static hub_interface_t hub_itfs[CFG_TUH_HUB];
++static hub_interface_t root_retry;
++static uint8_t root_retry_rhport;
+ CFG_TUH_MEM_SECTION static hub_epbuf_t hub_epbufs[CFG_TUH_HUB];
+
+
+@@ -211,6 +222,7 @@
+ //--------------------------------------------------------------------+
+ bool hub_init(void) {
+   tu_memclr(hub_itfs, sizeof(hub_itfs));
++  tu_memclr(&root_retry, sizeof(root_retry));
+   return true;
+ }
+
+@@ -266,6 +278,13 @@
  }
  
  bool hub_edpt_status_xfer(uint8_t daddr) {
@@ -263,7 +304,7 @@
    hub_interface_t* p_hub = get_hub_itf(daddr);
    hub_epbuf_t* p_epbuf = get_hub_epbuf(daddr);
  
-@@ -275,6 +288,7 @@
+@@ -275,6 +294,7 @@
      return false;
    }
  
@@ -271,7 +312,7 @@
    return true;
  }
  
-@@ -333,7 +347,7 @@
+@@ -333,7 +353,7 @@
  
    // only use the number of ports in the hub descriptor
    hub_desc_cs_t const* desc_hub = (hub_desc_cs_t const*) p_epbuf->ctrl_buf;
@@ -280,7 +321,7 @@
    p_hub->bPwrOn2PwrGood_2ms = desc_hub->bPwrOn2PwrGood;
  
    // May need to GET_STATUS
-@@ -379,6 +393,15 @@
+@@ -379,6 +399,15 @@
  
  // callback as response of interrupt endpoint polling
  bool hub_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
@@ -296,7 +337,7 @@
    (void) xferred_bytes;
    (void) ep_addr;
  
-@@ -387,7 +410,8 @@
+@@ -387,7 +416,8 @@
    if (result == XFER_RESULT_SUCCESS) {
      hub_interface_t* p_hub = get_hub_itf(daddr);
      hub_epbuf_t *p_epbuf = get_hub_epbuf(daddr);
@@ -306,7 +347,7 @@
      TU_LOG_DRV("  Hub Status Change = 0x%02X\r\n", status_change);
  
      if (status_change == 0) {
-@@ -472,6 +496,9 @@
+@@ -472,6 +502,9 @@
        break;
  
      case STATE_CHECK_CONN: {
@@ -316,7 +357,7 @@
        const hcd_event_t event = {
          .rhport     = usbh_get_rhport(daddr),
          .event_id   = p_hub->port_status.status.connection ? HCD_EVENT_DEVICE_ATTACH : HCD_EVENT_DEVICE_REMOVE,
-@@ -481,6 +508,7 @@
+@@ -481,6 +514,7 @@
          }
        };
        hcd_event_handler(&event, false);
@@ -324,12 +365,19 @@
        // skip status for attach event, usbh will do it after handled this enumeration
        processed = (event.event_id == HCD_EVENT_DEVICE_ATTACH);
        break;
-@@ -498,4 +526,40 @@
+@@ -498,4 +532,73 @@
    }
  }
  
 +// Called only with enumeration and EP0 idle. No shared port status can be overwritten.
 +void hub_task(void) {
++  if (root_retry.retry_port && usbhost_due(tusb_time_millis_api(), root_retry.retry_at)) {
++    root_retry.retry_port = 0;
++    hcd_event_t event = {.rhport=root_retry_rhport, .event_id=HCD_EVENT_DEVICE_ATTACH,
++                        .connection={.hub_addr=0, .hub_port=0}};
++    hcd_event_handler(&event, false);
++    return;
++  }
 +  for (uint8_t i=0; i<CFG_TUH_HUB; i++) {
 +    hub_interface_t *h = &hub_itfs[i];
 +    uint8_t daddr = i+1+CFG_TUH_DEVICE_MAX;
@@ -343,25 +391,51 @@
 +      return;
 +    }
 +    if (h->pending) {hub_process_pending(daddr, 0, XFER_RESULT_SUCCESS, 1); return;}
-+    if (h->want_poll) {h->want_poll = false; if (!hub_status_poll(daddr)) h->want_poll = true;}
++    if (h->want_poll) {
++      if (h->poll_retries && !usbhost_due(tusb_time_millis_api(), h->poll_retry_at)) continue;
++      if (hub_status_poll(daddr)) {
++        if (h->poll_retries) tuh_hub_poll_retry_cb(daddr, h->poll_retries, 0, "recovered");
++        h->poll_retries = 0;
++        h->poll_retry_at = 0;
++        h->want_poll = false;
++      } else if (h->poll_retries < USBHOST_POLL_RETRIES) {
++        uint32_t delay = usbhost_backoff(++h->poll_retries);
++        h->poll_retry_at = tusb_time_millis_api() + delay;
++        tuh_hub_poll_retry_cb(daddr, h->poll_retries, delay, "refused");
++      } else {
++        h->want_poll = false;
++        tuh_hub_poll_retry_cb(daddr, h->poll_retries, 0, "exhausted: reset");
++        usbh_hub_poll_failed(daddr);
++        return;
++      }
++    }
 +  }
 +}
 +
++void hub_root_removed(uint8_t rhport) {
++  if (rhport == root_retry_rhport) tu_memclr(&root_retry, sizeof(root_retry));
++}
++
 +void hub_enum_result(uint8_t daddr, uint8_t port, bool success) {
-+  hub_interface_t *h = get_hub_itf(daddr);
-+  if (!h->ep_in || port == 0 || port > 7) return;
++  hub_interface_t *h = daddr ? get_hub_itf(daddr) : &root_retry;
++  if (daddr ? (!h->ep_in || port == 0 || port > 7) : port != 0) return;
 +  if (success) {
 +    if (h->retries[port]) tuh_hub_retry_cb(daddr, port, h->retries[port], "recovered");
 +    h->retries[port] = 0;
++    if (h->retry_port == (daddr ? port : 1)) {
++      h->retry_port = 0;
++      h->retry_at = 0;
++    }
 +  } else if (h->retries[port] < USBHOST_PORT_RETRIES) {
 +    h->retries[port]++;
-+    h->retry_port = port;
++    h->retry_port = daddr ? port : 1;
++    if (!daddr) root_retry_rhport = usbh_get_rhport(0);
 +    h->retry_at = tusb_time_millis_api() + 200u*h->retries[port];
 +    tuh_hub_retry_cb(daddr, port, h->retries[port], "reset retry");
 +  } else {
 +    tuh_hub_retry_cb(daddr, port, h->retries[port], "exhausted");
 +  }
-+  hub_edpt_status_xfer(daddr);
++  if (daddr) hub_edpt_status_xfer(daddr);
 +}
 +
  #endif
