@@ -13,7 +13,7 @@ int usbdesc_find_boot_keyboard(const uint8_t *buf,uint32_t len,struct usbdesc_kb
  uint32_t total=(uint32_t)buf[2]|((uint32_t)buf[3]<<8);
  if(total<9u||total>len) return USBDESC_E_MALFORMED;
  uint32_t pos=buf[0];
- int in_kbd=0;                 /* the current interface is a boot keyboard, alternate 0 */
+ int in_kbd=0,found=0;struct usbdesc_kbd res={0};                 /* the current interface is a boot keyboard, alternate 0 */
  uint8_t ifnum=0;
  while(pos<total) {
   if(total-pos<2u) return USBDESC_E_MALFORMED;
@@ -27,13 +27,14 @@ int usbdesc_find_boot_keyboard(const uint8_t *buf,uint32_t len,struct usbdesc_kb
   } else if(type==DT_ENDPOINT) {
    if(l<7u) return USBDESC_E_MALFORMED;
    uint16_t mps=(uint16_t)(buf[pos+4]|((buf[pos+5]&7u)<<8));   /* bits 10..0 */
-   if(in_kbd&&(buf[pos+2]&0x80u)&&(buf[pos+3]&3u)==3u&&mps>=8u) {
-    out->config_value=buf[5];out->interface_num=ifnum;out->endpoint=buf[pos+2];
-    out->interval=buf[pos+6];out->max_packet=mps;
-    return USBDESC_OK;
+   if(!found&&in_kbd&&(buf[pos+2]&0x80u)&&(buf[pos+3]&3u)==3u&&mps>=8u) {
+    found=1;res.config_value=buf[5];res.interface_num=ifnum;res.endpoint=buf[pos+2];
+    res.interval=buf[pos+6];res.max_packet=mps;   /* published only after the whole chain checks out */
    }
   }
   pos+=l;
  }
- return USBDESC_E_NOT_FOUND;
+ if(!found) return USBDESC_E_NOT_FOUND;
+ *out=res;
+ return USBDESC_OK;
 }
