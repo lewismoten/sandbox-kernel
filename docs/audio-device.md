@@ -14,7 +14,7 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   blocks. It queues what fits and returns that many bytes; nothing fitting is
   `EAGAIN` (wait a little, retry). A zero-byte write is a no-op.
 - **Level:** `ioctl(fd, SBX_IOC_AUDIO_QUERY /* 0x20000 */, sbx_audio_info)`:
-  rate, capacity (16384 frames, about 341 ms), queued, played, underruns,
+  rate, capacity (16,384 frames, about 341 ms; `include/audio_ring.h:20`), queued, played, underruns,
   overruns, overrun frames. Output fields must be zero on entry.
 - **Underrun:** the backend asks for more than is queued, plays zeros for the
   missing frames (never stale data) and adds one to `underruns`. Nothing counts
