@@ -1,5 +1,7 @@
 # sandbox-kernel
 
+![sandbox-kernel: a small bare-metal kernel for your own OS, with a pixel-art chip badge beside a block of colored squares, runs on Raspberry Pi Zero W](docs/images/social-preview-640x320.png)
+
 A small, reusable bare-metal Raspberry Pi kernel under the MIT license.
 **Status: M0 board-qualified on the Zero W v1.1; M1 in progress.** The ARMv6
 selector and runtime boot, show the e-ink start and status screens, log over USB
@@ -8,6 +10,7 @@ fallback, all on the board. M1 adds the HDMI framebuffer, read-only FAT32 assets
 the SDK, a User-mode OS program loaded from the card with fault recovery, an
 input event queue (synthetic USB source first) and a health heartbeat
 ([docs/m1.md](docs/m1.md)). [docs/js-spike.md](docs/js-spike.md) measures a JavaScript layer for building your own OS shell on it (2026-11-07).
+**Making your own OS?** Start with the [OS author's guide](docs/os-authors.md): boot, what a program may do, what each ABI version adds, and how to develop over USB.
 
 The first target is the Raspberry Pi Zero W v1.1 (BCM2835, ARM1176).
 Later ports target Pi 1, 2, 3, 4, and 5 through separate board backends.
