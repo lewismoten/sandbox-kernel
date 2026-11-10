@@ -26,7 +26,7 @@ $(error USB_ROLE must be device or host)
 endif
 KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c $(USBDRV) core/protocol.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
-.PHONY: all clean deps boot test test-asan programs FORCE
+.PHONY: all clean deps boot test test-asan programs examples FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski programs
 # OS programs: built only against sdk/ (no kernel headers).
 PFLAGS := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -std=c11 -Os -ffreestanding -fno-builtin -nostdlib -Wall -Wextra -Werror -Isdk/include -Tsdk/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
@@ -68,6 +68,10 @@ build/runtime.ski: build/runtime.img scripts/image.py
 	$(PYTHON) scripts/image.py pack $< $@ --build-id $(BUILD_ID)
 boot: all
 	$(PYTHON) scripts/assemble_boot.py
+# Example OS programs (examples/*/), built with the SDK only; each folder has its own Makefile.
+examples:
+	$(MAKE) -C examples/hello
+	$(MAKE) -C examples/clock
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 test-asan: test
