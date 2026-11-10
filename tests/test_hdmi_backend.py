@@ -44,6 +44,57 @@ class ToneSession(m1.ProtocolBase):
 
 
 class HdmiBackend(unittest.TestCase):
+    def test_boot_replay_keeps_audio_result(self):
+        source = (ROOT / 'core/probe.c').read_text()
+        source = source[source.index('static char notes['):source.index('void asset_probe(')]
+        harness = r'''
+#include <assert.h>
+#include <string.h>
+static char last[256]; static unsigned lines;
+static void log_line(const char *line) { assert(strlen(line) < sizeof last); strcpy(last, line); lines++; }
+static void append(char **out, const char *text) { while (*text) *(*out)++ = *text++; **out = 0; }
+'''
+        harness += source + r'''
+int main(void) {
+ const char *result = "AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)";
+ for (unsigned index = 0; index < 40; index++) boot_note("setup");
+ boot_note(result); lines = 0; boot_summary();
+ assert(lines == 41 && !strncmp(last, "BOOT ", 5) && !strcmp(last + 5, result));
+ char long_line[256]; memset(long_line, 'x', sizeof long_line - 1); long_line[255] = 0;
+ for (unsigned index = 0; index < 40; index++) boot_note(long_line);
+ lines = 0; boot_summary(); assert(lines == 64 && strlen(last) == 132);
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix='hdmi-boot-notes-') as directory:
+            source_file = Path(directory) / 'notes.c'
+            executable = Path(directory) / 'notes'
+            source_file.write_text(harness)
+            subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                            str(source_file), '-o', str(executable)], check=True)
+            subprocess.run([str(executable)], check=True, timeout=10)
+
+    def test_startup_register_sequence(self):
+        source = (ROOT / 'drivers/hdmi_audio.c').read_text()
+        for signature in ('static uint32_t irq_save(', 'static void irq_restore('):
+            start = source.index(signature)
+            end = source.index('\n}', start) + 2
+            source = source[:start] + source[end:]
+        helpers = ('static uint32_t bus(', 'static void drain(', 'static void hd(',
+                   'static void hc(', 'static uint32_t dma(', 'static void dmaw(')
+        source = '\n'.join(line for line in source.splitlines()
+                           if line != '#include "kernel.h"' and not line.startswith(helpers))
+        with tempfile.TemporaryDirectory(prefix='hdmi-startup-') as directory:
+            directory = Path(directory)
+            (directory / 'hdmi-driver.h').write_text(source)
+            executable = directory / 'startup'
+            subprocess.run(['cc', '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',
+                            '-Iinclude', '-I' + str(directory), 'tests/hdmi_startup.c',
+                            'core/audio_ring.c', 'core/audio_null.c', 'core/mixer.c',
+                            'core/iec958.c', 'core/hdmi_audio_plan.c', '-o', str(executable)],
+                           cwd=ROOT, check=True)
+            subprocess.run([str(executable)], check=True, timeout=60)
+
     def test_fill_and_dma_progress(self):
         source = (ROOT / 'drivers/hdmi_audio.c').read_text()
         # Exercise the production reader, circular builder, IRQ and task bodies.

@@ -88,6 +88,35 @@ The full permission/warranty notice is retained in
 [licenses/Waveshare.txt](licenses/Waveshare.txt). The SPI adapter, cooperative
 state machine, pixels and glyphs are original; upstream fonts are not imported.
 
+### HDMI audio reference facts (2026-11-10)
+
+The MIT HDMI audio implementation and its host tests are independent work.
+Linux Raspberry Pi **rpi-6.6.y** was consulted for hardware/interface facts only:
+
+- `drivers/gpu/drm/vc4/vc4_hdmi.c`: `vc4_hdmi_audio_startup`,
+  `vc4_hdmi_audio_prepare`, MAI clock divider, N/CTS, packet-RAM enable and
+  infoframe sequencing, 32-bit IEC958 DMA width and burst size 2.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/drivers/gpu/drm/vc4/vc4_hdmi.c>
+- `vc4_hdmi_regs.h` and `vc4_regs.h` in that directory: BCM2835 register
+  offsets/fields, undefined RESET readback, HDMI_ACTIVE bit 1 and global
+  packet-RAM enable bit 16. These driver files are GPL-2.0; no implementation,
+  macros or explanatory prose was copied into this project.
+- `arch/arm/boot/dts/broadcom/bcm2835-common.dtsi`: HDMI DMA DREQ 17.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/arch/arm/boot/dts/broadcom/bcm2835-common.dtsi>
+- `drivers/clk/bcm/clk-bcm2835.c`: HSM clock register offsets.
+  <https://github.com/raspberrypi/linux/blob/rpi-6.6.y/drivers/clk/bcm/clk-bcm2835.c>
+
+ALSA's `alsa-lib/src/pcm/pcm_iec958.c` (LGPL-2.1-or-later) was read to verify
+the documented IEC958_SUBFRAME_LE bit layout and B/M/W preamble values 8/2/4;
+no conversion code was copied. The existing packer already matches that layout.
+<https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_iec958.c>
+
+The Raspberry Pi firmware mailbox documentation supplies clock ID 9 (PIXEL)
+and get-clock-rate tag 0x30002. Only interface facts are used.
+<https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface>
+These references are not linked or shipped as runtime dependencies and their
+licenses do not relicense this implementation.
+
 Boot firmware is pinned to Raspberry Pi firmware tag **1.20240902**, commit
 `b5eb52b343e9bc1391a8059a38e12e470c109f5c`. Only `bootcode.bin`, `start.elf`,
 `fixup.dat` and matching `LICENCE.broadcom` are fetched/shipped. Their exact

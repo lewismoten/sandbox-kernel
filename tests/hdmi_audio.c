@@ -39,12 +39,20 @@ int main(void) {
     assert(w[0] == (0x84u | (1u << 8) | (10u << 16)) && w[1] == (f[3] | ((uint32_t)f[4] << 8)));
     for (unsigned i = 2; i < 9; i++) assert(w[i] == 0 || i == 2); /* payload past byte 4 is zero; word 2 is bytes 7-9 */
     /* register values */
-    assert(hdmi_mai_ctl_run() == 0x302bu - 0x2000u + 0x2000u - 0x2000u + 0 || 1);
+    assert(hdmi_mai_ctl_run() == 0x3028u);
+    assert(!(hdmi_mai_ctl_run() & (MAI_CTL_RESET | MAI_CTL_FLUSH | MAI_CTL_PAREN)));
     assert((hdmi_mai_ctl_run() & 0xf0) == 0x20 && (hdmi_mai_ctl_run() & MAI_CTL_ENABLE) && (hdmi_mai_ctl_run() & MAI_CTL_WHOLSMP));
     assert(hdmi_mai_fmt(48000) == 0x00020900u && hdmi_mai_fmt(44100) == 0x00020800u && hdmi_mai_fmt(32000) == 0x00020700u && hdmi_mai_fmt(22050) == 0);
     assert(hdmi_mai_thr() == 0x08080608u);
     assert((hdmi_audio_packet_config() & 0x3c00) == (8u << 10) && (hdmi_audio_packet_config() & 0xff) == 3);
     assert(hdmi_crp_cfg(6144) == (0x01000000u | 6144));
+    static const uint32_t pixels[] = {25200000u, 74250000u, 148500000u};
+    for (unsigned index = 0; index < 3; index++) {
+        assert(!hdmi_audio_clocks(48000, pixels[index], 120000000, &c));
+        assert(c.n == 6144 && c.cts == pixels[index] / 1000);
+        assert((uint64_t)pixels[index] * c.n == (uint64_t)128 * 48000 * c.cts);
+        assert(c.smp_n == 2500 && c.smp_m == 0);
+    }
     /* DMA ring: 8 blocks, each its own segment, chained and closed */
     static struct dma_cb cb[HDMI_DMA_SEGS] __attribute__((aligned(32)));
     uint32_t cbb = 0xc0100000u, bufb = 0xc0200000u, segb = HDMI_DMA_SEG_FRAMES * 8u, dst = 0x7e808020u;

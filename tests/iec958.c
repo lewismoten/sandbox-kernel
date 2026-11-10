@@ -5,6 +5,10 @@
 #include "iec958.h"
 static unsigned pop(uint32_t v) { unsigned c = 0; for (; v; v &= v - 1) c++; return c; }
 int main(void) {
+    assert(IEC958_PRE_B == 8 && IEC958_PRE_M == 2 && IEC958_PRE_W == 4);
+    assert(iec958_subframe(IEC958_PRE_B, 0x1234, 0) == 0x81234008u);
+    assert(iec958_subframe(IEC958_PRE_M, -32768, 1) == 0x48000002u);
+    assert(iec958_subframe(IEC958_PRE_W, 32767, 0) == 0x87fff004u);
     for (uint32_t v = 0; v < 65536; v += 7) { /* every word has even parity over bits 4-31 */
         uint32_t w = iec958_subframe(IEC958_PRE_M, (int16_t)v, v & 1);
         assert(pop(w >> 4) % 2 == 0);

@@ -5,7 +5,7 @@
  * hardware. Register facts only, from public sources; no driver code copied:
  *  - BCM2835 ARM Peripherals datasheet (public): DMA controller registers,
  *    control block layout, DREQ pacing, bus address aliases.
- *  - Linux drivers/gpu/drm/vc4/vc4_hdmi.c, vc4_hdmi_regs.h and vc4_regs.h
+ *  - Linux rpi-6.6.y drivers/gpu/drm/vc4/vc4_hdmi.c, vc4_hdmi_regs.h and vc4_regs.h
  *    (GPL-2.0): read only for register offsets, bit positions and the order
  *    of steps (facts). Nothing was copied. Circle (GPLv3) was not read.
  *  - HDMI 1.4b and CEA-861 for N/CTS and the Audio InfoFrame (type 0x84,
@@ -30,6 +30,9 @@
 #define HC_AUDIO_PACKET_CONFIG 0x09c
 #define HC_RAM_PACKET_CONFIG 0x0a0
 #define HC_RAM_PACKET_STATUS 0x0a4
+#define HC_SCHEDULER_CONTROL 0x0c0
+#define SCHEDULER_HDMI_ACTIVE (1u << 1)
+#define RAM_PACKET_ENABLE (1u << 16)
 #define HC_CRP_CFG     0x0a8
 #define HC_CTS_0       0x0ac
 #define HC_CTS_1       0x0b0
@@ -88,7 +91,7 @@ uint32_t hdmi_mai_fmt(uint32_t rate);   /* PCM format 2, rate code (48000 = 9); 
 uint32_t hdmi_mai_thr(void);            /* panic 8/8, dreq 6/8 */
 uint32_t hdmi_audio_packet_config(void);
 uint32_t hdmi_crp_cfg(uint32_t n);
-uint32_t hdmi_mai_channel_map(void);    /* two channels: 0, 1<<3 (VERIFY) */
+uint32_t hdmi_mai_channel_map(void);    /* two channels: 0, 1<<3 */
 
 /* DMA control blocks (BCM2835 peripherals datasheet section 4). 32 bytes, 32-aligned. */
 struct dma_cb { uint32_t ti, src, dst, len, stride, next, pad[2]; };
@@ -99,7 +102,7 @@ struct dma_cb { uint32_t ti, src, dst, len, stride, next, pad[2]; };
 #define DMA_TI_SRC_INC (1u << 8)
 #define DMA_TI_BURST(n) ((uint32_t)(n) << 12)
 #define DMA_TI_PERMAP(n) ((uint32_t)(n) << 16)
-#define HDMI_DREQ 17u /* DMA peripheral map for the HDMI audio FIFO (VERIFY) */
+#define HDMI_DREQ 17u /* rpi-6.6.y bcm2835-common.dtsi: HDMI audio-rx */
 #define DMA_BUS_RAM 0xC0000000u /* uncached alias of ARM physical RAM */
 #define HDMI_DMA_SEG_FRAMES 384u /* two IEC 958 blocks (192 frames each): 8 ms, starts on a block boundary */
 #define HDMI_DMA_SEGS 8u

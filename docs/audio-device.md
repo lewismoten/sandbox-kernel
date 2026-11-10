@@ -91,7 +91,10 @@ and the reason is logged (`AUDIO hdmi: unavailable ...`, also in the `AUDIO` com
 The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested by
 `tests/test_hdmi_audio.py`.
 
-- **Clocks:** 1080p60 is 148.5 MHz; at 48 kHz N = 6144, CTS = 148500 (`hdmi_nct`).
+- **Clocks:** the nominal active pixel clock is queried from firmware (clock ID 9),
+  not assumed from framebuffer dimensions. Missing/unsupported clocks keep the null
+  backend. 1080p60 is 148.5 MHz; at 48 kHz N = 6144, CTS = 148500 (`hdmi_nct`).
+  At 25.2 and 74.25 MHz, N is still 6144 and CTS is 25200 and 74250 respectively.
   The MAI sample divider is the best fraction of HSM clock / 48000 (continued fractions,
   N up to 24 bits, M up to 256). The HSM clock is read from the Clock Manager
   (`CM_HSMCTL` 0x2d6, `CM_HSMDIV` 0x30e0 on the test board: PLLD_PER 500 MHz / 3.0547 =
@@ -130,6 +133,64 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
   starvation, no ring underruns over seconds of silence. This is drain-counter
   evidence only; audible TV output, concurrent storage/display load, unplug/reconnect
   and OS-fault silence remain hardware-untested.
+
+### Startup correction (2026-11-10)
+
+The failing-board log `MAI_CTL 00003029` alone does **not** establish a stuck
+reset: bit 0 is single-shot RESET with undefined readback. The old startup
+sent MAI_FMT while MAI was disabled, then enabled MAI only after programming
+the core. It also mixed shutdown ERRORF/FLUSH writes into startup, inherited
+the firmware's global packet-RAM enable instead of setting it, and ignored
+the packet-stop timeout. These are concrete bring-up defects/dependencies;
+which one explains a particular board still requires a new hardware trace.
+
+Startup now follows the reference's reset/clock/enable/format ordering:
+reset+flush+clear errors, MAI_SMP, MAI enable (2 channels, whole samples,
+channel alignment), MAI_FMT, thresholds, core channel configuration and map,
+audio sample packet mask, N/CTS, then Audio InfoFrame. Packet RAM's global
+enable (bit 16) and the audio slot enable (bit 4) are both set while preserving
+other firmware packets. Packet-stop/start and DMA-reset waits are bounded
+and fail back to null. The HDMI scheduler must already report HDMI_ACTIVE;
+the kernel does not change the firmware's video timing or PHY.
+
+DMA DREQ 17, destination bus address 0x7e808020, 32-bit words, source increment,
+fixed destination and burst 2 were already correct. IEC958 packing was also
+correct: S16 occupies bits 12–27, validity/user bits are zero, channel status
+is bit 30, even parity is bit 31, and B/M/W tags are 8/2/4. New literal-word
+tests lock these facts down, including negative PCM and block boundaries.
+No GPL driver/conversion code was copied; references are recorded in NOTICE.md.
+
+The old failure message used only the IRQ completion count, not direct FIFO
+evidence. Startup now also logs DMA CS/DEBUG/CONBLK and preserves their
+pre-reset values for diagnosis. Advancing control blocks without a completion
+IRQ gets a distinct IRQ-routing failure instead of being called a DREQ stall.
+Null remains active on every failure; DMA errors are classified before reset
+can erase them. Boot replay retains the full startup result and diagnostics.
+
+With the generated `hdmi_drive=2`, CEA mode 16 boot config, successful UART
+output includes these exact lines (USB replay prefixes each with `BOOT `):
+
+```text
+AUDIO hdmi: pixel clock 148500000 Hz (firmware)
+AUDIO hdmi: N 6144
+AUDIO hdmi: CTS 148500
+AUDIO hdmi: MAI_CONFIG 0c000003
+AUDIO hdmi: AUDIO_PACKET_CONFIG 21002003
+AUDIO hdmi: CRP_CFG 01001800
+AUDIO hdmi: DMA destination 7e808020
+AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)
+```
+
+`RAM_PACKET_CONFIG` must include 0x00010010 plus retained firmware bits.
+`DMA channel <n> (32-bit, burst 2, DREQ 17)` identifies the allocated channel.
+`DMA completed segments <n> in 30 ms` should normally show 3 (8 ms segments);
+counts and status bits are observations, not fixed expected register values.
+`MAI_CTL after write` may still show bit 0; do not treat that as failure.
+After `INFO`, `TONE 440 1000` should be audible and `AUDIO` should report
+`backend=hdmi`, roughly 48000 drain_fps, and no accumulating dma_err.
+The backend deliberately transmits silence until PCM or a tone is supplied;
+a TV reporting PCM does not itself prove FIFO consumption or audible output.
+The corrected startup is host-tested, not yet validated on the failing TV/monitor.
 
 Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_regs.h`,
 `vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);

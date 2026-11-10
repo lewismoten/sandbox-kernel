@@ -8,12 +8,12 @@ static void append_e(char **p,int e) {if(e<0){append(p,"-");append_n(p,(uint32_t
 static uint8_t chunk[4096];
 /* M1 results kept for a reader that connects after boot: the Mac side can
    miss lines sent before it opened the port. */
-static char notes[24][72]; static unsigned note_count;
+static char notes[64][128]; static unsigned note_count;
 void boot_note(const char *s) {
  log_line(s);
- if(note_count<24) {unsigned i=0;for(;s[i]&&i<71;i++)notes[note_count][i]=s[i];notes[note_count++][i]=0;}
+ if(note_count<64) {unsigned i=0;for(;s[i]&&i<127;i++)notes[note_count][i]=s[i];notes[note_count++][i]=0;}
 }
-void boot_summary(void) {for(unsigned i=0;i<note_count;i++) {char t[80],*p=t;append(&p,"BOOT ");append(&p,notes[i]);log_line(t);}}
+void boot_summary(void) {for(unsigned i=0;i<note_count;i++) {char t[136],*p=t;append(&p,"BOOT ");append(&p,notes[i]);log_line(t);}}
 void asset_probe(void) {
  char line[80],*p=line;
  int r=asset_mount();
