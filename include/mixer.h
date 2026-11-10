@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include "audio_ring.h"
 #define MIXER_VOICES 8
-#define MIXER_VOL_ONE 256u /* per-voice volume, Q8: 256 = full scale */
+#define MIXER_VOL_ONE 256u /* Q8: 256 = full scale; all uint16_t volumes supported */
 /* PC speaker tune: Game-Maker .SND effects hold SND_STEPS (36) frequencies in
  * Hz, one per timer tick of 1193180/8191 Hz (about 145.67 per second). A
  * frequency of 0 (or under 20 Hz, inaudible) is silence; above 20000 clamps.

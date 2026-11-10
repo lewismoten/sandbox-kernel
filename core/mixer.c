@@ -46,6 +46,7 @@ static int tick_due(uint64_t frames, uint32_t next_tick) {
 }
 
 static void render_voice(struct mixer_voice *v, int32_t *acc, uint32_t frames) {
+    /* At UINT16_MAX volume, eight tone amplitudes still fit in int32_t. */
     int32_t amp = (int32_t)((32767u * (uint32_t)v->vol) >> 8);
     for (uint32_t i = 0; i < frames && v->active; i++) {
         uint32_t step = v->step;
@@ -54,7 +55,8 @@ static void render_voice(struct mixer_voice *v, int32_t *acc, uint32_t frames) {
             if (v->tick >= v->nfreqs) { v->active = 0; break; }
             uint32_t hz = v->freqs[v->tick];
             step = hz_ok(hz) ? hz_step(clamp_hz(hz)) : 0;
-            amp = (int32_t)((32767u * SPEAKER_GAIN * (uint32_t)v->vol) >> 16);
+            /* Widen before multiplying: the Q8 gain product can exceed UINT32_MAX. */
+            amp = (int32_t)((UINT64_C(32767) * SPEAKER_GAIN * v->vol) >> 16);
         }
         if (step) { /* step 0 = silent tick; phase keeps */
             v->phase += step;

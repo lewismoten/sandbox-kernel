@@ -51,10 +51,13 @@ No new app-facing ABI: `include/mixer.h` and `core/mixer.c` are kernel
 internals, so `docs/os-authors.md` is unchanged. Nothing calls the mixer yet; a
 later slice feeds `/dev/audio` from it.
 
-- **Mixer:** 8 voices, each with a Q8 volume (256 = full). `mixer_render`
+- **Mixer:** 8 voices, each with a Q8 volume (256 = full), supporting the full
+  uint16 range 0..65535 in tone, tune, and volume updates. `mixer_render`
   sums them in a 32-bit accumulator and saturates to S16, then writes the same
-  sample to left and right at 48000 Hz. Integer only: no floats, and no 64-bit
-  divide (a tone's phase step is `hz * 89478 + hz * 485 / 1000`, which is
+  sample to left and right at 48000 Hz. Tune gain uses a 64-bit product before
+  shifting; even eight maximum-volume voices fit the 32-bit sum. Integer only:
+  no floats, and no 64-bit divide (a tone's phase step is
+  `hz * 89478 + hz * 485 / 1000`, which is
   `hz * 2^32 / 48000`). With nothing active it writes silence.
 - **Tone:** a square wave (`mixer_tone`, hz and milliseconds, 0 ms = until
   stopped). Under 20 Hz is refused as inaudible.
@@ -73,8 +76,9 @@ later slice feeds `/dev/audio` from it.
 - **Tests:** `tests/test_audio_mixer.py` (`tests/mixer.c`): zero crossings over
   1 s at five frequencies, duration to the frame, tune ticks (tone, silent
   ticks, second tone, end), two voices summing with clipping, equal-volume sums,
-  the voice limit, idle silence, and a 2 s null-backend run with no overrun or
-  underrun.
+  all 65536 volumes against a widened-integer oracle for tones, tunes, and
+  volume updates, the voice limit, idle silence, and a 2 s null-backend run
+  with no overrun or underrun.
 
 # Slice 4: HDMI backend (hardware)
 
