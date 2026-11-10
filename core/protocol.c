@@ -17,7 +17,8 @@ static unsigned inactive;
 static uint8_t image_hash[32];
 static bool executing,overflow,session,putf;
 static bool waiting_stop;
-static unsigned tx_left,tx_took;
+static unsigned tx_left,tx_took;static uint32_t tx_since;
+#define TX_IDLE_US 2000000u /* a TX body that stalls this long is abandoned (docs/serial.md) */
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
@@ -100,7 +101,7 @@ static void tx_command(const char *p) {
  uint32_t n;
  if(!session) {usb_reply("ERR not-ready\n");return;}
  if(!decimal(&p,&n)||*p||n<1||n>SERIAL_CHUNK) {usb_reply("ERR tx length\n");return;}
- tx_left=n;tx_took=0;
+ tx_left=n;tx_took=0;tx_since=micros();
 }
 static void command_line(void) {
  line[used]=0;
@@ -192,11 +193,14 @@ static void work(void) {
   if(phase==7&&expired(activity,500000))reboot();
   return;
  }
+ if(tx_left&&expired(tx_since,TX_IDLE_US)) { /* resynchronize: the host stopped mid-body; the next bytes are a command again */
+  tx_left=0;tx_took=0;used=0;overflow=false;refuse("tx-timeout");
+ }
  unsigned budget=1024;
  while(budget--&&tud_cdc_available()) {
   uint8_t b;if(tud_cdc_read(&b,1)!=1)return;
   if(tx_left) {
-   tx_took+=serial_rx_put(&b,1);
+   tx_took+=serial_rx_put(&b,1);tx_since=micros();
    if(--tx_left==0) {usb_reply("OK tx ");field(tx_took);usb_reply("\n");return;}
   } else if(phase==1) {
    staging[received++]=b;activity=micros();

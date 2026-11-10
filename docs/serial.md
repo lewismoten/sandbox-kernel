@@ -37,6 +37,11 @@ Host to OS: `TX <len>` and a newline, then exactly `<len>` raw bytes (1 to 64). 
 `OK tx <accepted>`; bytes that do not fit the 256-byte buffer, or arrive while no program has the
 channel open, are dropped and counted. A `TX` needs `INFO` first, like `KEY`.
 
+**TX inactivity timeout:** if the body stops arriving for 2 seconds (measured from the `TX` line or the
+last body byte), the kernel abandons the rest, replies `ERR tx-timeout` (a flow-control refusal: no sticky
+`ERR:` on the panel), and reads the next bytes as a command again, so a following `STOP` or `INFO` is
+answered. The bytes already delivered stay delivered; send the rest in a new `TX`.
+
 Why this: a `LOG` or `OK` line and an `OS` line are all whole lines in one ring, so OS data can never
 land inside a kernel log line; `grep '^OS'` separates the two; `TX` works from a terminal with
 `printf` and no tool; and the length-prefixed form (not a text line) means the OS can receive

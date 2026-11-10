@@ -42,4 +42,18 @@ class SerialUsb(u.ProtocolBase):
         self.assertEqual(self.line('TX 3'),'')
         self.c.feed(b'a\nb',3);self.assertEqual(self.run_protocol(5).strip(),'OK tx 3')   # the newline is data, not a command end
         buf=C.create_string_buffer(8);self.assertEqual(self.c.serial_read(buf,8),3);self.assertEqual(buf.raw[:3],b'a\nb')
+    def test_stalled_tx_times_out_and_resynchronizes(self):          # S1: TX 64 plus 1 byte, then silence
+        self.c.serial_set_reader(True);self.assertEqual(self.c.serial_open(),0);self.line('INFO')
+        self.assertEqual(self.line('TX 64'),'');self.c.feed(b'x',1);self.assertEqual(self.run_protocol(5).strip(),'')
+        self.c.advance(1_900_000);self.assertEqual(self.line('STOP'),'')   # inside the window STOP is still body bytes
+        self.c.advance(2_100_000)
+        self.assertEqual(self.run_protocol(5).strip(),'ERR tx-timeout')
+        self.assertTrue(self.line('INFO').startswith('INFO'))               # replied, no reset needed
+        self.assertEqual(self.line('TX 2'),'');self.c.feed(b'ab',2);self.assertEqual(self.run_protocol(5).strip(),'OK tx 2')
+    def test_steady_tx_body_is_not_timed_out(self):
+        self.c.serial_set_reader(True);self.assertEqual(self.c.serial_open(),0);self.line('INFO')
+        self.assertEqual(self.line('TX 3'),'')
+        for ch in b'abc':
+            self.c.advance(1_500_000);self.c.feed(bytes([ch]),1);out=self.run_protocol(5).strip()
+        self.assertEqual(out,'OK tx 3')
 if __name__=='__main__': unittest.main()
