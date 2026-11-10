@@ -75,8 +75,9 @@ fetch script; no upstream BSP or SDK is used. The sources are unmodified.
 Original `include/broadcom/` headers satisfy the BCM port's glue interfaces.
 The MIT license and per-file notices, including William D. Jones, Jan Duempelmann,
 Reinhard Panhuber and other listed authors, are retained in
-[licenses/TinyUSB.txt](licenses/TinyUSB.txt), and in fetched sources. Fetching
-writes `third_party/tinyusb/SHA256.json` with every retained file's hash.
+[licenses/TinyUSB.txt](licenses/TinyUSB.txt), and in fetched sources. `dwc2_type.h` also carries a 2019 STMicroelectronics BSD 3-Clause notice, kept in that appendix.
+`scripts/license_appendix.py` regenerates the appendix from the fetched files. Fetching
+replaces the whole `third_party/tinyusb` folder and writes `SHA256.json` with the hash of every retained file.
 
 V4 reset/register/waveform facts and sequence were adapted independently from
 Waveshare team's `EPD_2in13_V4.c` (V1.1, 2021-10-30) at commit

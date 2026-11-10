@@ -5,6 +5,8 @@ OBJCOPY := $(TOOLCHAIN)objcopy
 SIZE := $(TOOLCHAIN)size
 PYTHON ?= python3
 BUILD_ID ?= $(shell $(PYTHON) scripts/build_id.py --hash)
+TUSB_VERSION := 0.21.0
+TUSB_STAMP := third_party/tinyusb/.fetched-$(TUSB_VERSION)
 TUSB := third_party/tinyusb/src
 PANEL_ROTATE_180 ?= 1
 CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
@@ -32,15 +34,15 @@ endef
 $(foreach f,$(FAULTS),$(eval $(call FAULT_RULE,$(f))))
 build:
 	mkdir -p build
-third_party/tinyusb/.fetched:
+$(TUSB_STAMP): scripts/fetch.py
 	$(PYTHON) scripts/fetch.py tinyusb
-deps: third_party/tinyusb/.fetched
+deps: $(TUSB_STAMP)
 FORCE:
 build/build_id.h: FORCE | build
 	$(PYTHON) scripts/build_id.py '$(BUILD_ID)'
 build/selector.elf: Makefile build/build_id.h $(COMMON) core/selector.c $(HEADERS) arch/armv6/link.ld | build
 	$(CC) $(CFLAGS) -DSELECTOR $(COMMON) core/selector.c $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x8000,--defsym=MEMORY_LIMIT=0x70000,-Map=build/selector.map -o $@
-build/runtime.elf: Makefile build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld third_party/tinyusb/.fetched | build
+build/runtime.elf: Makefile build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
 	$(CC) $(CFLAGS) $(KERNEL) $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x100000,--defsym=MEMORY_LIMIT=0x08000000,-Map=build/runtime.map -o $@
 build/kernel.img: build/selector.elf
 	$(OBJCOPY) -O binary $< $@
