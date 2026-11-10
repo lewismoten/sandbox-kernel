@@ -182,11 +182,16 @@ The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark,
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
 `Timer progress lost`, `Trial storage health failed`, an SD step name when the card did not
-start, and `OS autostart rejected; trying DIAG.ELF`. In `core/protocol.c`, `fail()` sets
-`ERR:` to the reason of a real USB error (a bad command, a size or CRC mismatch, storage).
-A flow-control refusal, `ERR not-ready` because there was no `INFO` yet or an OS program is
-running, goes through `refuse()`: the reply only, so `ERR:` is not touched. `PUTF`, `RUN`,
-`PUT2`, `STOP`, `KEY`, `AXIS` and `INPUT` all follow that one rule.
+start, and `OS autostart rejected; trying DIAG.ELF`. Which replies set `ERR:` (`core/protocol.c`):
+
+| Reply | Sets `ERR:`? |
+| --- | --- |
+| `fail()` errors: bad command, `size`, `crc-format`, CRC or SHA-256 mismatch, write failure | yes |
+| storage not ready (`PUTF`, `RUN`, `PUT2` when storage is down): `ERR not-ready` through `fail()` | yes (`not-ready`) |
+| flow-control refusals through `refuse()`: no `INFO` yet, an OS program running, a locked or pending update | no, reply only |
+| direct replies: `ERR input value` (`KEY`, `AXIS`), `ERR run ASSET NOT FOUND` (`RUN`) | no, reply only |
+
+`STOP` and `INPUT` use `refuse()` for their not-ready cases. A refusal never clears an earlier error.
 The panel redraws only when its content changes, and a full refresh takes seconds.
 
 ## 3. Writing a program
@@ -313,11 +318,20 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `input add\|remove` | plug or unplug the synthetic device |
 | `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot) |
 
-**The `INFO` fields:** `updates=ready` means a kernel update may be sent (`features=kernel-update`);
-`updates=locked` means it may not (`features=locked`). `os=running` is an OS program running
-now, `os=stopped` one ran and was stopped, `os=none` none has run since boot. Kernels before
-this change said `features=kernel,no-os` for updates ready; it never meant "no OS", and
-`usb_kernel.py` still accepts it.
+**The `INFO` fields:** `updates=ready` means this kernel accepts update requests (a capability);
+`updates=locked` means it does not; `updates=busy` means a new kernel is already pending, so wait
+for its confirmation. `os=running` is an OS program running now, `os=stopped` one ran and was
+stopped, `os=none` none has run since boot. `features=` is **legacy**, kept for compatibility:
+it still reads `kernel,no-os` when updates are ready (it never meant "no OS") and `locked`
+otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
+
+**When `PUT2` is admitted:** `INFO` was sent this session, storage is ready, `updates=ready`
+(not locked) and no update slot is pending. Otherwise `ERR not-ready`. `os=running` alone does
+not block a kernel update. `usb_kernel.py send` parses `INFO` into exact fields and refuses
+before sending if `updates=` or `features=` repeats, `updates=` is not exactly `ready`
+(including `busy`), or `features=locked` contradicts it. With no `updates=` field it accepts
+only the exact legacy `features=kernel,no-os`. The web page (`web/src/piRemote/protocol.ts`, in
+the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 
 **The not-ready rule:** `PUTF` (and so `put`, `putgame`, `putapp`) is refused with
 `ERR not-ready` while an OS program is running, and during a kernel update. **Run `stop`

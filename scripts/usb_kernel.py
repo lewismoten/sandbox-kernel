@@ -62,12 +62,27 @@ def expect(port,wanted,timeout):
     while line.startswith('INFO 2 '): line=port.reply(timeout)
     if line!=wanted: raise ValueError(f'Expected {wanted!r}, got {line!r}')
 
+def info_fields(info):
+    """Parse INFO into exact key=value fields. A repeated key is kept as a list so callers can reject it."""
+    out={}
+    for item in info.split()[2:]:
+        if '=' in item:
+            k,v=item.split('=',1);out.setdefault(k,[]).append(v)
+    return {k:(v[0] if len(v)==1 else v) for k,v in out.items()}
+
+def check_updates(f):
+    """Fail closed: exactly one updates= field saying ready, or (legacy kernels, no updates= field)
+    exactly one features=kernel,no-os. features= is legacy; features=locked contradicts ready."""
+    for k in ('updates','features'):
+        if isinstance(f.get(k),list): raise ValueError(f'Device INFO repeats {k}=; refusing to update')
+    if 'updates' in f:
+        if f['updates']=='busy': raise ValueError('Device has a pending update; wait for confirmation')
+        if f['updates']!='ready' or f.get('features')=='locked': raise ValueError('Device updates locked; inspect logs')
+    elif f.get('features')!='kernel,no-os': raise ValueError('Device updates locked; inspect logs')
+
 def send_kernel(port,path):
     image=validate(path.read_bytes());info=handshake(port);print(info)
-    fields=info.split()
-    # New kernels say updates=ready; old ones said features=kernel,no-os.
-    if 'updates=ready' not in fields and not ('updates=' not in info and 'features=kernel,no-os' in fields): raise ValueError('Device updates locked; inspect logs')
-    before=dict(item.split('=',1) for item in info.split() if '=' in item)
+    before=info_fields(info);check_updates(before)
     port.send(f'PUT2 kernel zero-w-armv6 {len(image)} {zlib.crc32(image):08x}\n'.encode())
     expect(port,'READY 1024',5)
     for offset in range(0,len(image),1024):

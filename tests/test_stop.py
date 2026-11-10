@@ -158,7 +158,7 @@ class Stop(ProtocolBase):
         self.assertEqual(self.command('INPUT add'),'ERR not-ready\n')
         self.assertEqual(err(),before)
         info=self.command('INFO');self.assertIn(' updates=',info);self.assertIn(' os=none ',info)
-        self.assertNotIn('no-os',info)
+        self.assertIn(' features=kernel,no-os',info) # legacy token kept for old clients
         self.assertIn('OK file',self.put(program()))
         self.assertIn('OK run',self.command('RUN DIAG.ELF'))
         self.assertIn(' os=running ',self.command('INFO'))

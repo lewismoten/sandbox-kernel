@@ -48,7 +48,7 @@ class ReceiverModel:
                 else:
                     self.final = 'OK pending rebooting'
         elif data == b'INFO\n':
-            self.replies.append('INFO 2 test confirmed=1 updates=ready os=none features=kernel-update')
+            self.replies.append('INFO 2 test confirmed=1 updates=ready os=none features=kernel,no-os')
         else:
             match = re.fullmatch(rb'PUT2 kernel zero-w-armv6 ([0-9]{1,10}) ([0-9a-f]{8})\n', data)
             if not match:
@@ -125,7 +125,7 @@ class UsbProperties(unittest.TestCase):
                 wanted = port.replies[-1] + '\n'
                 if data == b'INFO\n':
                     outer.assertTrue(actual.startswith('INFO 2 '), actual)
-                    outer.assertIn(' updates=ready os=', actual);outer.assertIn(' features=kernel-update', actual)
+                    outer.assertIn(' updates=ready os=', actual);outer.assertIn(' features=kernel,no-os', actual)
                 else:
                     outer.assertEqual(actual, wanted, f'seed={seed:#x} size={size}')
 

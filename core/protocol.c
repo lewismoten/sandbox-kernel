@@ -115,9 +115,10 @@ static void command_line(void) {
   usb_reply(" confirmed=");field(control[0]==CONTROL_MAGIC?control[6]:0);
   usb_reply(" pending=");field(control[0]==CONTROL_MAGIC&&control[4]!=NO_SLOT?control[7]:0);
   usb_reply(" active_generation=");field(boot_generation);
-  usb_reply(updates_ready?" updates=ready":" updates=locked");
+  usb_reply(!updates_ready?" updates=locked":control[4]!=NO_SLOT?" updates=busy":" updates=ready");
   usb_reply(os_running()?" os=running":os_starts?" os=stopped":" os=none");
-  usb_reply(updates_ready?" features=kernel-update":" features=locked");
+  /* features= is legacy, kept so old usb_kernel.py clients still update; read updates= and os= */
+  usb_reply(updates_ready?" features=kernel,no-os":" features=locked");
   usb_reply(" install_timeout=120\n");return;
  }
  const char *p=line;uint32_t size,crc=0;

@@ -9,14 +9,33 @@ class FakePort:
         r=next(self.replies)
         if isinstance(r,Exception): raise r
         return r
+def old_sender_accepts(info):
+    """The base usb_kernel.py check, verbatim: old clients need this token."""
+    return 'features=kernel,no-os' in info.split()
 class SenderTests(unittest.TestCase):
+    def test_old_sender_accepts_new_info_ready(self):
+        import re,pathlib
+        src=(pathlib.Path(__file__).parent.parent/'core'/'protocol.c').read_text()
+        self.assertIn('features=kernel,no-os',src)
+        for info in ('INFO 2 t updates=ready os=none features=kernel,no-os','INFO 2 t updates=ready os=running features=kernel,no-os'):
+            self.assertTrue(old_sender_accepts(info));usb_kernel.check_updates(usb_kernel.info_fields(info))
+    def _bad(self,info):
+        with self.assertRaises(ValueError): usb_kernel.check_updates(usb_kernel.info_fields(info))
+    def test_conflicting_or_odd_update_fields_fail_closed(self):
+        for t in ('updates=ready updates=locked features=locked','updates=locked updates=ready features=locked','updates=ready updates= features=locked',
+                  'updates= features=kernel,no-os','updates=maybe','updates=READY','updates=busy','updates=ready features=locked','updates=ready updates=ready',
+                  'xupdates=ready','note=updates=ready','features=kernel','features=locked','features=kernel,no-os features=kernel,no-os',''):
+            self._bad('INFO 2 t '+t)
+    def test_unrelated_fields_do_not_block_legacy(self):
+        for t in ('xupdates=locked features=kernel,no-os','note=updates=locked features=kernel,no-os'):
+            usb_kernel.check_updates(usb_kernel.info_fields('INFO 2 t '+t))
     def test_first_info_retries(self):
         p=FakePort([TimeoutError(),TimeoutError(),'INFO 2 test'])
         self.assertEqual(usb_kernel.handshake(p),'INFO 2 test')
         self.assertEqual(p.sent,[b'INFO\n']*3)
     def test_exact_multiple_final_uses_verify(self):
         b=image.pack(b'X'*1792,'sender') # 2048-byte transport, two full blocks
-        info='INFO 2 test confirmed=1 updates=ready os=none features=kernel-update'
+        info='INFO 2 test confirmed=1 updates=ready os=none features=kernel,no-os'
         p=FakePort([info,info,'READY 1024','ACK 1024','VERIFY','OK pending rebooting'])
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
@@ -24,7 +43,7 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(p.sent[2:], [b[:1024],b[1024:]])
     def test_lost_final_never_repeats_put(self):
         b=image.pack(b'X'*4,'unknown')
-        p=FakePort(['INFO 2 test confirmed=1 updates=ready os=none features=kernel-update','READY 1024','VERIFY',TimeoutError()])
+        p=FakePort(['INFO 2 test confirmed=1 updates=ready os=none features=kernel,no-os','READY 1024','VERIFY',TimeoutError()])
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
             self.assertEqual(usb_kernel.send_kernel(p,f),2)
