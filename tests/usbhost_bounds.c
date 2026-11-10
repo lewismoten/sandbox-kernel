@@ -5,6 +5,7 @@
 #include <stdio.h>
 #define USB_ROLE_HOST 1
 #include "tusb_config.h"
+#include "usblog.h"
 typedef struct {uint8_t bytes[9];} tusb_desc_configuration_t;
 typedef struct {uint8_t bytes[9];} tusb_desc_interface_t;
 typedef struct {uint8_t bytes[7];} tusb_desc_endpoint_t;

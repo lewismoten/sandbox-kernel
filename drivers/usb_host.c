@@ -37,22 +37,22 @@ bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const 
  (void)cfg_index;
  const uint8_t *p=(const uint8_t *)config;
  uint16_t total=(uint16_t)(p[2]|((uint16_t)p[3]<<8));
- if(total<sizeof(*config)||total>CFG_TUH_ENUMERATION_BUFSIZE) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad total length");lg(l);return false;}
+ if(total<sizeof(*config)||total>CFG_TUH_ENUMERATION_BUFSIZE) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad total length");usblog_add(l);return false;}
  bool hid=false;uint8_t itf=0;
  for(uint16_t off=0;off<total;) {
-  if(total-off<2||p[off]<2||p[off]>total-off) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad descriptor length");lg(l);return false;}
+  if(total-off<2||p[off]<2||p[off]>total-off) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad descriptor length");usblog_add(l);return false;}
   uint8_t len=p[off],type=p[off+1];
   if(type==TUSB_DESC_INTERFACE) {
    if(len<sizeof(tusb_desc_interface_t)) return false;
    hid=p[off+5]==TUSB_CLASS_HID;
-   {char l[USBLOG_LINE];itf=p[off+2];usblog_fmt_interface(l,daddr,itf,p[off+5],p[off+6],p[off+7],p[off+4]);lg(l);}
+   {char l[USBLOG_LINE];itf=p[off+2];usblog_fmt_interface(l,daddr,itf,p[off+5],p[off+6],p[off+7],p[off+4]);usblog_add(l);}
   } else if(type==TUSB_DESC_ENDPOINT&&hid) {
    if(len<sizeof(tusb_desc_endpoint_t)) return false;
    uint16_t size=(uint16_t)(p[off+4]|((uint16_t)p[off+5]<<8))&0x7ffu;
-   {char l[USBLOG_LINE];usblog_fmt_endpoint(l,daddr,itf,p[off+2],p[off+3],size,p[off+6]);lg(l);}
+   {char l[USBLOG_LINE];usblog_fmt_endpoint(l,daddr,itf,p[off+2],p[off+3],size,p[off+6]);usblog_add(l);}
    if((p[off+2]&0x80u)&&size>CFG_TUH_HID_EPIN_BUFSIZE) {
     log_line("USB host: HID IN packet exceeds receive buffer");
-    {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,itf,"CONFIG REJECTED: HID IN packet bigger than the 64 byte buffer");lg(l);}
+    {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,itf,"CONFIG REJECTED: HID IN packet bigger than the 64 byte buffer");usblog_add(l);}
     return false; /* one log per rejected configuration, no mount/re-arm loop */
    }
   }

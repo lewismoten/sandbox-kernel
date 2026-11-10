@@ -26,7 +26,7 @@ class ReviewRegressions(unittest.TestCase):
         source = (ROOT / 'drivers/usb_host.c').read_text()
         start = source.index('bool tuh_enum_descriptor_configuration_cb(')
         end = source.index('\n}', start) + 2
-        self.run_probe('usbhost_bounds', generated=('usbhost-bounds.h', source[start:end]))
+        self.run_probe('usbhost_bounds', ['core/usblog.c'], generated=('usbhost-bounds.h', source[start:end]))
 
     def test_handle_generation_crosses_16_bits_and_retires_at_exhaustion(self):
         self.run_probe('handle_generation', [s for s in hostlib.SOURCES if s != 'core/sys.c'])
