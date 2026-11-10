@@ -24,22 +24,27 @@ struct cec_sm {
     uint8_t inflight_retry;        /* it was already retried */
     uint8_t retry_next;            /* the next frame out is that retry */
     uint32_t tx_start_ms, now_ms;
+    uint64_t tx_id;                /* never reused during this initialization */
     struct cec_msg cur;            /* the frame in flight */
     struct cec_msg q[CEC_SM_QUEUE];
     uint8_t qn;
 };
 
-/* phys 0xFFFF = unknown: no address is claimed. Starts polling at once. */
+/* phys 0xFFFF = unknown: no address is claimed. Starts polling at once.
+ * Before reinitializing, drain/cancel all callbacks from the previous lifetime. */
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms);
 /* Time passes; a stuck send counts as a NACK. */
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms);
 /* A received frame. Returns a key event for User Control frames. */
 enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m);
-/* 1 and *out set when a frame should be sent now (one at a time), else 0. */
-int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out);
+/* 1 with *out and *tx_id set for a new transfer (one at a time), else 0.
+ * Save this ID with the transfer, including retries; never read it at callback
+ * time from s. IDs are nonzero and never wrap: exhaustion stops new transfers. */
+int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id);
 /* Outcome of the frame handed out: ok = the destination ACKed it. For a
- * broadcast, ok means nobody NACKed. */
-void cec_sm_tx_done(struct cec_sm *s, int ok);
+ * broadcast, ok means nobody NACKed. Only the current transfer ID is accepted;
+ * timed-out, duplicate and other mismatched completions have no effect. */
+void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, int ok);
 /* Wake the TV and take the screen: Image View On, then Active Source. */
 void cec_sm_announce(struct cec_sm *s);
 #endif

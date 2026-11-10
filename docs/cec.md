@@ -2,7 +2,30 @@
 
 `drivers/cec_msg.c`, `cec_keys.c` and `cec_sm.c` (headers in `include/`) are pure C: no
 registers, no clocks, not in the kernel image yet. `tests/test_cec_core.py` builds them on the
-host with ASan/UBSan and runs `tests/cec_core.c`. Hardware and the input glue come later.
+host and runs `tests/cec_core.c` (set `CEC_SANITIZE=1` to opt into ASan/UBSan). Hardware and the input glue come later.
+
+## Transfer completion guarantee
+
+Each successful `cec_sm_next_tx` returns a frame and a nonzero 64-bit transfer ID.
+The transport must retain that ID with the original transfer and pass it to
+`cec_sm_tx_done`; it must not fetch the current ID when a delayed callback arrives.
+Each handoff, including a retry of identical bytes, gets a new ID. Only a completion
+matching the current in-flight transfer can change state. A timeout retires that ID
+as a NACK, so a delayed success or failure cannot clear a subsequent report or retry,
+change the queue, or allow another handoff. Duplicate completions are also ignored.
+IDs never wrap: after UINT64_MAX, new handoffs stop until reinitialization.
+
+Before `cec_sm_init` is called again on the same instance, the transport must cancel
+or drain all earlier transfers and callbacks. Calls into an instance must be serialized.
+This is a software completion guarantee; the transport still owns physical cancellation
+or serialization of timed-out hardware sends before starting another hardware send.
+The CEC core remains unlinked; these internal C interfaces do not change the kernel/SDK
+ABI, its version, syscall records or wire-frame bytes.
+
+The regression in `tests/cec_core.c` reproduces C1: poll at 0 ms, timeout at 1000 ms,
+report handoff, then delayed original poll failure. It checks that the entire state
+is unchanged and another send is blocked until the report's matching completion.
+It also checks stale success, duplicate completion, and a retry with identical bytes.
 
 ## Where the values come from
 

@@ -13,7 +13,8 @@ static void eq(const struct cec_msg *m, const uint8_t *e, unsigned n) {
 static struct cec_msg mk(const uint8_t *b, unsigned n) {
     struct cec_msg m; assert(cec_parse(&m, b, n) == 0); return m;
 }
-static int tx(struct cec_sm *s, struct cec_msg *m) { return cec_sm_next_tx(s, m); }
+static uint64_t last_tx_id;
+static int tx(struct cec_sm *s, struct cec_msg *m) { return cec_sm_next_tx(s, m, &last_tx_id); }
 
 static void test_msg(void) {
     struct cec_msg m;
@@ -87,7 +88,7 @@ static void claim(struct cec_sm *s, uint16_t phys, int taken) {  /* taken: candi
     for (int i = 0; i < taken; i++) {
         assert(tx(s, &m) && cec_is_poll(&m) && cec_dest(&m) == (i == 0 ? 4u : i == 1 ? 8u : 11u));
         assert(!tx(s, &m));                                /* one frame at a time */
-        cec_sm_tx_done(s, 1);
+        cec_sm_tx_done(s, last_tx_id, 1);
     }
 }
 static void test_sm(void) {
@@ -95,16 +96,16 @@ static void test_sm(void) {
     /* first free */
     claim(&s, 0x1000, 0);
     assert(tx(&s, &m) && cec_is_poll(&m) && m.b[0] == 0x44);
-    cec_sm_tx_done(&s, 0);
+    cec_sm_tx_done(&s, last_tx_id, 0);
     assert(s.state == CEC_SM_CLAIMED && s.laddr == 4);
-    assert(tx(&s, &m)); static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04}; eq(&m, rpa, 5); cec_sm_tx_done(&s, 1);
-    assert(tx(&s, &m) && cec_opcode(&m) == 0x47 && cec_dest(&m) == 15); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m)); static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04}; eq(&m, rpa, 5); cec_sm_tx_done(&s, last_tx_id, 1);
+    assert(tx(&s, &m) && cec_opcode(&m) == 0x47 && cec_dest(&m) == 15); cec_sm_tx_done(&s, last_tx_id, 1);
     assert(!tx(&s, &m));
     /* 4 taken, 8 free */
-    claim(&s, 0x1000, 1); assert(tx(&s, &m) && m.b[0] == 0x88); cec_sm_tx_done(&s, 0);
+    claim(&s, 0x1000, 1); assert(tx(&s, &m) && m.b[0] == 0x88); cec_sm_tx_done(&s, last_tx_id, 0);
     assert(s.laddr == 8);
     /* 4 and 8 taken, 11 free */
-    claim(&s, 0x1000, 2); assert(tx(&s, &m) && m.b[0] == 0xBB); cec_sm_tx_done(&s, 0);
+    claim(&s, 0x1000, 2); assert(tx(&s, &m) && m.b[0] == 0xBB); cec_sm_tx_done(&s, last_tx_id, 0);
     assert(s.laddr == 11);
     /* all taken: no address, silent */
     claim(&s, 0x1000, 3);
@@ -114,26 +115,26 @@ static void test_sm(void) {
     /* unknown physical address: no polling */
     cec_sm_init(&s, 0xFFFF, 0); assert(s.state == CEC_SM_NO_ADDRESS && !tx(&s, &m));
     /* replies */
-    claim(&s, 0x1000, 0); tx(&s, &m); cec_sm_tx_done(&s, 0);
-    while (tx(&s, &m)) cec_sm_tx_done(&s, 1);
+    claim(&s, 0x1000, 0); tx(&s, &m); cec_sm_tx_done(&s, last_tx_id, 0);
+    while (tx(&s, &m)) cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t giveosd[] = {0x04, 0x46};
     r = mk(giveosd, 2); assert(cec_sm_rx(&s, &r) == CEC_SM_EV_NONE);
-    assert(tx(&s, &m) && cec_dest(&m) == 0 && cec_opcode(&m) == 0x47 && m.len == 12); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m) && cec_dest(&m) == 0 && cec_opcode(&m) == 0x47 && m.len == 12); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ggp, 2); r.b[0] = 0x04; cec_sm_rx(&s, &r);
-    assert(tx(&s, &m)); eq(&m, rpa, 5); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m)); eq(&m, rpa, 5); cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t vend[] = {0x04, 0x8C}, fav[] = {0x40, 0x00, 0x8C, 0x00};
-    r = mk(vend, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, fav, 4); cec_sm_tx_done(&s, 1);
+    r = mk(vend, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, fav, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t unk[] = {0x04, 0x6B, 0x01};
     r = mk(unk, 3); cec_sm_rx(&s, &r);
     static const uint8_t fau[] = {0x40, 0x00, 0x6B, 0x00};
-    assert(tx(&s, &m)); eq(&m, fau, 4); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m)); eq(&m, fau, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t bunk[] = {0x0F, 0x6B, 0x01}, abort_[] = {0x04, 0x00, 0x6B, 0x00};
     r = mk(bunk, 3); cec_sm_rx(&s, &r); assert(!tx(&s, &m));         /* broadcast: silence */
     r = mk(abort_, 4); cec_sm_rx(&s, &r); assert(!tx(&s, &m));       /* no abort of an abort */
     static const uint8_t other[] = {0x05, 0x6B}, pwr[] = {0x04, 0x8F}, ver[] = {0x04, 0x9F};
     r = mk(other, 2); cec_sm_rx(&s, &r); assert(!tx(&s, &m));        /* to someone else */
-    r = mk(pwr, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x90 && m.b[2] == 0); cec_sm_tx_done(&s, 1);
-    r = mk(ver, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[1] == 0x9E && m.b[2] == 5); cec_sm_tx_done(&s, 1);
+    r = mk(pwr, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x90 && m.b[2] == 0); cec_sm_tx_done(&s, last_tx_id, 1);
+    r = mk(ver, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[1] == 0x9E && m.b[2] == 5); cec_sm_tx_done(&s, last_tx_id, 1);
     /* user control */
     static const uint8_t ucp[] = {0x04, 0x44, 0x04}, ucr[] = {0x04, 0x45};
     r = mk(ucp, 3); assert(cec_sm_rx(&s, &r) == CEC_SM_EV_KEY_PRESSED && s.ui_code == 4 && !tx(&s, &m));
@@ -143,20 +144,20 @@ static void test_sm(void) {
     static const uint8_t asrc[] = {0x4F, 0x82, 0x10, 0x00};
     r = mk(ras, 2); cec_sm_rx(&s, &r); assert(!tx(&s, &m));
     r = mk(ssp2, 4); cec_sm_rx(&s, &r); assert(!tx(&s, &m) && !s.active);
-    r = mk(ssp, 4); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, 1);
-    r = mk(ras, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, 1);
+    r = mk(ssp, 4); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
+    r = mk(ras, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ssp2, 4); cec_sm_rx(&s, &r); assert(!s.active);
     static const uint8_t stby[] = {0x0F, 0x36};
     r = mk(stby, 2); cec_sm_rx(&s, &r); assert(!tx(&s, &m));
     /* announce */
     cec_sm_announce(&s);
     static const uint8_t ivo[] = {0x40, 0x04};
-    assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, 1); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, last_tx_id, 1); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     /* retry once on NACK, then give up */
     cec_sm_announce(&s);
-    assert(tx(&s, &m)); cec_sm_tx_done(&s, 0);
-    assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, 0);   /* second failure is final */
-    assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, 1);
+    assert(tx(&s, &m)); cec_sm_tx_done(&s, last_tx_id, 0);
+    assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, last_tx_id, 0);   /* second failure is final */
+    assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     assert(!tx(&s, &m));
     /* a frame that never reports back times out as a NACK and is retried */
     cec_sm_announce(&s);
@@ -165,4 +166,66 @@ static void test_sm(void) {
     cec_sm_tick(&s, 6000); assert(tx(&s, &m) && cec_opcode(&m) == 0x04);
     puts("PASS cec_sm polling, replies, active source, retry");
 }
-int main(void) { test_msg(); test_keys(); test_sm(); return 0; }
+static void test_stale_completion(void) {
+    struct cec_sm s = {0}, before;
+    struct cec_msg poll, report, next;
+    uint64_t poll_id, report_id, next_id;
+    cec_sm_init(&s, 0x1000, 0);
+    assert(cec_sm_next_tx(&s, &poll, &poll_id) && cec_is_poll(&poll));
+    assert(poll_id != 0);
+    cec_sm_tick(&s, 999);
+    assert(!cec_sm_next_tx(&s, &next, &next_id));
+    cec_sm_tick(&s, 1000);
+    assert(s.state == CEC_SM_CLAIMED && s.laddr == 4);
+    assert(cec_sm_next_tx(&s, &report, &report_id));
+    static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04};
+    eq(&report, rpa, sizeof(rpa));
+    assert(report_id != poll_id && s.inflight);
+
+    /* C1 witness: original poll fails after its timeout and report handoff.
+     * No field (queue, retry, address or current transfer) may change. */
+    memcpy(&before, &s, sizeof(s));
+    cec_sm_tx_done(&s, poll_id, 0);
+    assert(memcmp(&before, &s, sizeof(s)) == 0);
+    assert(!cec_sm_next_tx(&s, &next, &next_id));
+    cec_sm_tx_done(&s, poll_id, 1);
+    cec_sm_tx_done(&s, 0, 0);
+    assert(memcmp(&before, &s, sizeof(s)) == 0);
+
+    /* Only the report's own completion releases the next frame. */
+    cec_sm_tx_done(&s, report_id, 1);
+    assert(!s.inflight);
+    assert(cec_sm_next_tx(&s, &next, &next_id));
+    assert(next_id != report_id && cec_opcode(&next) == CEC_OP_SET_OSD_NAME);
+    memcpy(&before, &s, sizeof(s));
+    cec_sm_tx_done(&s, report_id, 0);  /* duplicate of a completed transfer */
+    assert(memcmp(&before, &s, sizeof(s)) == 0);
+    cec_sm_tx_done(&s, next_id, 1);
+    assert(!cec_sm_next_tx(&s, &next, &next_id));
+
+    /* A timed-out frame's retry has identical bytes but a fresh identity. */
+    cec_sm_announce(&s);
+    assert(cec_sm_next_tx(&s, &report, &report_id));
+    cec_sm_tick(&s, 2000);
+    assert(cec_sm_next_tx(&s, &next, &next_id));
+    eq(&next, report.b, report.len);
+    assert(next_id != report_id && s.inflight_retry);
+    memcpy(&before, &s, sizeof(s));
+    cec_sm_tx_done(&s, report_id, 0);
+    assert(memcmp(&before, &s, sizeof(s)) == 0);
+    assert(!cec_sm_next_tx(&s, &poll, &poll_id));
+    cec_sm_tx_done(&s, next_id, 0);  /* second failure is final */
+    assert(cec_sm_next_tx(&s, &next, &next_id));
+    assert(cec_opcode(&next) == CEC_OP_ACTIVE_SOURCE);
+    cec_sm_tx_done(&s, next_id, 1);
+    assert(!cec_sm_next_tx(&s, &next, &next_id));
+
+    /* Exhaustion cannot reuse an ID held by an arbitrarily late callback. */
+    s.tx_id = UINT64_MAX - 1;
+    cec_sm_announce(&s);
+    assert(cec_sm_next_tx(&s, &next, &next_id) && next_id == UINT64_MAX);
+    cec_sm_tx_done(&s, next_id, 1);
+    assert(!cec_sm_next_tx(&s, &next, &next_id) && s.qn == 1);
+    puts("PASS cec_sm stale completions ignored");
+}
+int main(void) { test_msg(); test_keys(); test_sm(); test_stale_completion(); return 0; }

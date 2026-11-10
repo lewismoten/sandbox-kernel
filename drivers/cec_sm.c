@@ -26,7 +26,7 @@ static void active_source(struct cec_sm *s) {
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
     s->phys = phys; s->laddr = CEC_ADDR_BROADCAST; s->cand = 0; s->active = 0;
     s->ui_code = 0; s->inflight = 0; s->inflight_retry = 0; s->retry_next = 0;
-    s->tx_start_ms = 0; s->now_ms = now_ms; s->qn = 0;
+    s->tx_id = 0; s->tx_start_ms = 0; s->now_ms = now_ms; s->qn = 0;
     if (phys == CEC_PHYS_UNKNOWN) { s->state = CEC_SM_NO_ADDRESS; return; }
     s->state = CEC_SM_POLL;
     poll_next(s);
@@ -34,21 +34,22 @@ void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
 
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms) {
     s->now_ms = now_ms;
-    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, 0);
+    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, s->tx_id, 0);
 }
 
-int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out) {
-    if (s->inflight || s->qn == 0) return 0;
+int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id) {
+    if (s->inflight || s->qn == 0 || s->tx_id == UINT64_MAX) return 0;
     s->cur = s->q[0];
     for (unsigned i = 1; i < s->qn; i++) s->q[i - 1] = s->q[i];
     s->qn--;
     s->inflight = 1; s->inflight_retry = s->retry_next; s->retry_next = 0; s->tx_start_ms = s->now_ms;
+    *tx_id = ++s->tx_id;
     *out = s->cur;
     return 1;
 }
 
-void cec_sm_tx_done(struct cec_sm *s, int ok) {
-    if (!s->inflight) return;
+void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, int ok) {
+    if (!s->inflight || tx_id != s->tx_id) return;
     int was_poll = cec_is_poll(&s->cur);
     s->inflight = 0;
     if (was_poll && s->state == CEC_SM_POLL) {
