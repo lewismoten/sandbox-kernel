@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: MIT
 """Host build check for examples/: each one compiles and links for ARM with the SDK only, and its
 ELF obeys the loader rules (ARM EXEC, ARM state entry, 4 loads at most, no W+X, 8 MiB image quota)."""
-import os, pathlib, struct, subprocess, tempfile, unittest
+import os, pathlib, shutil, struct, subprocess, tempfile, unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+ARM = os.environ.get('TOOLCHAIN', '/Applications/ArmGNUToolchain/15.3.rel2/arm-none-eabi/bin/arm-none-eabi-') + 'gcc'
+ARM_AVAILABLE = shutil.which(ARM) is not None
+if not ARM_AVAILABLE:
+    print('SKIP examples: arm-none-eabi-gcc not found', flush=True)
 EXAMPLES = {'hello': 'HELLO.ELF', 'clock': 'CLOCK.ELF'}
 QUOTA = 8 << 20
 FILE_MAX = 1 << 20
@@ -30,7 +34,9 @@ class ExampleBuild(unittest.TestCase):
         self.assertLessEqual(loads, 4)
         self.assertLessEqual(pages * 4096, QUOTA, 'image quota')
         self.assertLess(len(data), 64 * 1024, 'an example should stay tiny')
+    @unittest.skipUnless(ARM_AVAILABLE, 'ARM cross-compiler unavailable')
     def test_hello(self): self.check('hello', 'HELLO.ELF')
+    @unittest.skipUnless(ARM_AVAILABLE, 'ARM cross-compiler unavailable')
     def test_clock(self): self.check('clock', 'CLOCK.ELF')
     def test_hello_is_short(self):
         self.assertLess(len((ROOT / 'examples/hello/main.c').read_text().splitlines()), 150)
