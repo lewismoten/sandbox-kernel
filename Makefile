@@ -11,7 +11,13 @@ TUSB := third_party/tinyusb/src
 PANEL_ROTATE_180 ?= 1
 # USB_ROLE=device (default, the Mac link) or host (a keyboard on the OTG port; see docs/usb-host-keyboard.md)
 USB_ROLE ?= device
-CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
+# Shared GCC/clang warnings for host tests; the remaining three require GCC.
+HOST_WARNINGS := -Werror -Wmisleading-indentation -Wshadow -Wcast-qual -Wmissing-prototypes -Wstrict-prototypes -Wimplicit-fallthrough -Wformat=2 -Wnull-dereference -Wjump-misses-init -Wunused-but-set-variable
+KERNEL_WARNINGS := $(HOST_WARNINGS) -Wduplicated-cond -Wlogical-op -Wmaybe-uninitialized
+CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
+KERNEL_CFLAGS = $(CFLAGS) $(KERNEL_WARNINGS)
+# TinyUSB retains its existing warning policy, separate from kernel sources.
+VENDOR_CFLAGS = $(CFLAGS) -Wno-misleading-indentation
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 ifeq ($(USB_ROLE),host)
@@ -25,10 +31,11 @@ else
 $(error USB_ROLE must be device or host)
 endif
 KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c core/serial.c core/eink.c core/iec958.c core/hdmi_audio_plan.c drivers/hdmi_audio.c $(USBDRV) core/protocol.c core/main.c $(USB)
+USB_OBJECTS := $(patsubst $(TUSB)/%.c,build/tinyusb/%.o,$(USB))
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
 .PHONY: all clean deps boot test test-asan programs examples FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski programs
-# OS programs: built only against sdk/ (no kernel headers).
+# OS programs and sdk/lib/mem.c retain their own flags (no kernel headers).
 PFLAGS := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -std=c11 -Os -ffreestanding -fno-builtin -nostdlib -Wall -Wextra -Werror -Isdk/include -Tsdk/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096
 SDKLIB := sdk/lib/crt0.S sdk/lib/mem.c
 SDKDEPS := $(SDKLIB) sdk/lib/sandbox.ld $(wildcard sdk/include/sandbox/*.h) Makefile
@@ -49,15 +56,18 @@ $(TUSB_STAMP): scripts/fetch.py
 	$(PYTHON) scripts/fetch.py tinyusb
 deps: $(TUSB_STAMP)
 FORCE:
-# a role change must relink (and recompile: one command builds everything)
+# A role change must recompile both kernel sources and TinyUSB objects.
 build/usb_role.stamp: FORCE | build
 	@echo '$(USB_ROLE)' | cmp -s - $@ || echo '$(USB_ROLE)' > $@
 build/build_id.h: FORCE | build
 	$(PYTHON) scripts/build_id.py '$(BUILD_ID)'
 build/selector.elf: Makefile build/build_id.h $(COMMON) core/selector.c $(HEADERS) arch/armv6/link.ld | build
-	$(CC) $(CFLAGS) -DSELECTOR $(COMMON) core/selector.c $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x8000,--defsym=MEMORY_LIMIT=0x70000,-Map=build/selector.map -o $@
-build/runtime.elf: Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
-	$(CC) $(CFLAGS) $(KERNEL) $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x100000,--defsym=MEMORY_LIMIT=0x08000000,-Map=build/runtime.map -o $@
+	$(CC) $(KERNEL_CFLAGS) -DSELECTOR $(COMMON) core/selector.c $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x8000,--defsym=MEMORY_LIMIT=0x70000,-Map=build/selector.map -o $@
+build/tinyusb/%.o: $(TUSB)/%.c Makefile build/usb_role.stamp build/build_id.h $(HEADERS) $(TUSB_STAMP) | build
+	mkdir -p $(@D)
+	$(CC) $(VENDOR_CFLAGS) -c $< -o $@
+build/runtime.elf: Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(USB_OBJECTS) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
+	$(CC) $(KERNEL_CFLAGS) $(filter-out $(USB),$(KERNEL)) $(USB_OBJECTS) $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x100000,--defsym=MEMORY_LIMIT=0x08000000,-Map=build/runtime.map -o $@
 build/kernel.img: build/selector.elf
 	$(OBJCOPY) -O binary $< $@
 	$(SIZE) $<
@@ -72,8 +82,13 @@ boot: all
 examples:
 	$(MAKE) -C examples/hello
 	$(MAKE) -C examples/clock
-test:
-	$(PYTHON) -m unittest discover -s tests -v
+# Tests invoke cc directly, with a few honoring CC or HOSTCC. Wrap all three.
+HOSTCC ?= cc
+test: | build
+	mkdir -p build/host-bin
+	printf '#!/bin/sh\nexec "%s" "$$@" %s\n' "$(shell command -v $(HOSTCC))" '$(HOST_WARNINGS)' > build/host-bin/cc
+	chmod +x build/host-bin/cc
+	PATH="$(CURDIR)/build/host-bin:$(PATH)" CC="$(CURDIR)/build/host-bin/cc" HOSTCC="$(CURDIR)/build/host-bin/cc" $(PYTHON) -m unittest discover -s tests -v
 test-asan: test
 	$(PYTHON) tests/lfn_asan.py
 	FB_FILL_SANITIZE=1 $(PYTHON) tests/test_fb_fill.py
