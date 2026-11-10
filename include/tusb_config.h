@@ -11,11 +11,11 @@
 #define CFG_TUH_DWC2_DMA_ENABLE 0
 #define CFG_TUH_DWC2_SLAVE_ENABLE 1
 #define CFG_TUH_HUB 0
-#define CFG_TUH_HID 1
+#define CFG_TUH_HID 4 /* R2: interfaces, not devices: a dongle may list mouse, consumer and keyboard in any order */
 #define CFG_TUH_DEVICE_MAX 1
-#define CFG_TUH_ENUMERATION_BUFSIZE 256
+#define CFG_TUH_ENUMERATION_BUFSIZE 512
 #define CFG_TUH_HID_EPIN_BUFSIZE 64
-#define CFG_TUH_ENDPOINT_MAX 4
+#define CFG_TUH_ENDPOINT_MAX 8
 /* TinyUSB 0.21's dwc2_bcm.h has the device interrupt switch only; hcd_dwc2.c wants this one. */
 #define dwc2_int_set(_rhport, _role, _on) ((_on) ? BP_EnableIRQ(_dwc2_controller[_rhport].irqnum) : BP_DisableIRQ(_dwc2_controller[_rhport].irqnum))
 #else

@@ -3,7 +3,7 @@
 #include "hidboot.h"
 #include "input.h"
 void log_line(const char *s); /* kernel.h, without its hardware inlines */
-static struct hidboot kb;static bool ready,attached;
+static struct hidboot kb;static bool ready,attached;static uint8_t kb_daddr,kb_idx;
 static const char *const special[]={"Enter","Esc","Backspace","Tab","Space","-","=","[","]","\\","#",";","'","`",",",".","/","CapsLock"};
 const char *usbkbd_usage_name(uint8_t u) {
  static char one[2],f[4];
@@ -33,21 +33,26 @@ void usbkbd_attached(uint16_t vid,uint16_t pid) {
  char id[10];hex4(id,vid);id[4]=':';hex4(id+5,pid);id[9]=0;attached=true;say("device attached ",id);
 }
 void usbkbd_detached(void) {attached=false;log_line("device removed");}
-bool usbkbd_hid_mounted(bool boot_keyboard) {
+bool usbkbd_hid_mounted(uint8_t daddr,uint8_t idx,bool boot_keyboard) {
  if(!boot_keyboard) {log_line("HID interface skipped (not a boot keyboard)");return false;}
  if(ready) return false; /* one keyboard at a time */
- hidboot_init(&kb);input_add();ready=true;log_line("keyboard ready");return true;
+ hidboot_init(&kb);input_add();ready=true;kb_daddr=daddr;kb_idx=idx;log_line("keyboard ready");return true;
 }
-void usbkbd_report(const uint8_t *rep,uint32_t len) {
- if(!ready) return;
+static bool polled(uint8_t daddr,uint8_t idx) {return ready&&daddr==kb_daddr&&idx==kb_idx;}
+bool usbkbd_report(uint8_t daddr,uint8_t idx,const uint8_t *rep,uint32_t len) {
+ if(!polled(daddr,idx)) return false;
  struct hidboot probe=kb;struct input_change ch[HIDBOOT_CHANGES_MAX];
  int n=hidboot_diff(&probe,rep,len,ch);
  for(int i=0;i<n;i++) if(ch[i].value==1) say("key ",code_name(ch[i].code));
  hidboot_feed(&kb,rep,len);
+ return true;
 }
-void usbkbd_hid_unmounted(void) {
+static void drop(const char *why) {
  if(!ready) return;
- hidboot_release_all(&kb);input_remove();ready=false;log_line("keyboard removed");
+ hidboot_release_all(&kb);input_remove();ready=false;log_line(why);
 }
+void usbkbd_hid_unmounted(uint8_t daddr,uint8_t idx) {if(polled(daddr,idx)) drop("keyboard removed");}
+void usbkbd_device_gone(void) {drop("keyboard removed");}
+void usbkbd_poll_failed(void) {drop("keyboard poll failed");}
 bool usbkbd_ready(void) {return ready;}
 const char *usbkbd_status(void) {return ready?"HOST: keyboard":attached?"HOST: device, no keyboard":"HOST: no device";}

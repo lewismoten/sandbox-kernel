@@ -8,17 +8,22 @@ static bool initialized;
 static const char *init_fail="unavailable";
 void usb_irq(void) {if(initialized)tuh_int_handler(0,true);}
 void tuh_mount_cb(uint8_t daddr) {uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);}
-void tuh_umount_cb(uint8_t daddr) {(void)daddr;usbkbd_hid_unmounted();usbkbd_detached();}
+void tuh_umount_cb(uint8_t daddr) {(void)daddr;usbkbd_device_gone();usbkbd_detached();}
+/* R4: arm the interrupt endpoint, retrying a refused submit a few times; if it stays refused the
+   keyboard is removed (keys released, status truthful) rather than left ready with no poll. */
+static void arm(uint8_t daddr,uint8_t idx) {
+ for(unsigned n=0;n<3;n++) if(tuh_hid_receive_report(daddr,idx)) return;
+ usbkbd_poll_failed();
+}
 void tuh_hid_mount_cb(uint8_t daddr,uint8_t idx,const uint8_t *desc,uint16_t len) {
  (void)desc;(void)len;
  /* TinyUSB's default protocol is boot, set before this callback for boot-subclass interfaces. */
  bool boot_kbd=tuh_hid_interface_protocol(daddr,idx)==HID_ITF_PROTOCOL_KEYBOARD&&tuh_hid_get_protocol(daddr,idx)==HID_PROTOCOL_BOOT;
- if(usbkbd_hid_mounted(boot_kbd)&&!tuh_hid_receive_report(daddr,idx)) log_line("keyboard poll failed");
+ if(usbkbd_hid_mounted(daddr,idx,boot_kbd)) arm(daddr,idx);
 }
-void tuh_hid_umount_cb(uint8_t daddr,uint8_t idx) {(void)daddr;(void)idx;usbkbd_hid_unmounted();}
+void tuh_hid_umount_cb(uint8_t daddr,uint8_t idx) {usbkbd_hid_unmounted(daddr,idx);}
 void tuh_hid_report_received_cb(uint8_t daddr,uint8_t idx,const uint8_t *report,uint16_t len) {
- if(tuh_hid_interface_protocol(daddr,idx)==HID_ITF_PROTOCOL_KEYBOARD) usbkbd_report(report,len);
- tuh_hid_receive_report(daddr,idx);
+ if(usbkbd_report(daddr,idx,report,len)) arm(daddr,idx);
 }
 const char *usb_state(void) {return initialized?usbkbd_status():init_fail;}
 void usb_init(void) {
