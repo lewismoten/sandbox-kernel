@@ -6,7 +6,7 @@
     <title>sandbox-kernel</title>
     <meta name="description" content="A small bare-metal kernel for your own OS. Runs on the Raspberry Pi Zero W today. MIT license." />
     <meta property="og:title" content="sandbox-kernel: a small bare-metal kernel for your own OS" />
-    <meta property="og:description" content="Write your OS as one ordinary program. The kernel owns the hardware and recovers if your OS fails. Runs on the Raspberry Pi Zero W today." />
+    <meta property="og:description" content="Build your own OS in C or JavaScript on the Raspberry Pi Zero W. Start with the hardware checklist, card image, and USB development guide." />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="images/social-preview-1280x640.png" />
     <meta property="og:image:width" content="1280" />
@@ -19,184 +19,201 @@
     <style>
       @font-face { font-family: Silkscreen; font-weight: 400; font-display: swap; src: url(fonts/silkscreen-latin-400-normal.woff2) format('woff2'); }
       @font-face { font-family: Silkscreen; font-weight: 700; font-display: swap; src: url(fonts/silkscreen-latin-700-normal.woff2) format('woff2'); }
-      /* Layout: hero column left, tabbed panel right; one screen on desktop, stacked on a phone. */
       :root {
         color-scheme: light dark;
-        --bg: #eef2f8; --panel: #ffffff; --fg: #10131f; --muted: #404a66; --rule: #bcc6dc; --line: #6b7694;
-        --accent: #6e5300; --accent-fill: #f2cf55; --link: #0a5a99; --cyan: #0b6672; --sel: #e3eefc;
-        --warn-bg: #fff4d6; --warn-line: #8a6500; --ok: #0b6b2e; --soon: #6e5300;
+        --bg: #eef2f8; --panel: #fff; --fg: #10131f; --muted: #404a66; --rule: #bcc6dc;
+        --accent: #6e5300; --fill: #f2cf55; --link: #0a5a99; --cyan: #0b6672;
+        --note: #fff4d6; --ok: #0b6b2e;
         --pixel: Silkscreen, 'Courier New', monospace;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --bg: #0f121d; --panel: #161b2b; --fg: #f8f3e8; --muted: #b4bddb; --rule: #283052; --line: #6f7ca8;
-          --accent: #f2cf55; --accent-fill: #f2cf55; --link: #8fb8ff; --cyan: #4ccbd8; --sel: #1c2748;
-          --warn-bg: #2a2410; --warn-line: #f2cf55; --ok: #7be39a; --soon: #f2cf55;
+          --bg: #0f121d; --panel: #161b2b; --fg: #f8f3e8; --muted: #b4bddb; --rule: #465278;
+          --accent: #f2cf55; --link: #8fb8ff; --cyan: #4ccbd8; --note: #2a2410; --ok: #7be39a;
         }
       }
       * { box-sizing: border-box; }
-      html { background: var(--bg); }
-      body { margin: 0; font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
-      a { color: var(--link); }
-      a:focus-visible, [role='tab']:focus-visible, summary:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
-      a.tgt { display: inline-block; min-height: 24px; }
-      .wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
-      main { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 32px; padding: 20px 0 12px; align-items: start; border-top: 1px solid var(--rule); margin-top: 12px; }
-      .edition { display: flex; align-items: center; gap: 14px; margin: 0 0 8px; }
-      .edition img { width: 64px; height: 64px; flex: none; border-radius: 4px; }
-      .edition span { font: 400 1.05rem/1.2 var(--pixel); color: var(--cyan); letter-spacing: 0.08em; text-transform: uppercase; }
-      h1 { margin: 0; font: 700 clamp(1.7rem, 4.4vw, 2.9rem)/1.05 var(--pixel); text-transform: uppercase; overflow-wrap: anywhere; }
-      h1 em { display: block; font-style: normal; color: var(--accent); }
-      .tag { font: 400 0.95rem/1.4 var(--pixel); letter-spacing: 0.02em; margin: 16px 0 4px; text-transform: uppercase; }
-      .chips { font: 400 0.8rem/1.4 var(--pixel); color: var(--muted); letter-spacing: 0.08em; margin: 0 0 12px; text-transform: uppercase; }
-      .swatches { display: flex; gap: 4px; margin: 14px 0 0; }
-      .swatches i { width: 20px; height: 12px; display: block; border: 1px solid var(--rule); }
-      .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; min-width: 0; }
-      [role='tablist'] { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--rule); }
-      [role='tab'] { font: 400 0.8rem/1.2 var(--pixel); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: none; border: 0; border-bottom: 3px solid transparent; padding: 12px 13px; min-height: 44px; cursor: pointer; }
-      [role='tab'][aria-selected='true'] { color: var(--fg); border-bottom-color: var(--accent-fill); }
-      [role='tabpanel'] { padding: 16px 18px 18px; }
-      [role='tabpanel'][hidden] { display: none; }
-      h2 { font: 700 0.95rem/1.3 var(--pixel); letter-spacing: 0.04em; margin: 16px 0 8px; text-transform: uppercase; color: var(--link); }
-      h2:first-child { margin-top: 0; }
-      p { margin: 0 0 8px; }
-      ol, ul { margin: 0 0 8px; padding-left: 1.3rem; }
-      li { margin: 2px 0; }
-      .small { font-size: 0.92rem; color: var(--muted); }
-      code { font: 0.88em ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-      pre { background: var(--bg); border: 1px solid var(--rule); padding: 8px 10px; overflow-x: auto; font-size: 0.82rem; margin: 6px 0; }
-      .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 0; }
+      html { background: var(--bg); scroll-padding-top: 1rem; }
+      body { margin: 0; font: 16px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--fg); }
+      a { color: var(--link); text-underline-offset: .2em; }
+      a:hover { text-decoration-thickness: 2px; }
+      :focus-visible { outline: 3px solid var(--link); outline-offset: 4px; }
+      .skip { position: absolute; top: 8px; left: 16px; transform: translateY(-180%); padding: 10px 16px; background: var(--panel); z-index: 1; }
+      .skip:focus { transform: none; }
+      .wrap { max-width: 1120px; margin: auto; padding: 0 20px; }
+      nav { display: flex; flex-wrap: wrap; gap: 4px 24px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+      nav a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+      main { padding: 28px 0 36px; }
+      section { scroll-margin-top: 1rem; min-width: 0; }
+      .hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 32px; align-items: center; padding-bottom: 32px; }
+      .edition { display: flex; align-items: center; gap: 14px; color: var(--cyan); font: 400 .9rem/1.4 var(--pixel); }
+      .edition img { flex: none; border-radius: 4px; }
+      h1 { margin: 20px 0; font: 700 clamp(1.8rem, 4.5vw, 3rem)/1.15 var(--pixel); text-transform: uppercase; overflow-wrap: anywhere; }
+      h1 span { display: block; color: var(--accent); }
+      .lead { font-size: 1.2rem; line-height: 1.5; }
+      h2 { font: 700 1.15rem/1.5 var(--pixel); color: var(--link); margin: 0 0 16px; }
+      h3 { font-size: 1.05rem; margin: 0 0 8px; }
+      p { margin: 0 0 14px; }
+      ul, ol { padding-left: 1.4rem; margin: 0 0 16px; }
+      li { margin: 6px 0; }
+      .panel { padding: 24px; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel); }
+      .section { border-top: 1px solid var(--rule); padding-top: 28px; margin-top: 28px; }
+      .small, figcaption { font-size: .9rem; color: var(--muted); }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-top: 20px; }
+      .actions a { display: inline-flex; align-items: center; min-height: 44px; }
+      .button { background: var(--fill); color: #10131f; border: 1px solid #6e5300; padding: 8px 16px; border-radius: 3px; font-weight: 700; }
+      .steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+      .steps > li { padding-left: 6px; min-width: 0; }
+      code { font: .88em ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--rule); padding: 12px; margin: 12px 0; }
+      .note { background: var(--note); border-left: 4px solid var(--accent); padding: 16px; margin: 20px 0 0; }
+      table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+      caption { text-align: left; color: var(--muted); margin-bottom: 12px; }
+      th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); padding: 12px 10px; overflow-wrap: anywhere; }
+      thead th { font-size: .9rem; color: var(--muted); }
+      th:first-child { width: 32%; }
+      .state { display: block; font-weight: 700; color: var(--ok); }
+      .coming { color: var(--accent); }
+      .shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
       figure { margin: 0; min-width: 0; }
-      figure img { display: block; width: 100%; height: auto; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; }
-      figcaption { font: 400 0.68rem/1.4 var(--pixel); color: var(--muted); letter-spacing: 0.06em; margin-top: 4px; text-transform: uppercase; }
-      .tablewrap { overflow-x: auto; }
-      table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
-      th, td { text-align: left; vertical-align: top; padding: 3px 8px; border-bottom: 1px solid var(--rule); }
-      thead th { font: 400 0.7rem/1.3 var(--pixel); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-      td:first-child { white-space: nowrap; font-family: ui-monospace, Menlo, Consolas, monospace; }
-      .st { font-weight: 700; }
-      .st.ok { color: var(--ok); } .st.mid { color: var(--soon); }
-      .note { background: var(--warn-bg); border-left: 4px solid var(--warn-line); padding: 8px 12px; margin: 10px 0; font-size: 0.93rem; }
-      footer { border-top: 1px solid var(--rule); padding: 10px 0 18px; font-size: 0.82rem; color: var(--muted); }
-      footer p { margin: 0 0 4px; }
-      @media (max-width: 900px) {
-        main { grid-template-columns: 1fr; gap: 20px; }
-      }
-      @media (max-width: 520px) {
-        .shots { grid-template-columns: 1fr; }
-        [role='tabpanel'] { padding: 14px 12px; }
-        [role='tab'] { padding: 10px 9px; font-size: 0.72rem; }
+      figure img { width: 100%; height: auto; display: block; image-rendering: pixelated; border: 1px solid var(--rule); background: #000; }
+      figcaption { margin-top: 8px; }
+      footer { border-top: 1px solid var(--rule); padding: 20px 0; font-size: .85rem; color: var(--muted); }
+      footer a { display: inline-block; min-height: 24px; overflow-wrap: anywhere; }
+      @media (max-width: 700px) {
+        .hero, .shots, .steps { grid-template-columns: minmax(0, 1fr); }
+        .hero { gap: 24px; }
+        .wrap { padding: 0 16px; }
+        .panel { padding: 20px 16px; }
+        nav { gap: 4px 18px; }
+        th, td { padding: 12px 6px; }
+        th:first-child { width: 36%; }
       }
     </style>
   </head>
   <body>
+    <a class="skip" href="#main">Skip to content</a>
     <div class="wrap">
-      <main>
-        <section aria-label="About">
-          <p class="edition"><img src="images/chip-mark.png" width="64" height="64" alt="" /><span>SBX / bare metal</span></p>
-          <h1>sandbox- <em>kernel</em></h1>
-          <p class="tag">A small bare-metal kernel for your own OS</p>
-          <p class="chips">Runs on the Raspberry Pi Zero W today</p>
-          <p class="small">Write your operating system as one ordinary program. The kernel handles the hardware and gets you back to a recovery console if your OS fails. MIT license.</p>
-          <div class="swatches" aria-hidden="true"><i style="background:#f8f3e8"></i><i style="background:#f2cf55"></i><i style="background:#4ccbd8"></i><i style="background:#d77cf0"></i><i style="background:#ff7a6a"></i><i style="background:#7b8cff"></i></div>
+      <nav aria-label="Main navigation">
+        <a href="#start">Get started</a>
+        <a href="#status">Features &amp; status</a>
+        <a href="#recovery">Recovery</a>
+        <a href="#boot">Boot screens</a>
+        <a href="#built">Built on it</a>
+      </nav>
+      <main id="main" tabindex="-1">
+        <section class="hero" aria-labelledby="title">
+          <div>
+            <p class="edition"><img src="images/chip-mark.png" width="64" height="64" alt="" /> SBX / bare metal</p>
+            <h1 id="title">sandbox-<span>kernel</span></h1>
+            <p class="lead">A small bare-metal kernel for your own operating system.</p>
+            <p>Write your OS in C as a user-mode ARM ELF program, or in JavaScript through the experimental <code>JS.ELF</code> runtime. The kernel owns the hardware and gives your program system calls for graphics, files, input, and time.</p>
+            <p class="small">MIT license. M0 is board-qualified on Raspberry Pi Zero W v1.1 (BCM2835, ARM1176). M1 is in progress.</p>
+            <div class="actions"><a class="button" href="#start">Build your first OS</a><a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md">Read the OS author's guide</a></div>
+          </div>
+          <aside class="panel" aria-labelledby="need">
+            <h2 id="need">What you need</h2>
+            <ul>
+              <li><strong>Raspberry Pi Zero W v1.1</strong> — the documented target board.</li>
+              <li><strong>microSD card and a card reader</strong> for the first boot image.</li>
+              <li><strong>USB data cable</strong> from your computer to the Pi's USB data port.</li>
+              <li><strong>A development computer</strong> with Make, Python 3, and an Arm bare-metal toolchain. The default build uses Arm GNU 15.3.rel2.</li>
+            </ul>
+            <p class="small">HDMI is optional for seeing your graphics; USB carries commands and logs. The e-ink renders below show the kernel's status panel.</p>
+            <a href="https://github.com/lewismoten/sandbox-kernel">Get the source on GitHub</a>
+          </aside>
         </section>
 
-        <section class="panel" aria-label="Details">
-          <div role="tablist" aria-label="Sections">
-            <button role="tab" id="tab-why" aria-controls="p-why" aria-selected="true">Why</button>
-            <button role="tab" id="tab-boot" aria-controls="p-boot" aria-selected="false" tabindex="-1">Boot</button>
-            <button role="tab" id="tab-start" aria-controls="p-start" aria-selected="false" tabindex="-1">Start your OS</button>
-            <button role="tab" id="tab-status" aria-controls="p-status" aria-selected="false" tabindex="-1">Status</button>
-            <button role="tab" id="tab-built" aria-controls="p-built" aria-selected="false" tabindex="-1">Built on it</button>
-          </div>
+        <section class="section" id="start" aria-labelledby="start-title">
+          <h2 id="start-title">Start your own OS</h2>
+          <p>Build a card image once, then send programs and kernel updates over USB. Run these commands from the repository root; replace <code>PORT</code> with your Pi's serial device (for example, <code>/dev/cu.usbmodemXXXX</code> on macOS).</p>
+          <ol class="steps">
+            <li>
+              <h3>Build the card image</h3>
+              <p>Install the toolchain, then run:</p>
+              <pre><code>make
+make boot</code></pre>
+              <p><code>make boot</code> fetches and verifies pinned firmware, creates <code>build/boot/</code>, and assembles <code>build/sandbox-m0.img</code>. It does not write to a device.</p>
+              <p>Write the complete image to your microSD card with a card-image tool. This erases the selected card: check the destination and back up its files first.</p>
+              <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/m0.md#m0-implementation-and-board-handoff">Card image and build details</a> · <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#5-files-on-the-card">Card layout</a>
+            </li>
+            <li>
+              <h3>Boot and connect</h3>
+              <p>Insert the card and connect the Pi's USB data port to your computer. Check the kernel and read its log:</p>
+              <pre><code>python3 scripts/usb_kernel.py PORT info
+python3 scripts/usb_kernel.py PORT tail</code></pre>
+              <p>The kernel waits 10 seconds before autostart. It tries the program named in <code>/OS/AUTORUN.TXT</code>, then <code>GMOS.ELF</code>, then <code>DIAG.ELF</code>. With no runnable OS, the USB recovery console stays available.</p>
+              <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#2-boot-step-by-step">First boot, step by step</a>
+            </li>
+            <li>
+              <h3>Choose C or JavaScript</h3>
+              <p><strong>C:</strong> build a static ARMv6, soft-float ELF with the SDK. Start from the <a href="https://github.com/lewismoten/sandbox-kernel/tree/develop/programs/diag">diagnostics program</a> and follow the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#3-writing-a-program">ELF rules and heartbeat requirements</a>.</p>
+              <p><strong>JavaScript (experimental):</strong> build <code>JS.ELF</code> with <code>make js</code> in <a href="https://github.com/lewismoten/gamemaker-os">gamemaker-os</a>. Write <code>MAIN.JS</code>, install its folder with <code>putapp</code>, and configure <code>AUTORUN.TXT</code>.</p>
+              <p>The runtime has subsets of DOM, CSS, and 2D canvas; it is not a full browser. JavaScript file access is read-only.</p>
+              <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#7-make-your-own-javascript-os">JavaScript setup and app installation</a>
+            </li>
+            <li>
+              <h3>Send your OS or a new kernel</h3>
+              <p>Stop the OS before installing files, then run your program:</p>
+              <pre><code>python3 scripts/usb_kernel.py PORT stop
+python3 scripts/usb_kernel.py PORT put MYOS.ELF
+python3 scripts/usb_kernel.py PORT run MYOS.ELF</code></pre>
+              <p>To update the kernel itself after rebuilding, send the packaged runtime:</p>
+              <pre><code>python3 scripts/usb_kernel.py PORT send build/runtime.ski</code></pre>
+              <p><code>put</code> installs an OS file; <code>send</code> starts an A/B kernel trial. The tool uses only Python 3's standard library.</p>
+              <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#6-developing-over-usb">USB commands and update readiness</a>
+            </li>
+          </ol>
+        </section>
 
-          <div role="tabpanel" id="p-why" aria-labelledby="tab-why">
-            <h2>One ordinary program</h2>
-            <p>Your OS is a single ELF program that the kernel loads from the SD card and runs in User mode. It gets what a small program expects, through a POSIX-style system-call interface:</p>
-            <ul>
-              <li><strong>Files</strong> on the FAT32 card.</li>
-              <li><strong>A framebuffer</strong> on HDMI: <code>mmap</code> it, draw, present.</li>
-              <li><strong>Input</strong> events in the Linux style.</li>
-              <li><strong>A clock</strong>: monotonic nanoseconds and <code>sleep_until</code>.</li>
-              <li><strong>Saves</strong> in a folder for each program.</li>
-            </ul>
-            <h2>The kernel owns the hardware</h2>
-            <p>The kernel owns the display, the card, USB and the e-ink panel. It checks your program before it runs, watches its heartbeat, restarts it a limited number of times, and opens a recovery console if it keeps failing. A bad OS does not leave you with a dead board. Kernel updates go to an A or B slot, try a boot, and fall back on their own.</p>
-            <h2>No C needed (experimental)</h2>
-            <p>An experimental JavaScript path exists: Game-Maker OS builds <code>JS.ELF</code>, a program that runs a web-page-like app. See the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#7-make-your-own-javascript-os">guide, section 7</a>.</p>
-            <p class="small">The first board is the Raspberry Pi Zero W v1.1 (BCM2835). Later ports to other Pi models are planned through separate board backends; none exist yet.</p>
-          </div>
+        <section class="section" id="status" aria-labelledby="status-title">
+          <h2 id="status-title">Features &amp; status</h2>
+          <p>M0 is board-qualified; M1 is still in progress. “Available” below means documented on <code>develop</code>, not that every feature has completed board qualification. Check your program's startup ABI version before using newer calls.</p>
+          <table>
+            <caption>Documented capabilities. See the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#4-what-is-supported-by-abi-version">full ABI table (1.0–1.8)</a> for call numbers and limits.</caption>
+            <thead><tr><th scope="col">Feature</th><th scope="col">Availability and limits</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">OS isolation &amp; recovery</th><td><span class="state">Available</span>User-mode ELF loading, heartbeat checks, bounded restarts, diagnostics fallback, and a USB recovery console.</td></tr>
+              <tr><th scope="row">A/B kernel updates</th><td><span class="state">Board-qualified in M0</span>Verified USB transfer, trial boot, confirmation, and automatic fallback to a verified confirmed kernel.</td></tr>
+              <tr><th scope="row">HDMI graphics</th><td><span class="state">Available · ABI 1.0 / 1.2</span>Mapped framebuffer starts at 640×480×32. Mode and palette calls add RGB565 and indexed color; 960×540×16 fits, 1920×1080 does not.</td></tr>
+              <tr><th scope="row">Files, cache &amp; saves</th><td><span class="state">Available · ABI 1.0–1.7</span>Read-only FAT32 assets, seek, metadata, and long-name reads. Bounded writes only in cache and save folders; use <code>fsync</code> to commit.</td></tr>
+              <tr><th scope="row">Input &amp; time</th><td><span class="state">Available · ABI 1.0 / 1.1</span>Linux-style input events from synthetic USB commands; monotonic clock and <code>sleep_until</code>. The documented input source is synthetic only; real USB keyboards and gamepads are not yet supported.</td></tr>
+              <tr><th scope="row">App arena</th><td><span class="state">Available · ABI 1.6</span>One optional 2,195,456-byte block per run; no free or resize.</td></tr>
+              <tr><th scope="row">E-ink status</th><td><span class="state">Board-qualified in M0</span>Kernel-owned starting and status screens show uptime, USB state, and the last error.</td></tr>
+              <tr><th scope="row">Audio API</th><td><span class="state">Available · ABI 1.8 · silent</span><code>/dev/audio</code> queues stereo 16-bit PCM at 48 kHz. Only a null backend drains it; no sound reaches HDMI or a speaker.</td></tr>
+              <tr><th scope="row">Audible output &amp; HDMI-CEC</th><td><span class="state coming">Coming · in review</span>HDMI audio and HDMI-CEC input remain future work. The PCM host core is for qualification and is not linked into the kernel.</td></tr>
+              <tr><th scope="row">Other work in review</th><td><span class="state coming">Coming · not available</span>An OS-facing e-ink API, two-way serial, and a Hello World example are in review.</td></tr>
+              <tr><th scope="row">Wireless &amp; more boards</th><td><span class="state coming">Planned · not available</span>No Wi-Fi or Bluetooth driver runs. Other Raspberry Pi board backends are planned.</td></tr>
+            </tbody>
+          </table>
+          <p class="small">Sources: <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md">OS author's guide</a>, <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/milestones.md">milestones and acceptance tests</a>, and <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/audio-host-core.md">audio host core</a>.</p>
+        </section>
 
-          <div role="tabpanel" id="p-boot" aria-labelledby="tab-boot" hidden>
-            <h2>The kernel's own screens</h2>
-            <p class="small">Real renders from the kernel's host tests, drawn by the same code the board runs. The pictures are shown pixel for pixel.</p>
-            <div class="shots">
-              <figure><img src="images/boot/hdmi-boot.png" width="960" height="540" alt="HDMI boot panel: a dark panel with the chip mark and the name sandbox-kernel over a test card of color bars and a gray ramp" /><figcaption>HDMI boot panel over color bars</figcaption></figure>
-              <figure><img src="images/boot/hdmi-recovery.png" width="960" height="540" alt="HDMI recovery console: a header with the chip mark, then lines of status text" /><figcaption>HDMI recovery console</figcaption></figure>
-              <figure><img src="images/boot/eink-starting.png" width="750" height="366" alt="E-ink starting screen, black and white, with the chip mark" /><figcaption>E-ink: starting</figcaption></figure>
-              <figure><img src="images/boot/eink-status.png" width="750" height="366" alt="E-ink status screen, black and white, listing the USB and SD card state" /><figcaption>E-ink: status</figcaption></figure>
-            </div>
-          </div>
+        <section class="section" id="recovery" aria-labelledby="recovery-title">
+          <h2 id="recovery-title">Updates, recovery, and limits</h2>
+          <p><strong>Kernel updates use A/B slots.</strong> The inactive slot is verified before a trial boot. The runtime confirms a matching trial after 30 seconds of health checks; a failed or unconfirmed trial falls back on the next boot. This applies to kernel updates, not OS files installed with <code>put</code>.</p>
+          <p><strong>Your OS must report health:</strong> once within 10 seconds of starting, then at least every 2 seconds. One fault permits a restart; a second within 60 seconds ends the program. An autostarted OS falls back to <code>DIAG.ELF</code>; a program started with USB <code>run</code> returns to recovery.</p>
+          <p><strong>Recovery is the kernel with no OS running.</strong> USB commands stay available so you can <code>stop</code>, <code>put</code>, and <code>run</code> a replacement. The first 10 seconds of boot also give you a window to replace a bad program before autostart.</p>
+          <p class="note"><strong>Keep the card reader handy.</strong> A/B recovery requires a verified fallback. If neither kernel slot validates, USB rescue in the selector is not implemented: restore the generated image with a card reader. CRC and SHA-256 detect corruption; they do not authenticate code. Install only builds you trust.</p>
+          <p class="small">OS files are limited to 1 MiB, with an 8 MiB loaded-image quota including <code>.bss</code>. General SD writing is unsupported. Read the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#8-limits-and-gotchas">program limits</a> and <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/m0.md#serialized-image-and-control-formats">update and card-reader recovery policy</a>.</p>
+        </section>
 
-          <div role="tabpanel" id="p-start" aria-labelledby="tab-start" hidden>
-            <h2>Read the guide first</h2>
-            <p>The <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md">OS author's guide</a> covers boot step by step, the rules for a program, the card layout, USB development and the limits. A Hello World example is in review and not on develop yet, so it is not linked.</p>
-            <h2>ABI versions</h2>
-            <p class="small">Minors only add; no call changes. Full table: <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#4-what-is-supported-by-abi-version">section 4 of the guide</a>.</p>
-            <div class="tablewrap" tabindex="0" role="region" aria-label="Table">
-              <table>
-                <thead><tr><th>ABI</th><th>Added</th></tr></thead>
-                <tbody>
-                  <tr><td>1.0</td><td>open, read, write, close, ioctl, mmap, exit, getdents, health; <code>/dev/log</code>, <code>/dev/fb0</code>, <code>/dev/input/event0</code></td></tr>
-                  <tr><td>1.1</td><td>Clock and <code>sleep_until</code></td></tr>
-                  <tr><td>1.2</td><td>Framebuffer modes and an 8-bit palette</td></tr>
-                  <tr><td>1.3</td><td><code>seek</code></td></tr>
-                  <tr><td>1.4</td><td>File metadata; bounded cache writes</td></tr>
-                  <tr><td>1.5</td><td>Long file names</td></tr>
-                  <tr><td>1.6</td><td>Opt-in app arena (about 2 MB)</td></tr>
-                  <tr><td>1.7</td><td>Save folders for each program</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <h2>Develop over USB</h2>
-            <p>Plug the Pi's USB data port into your computer. <code>scripts/usb_kernel.py</code> needs only Python 3.</p>
-<pre>scripts/usb_kernel.py PORT stop
-scripts/usb_kernel.py PORT put MYOS.ELF
-scripts/usb_kernel.py PORT run MYOS.ELF</pre>
-            <p class="small">Also <code>info</code>, <code>tail</code>, <code>putapp</code>, <code>send</code>. Install is refused while an OS runs, so <code>stop</code> first. See <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#6-developing-over-usb">section 6</a>.</p>
+        <section class="section" id="boot" aria-labelledby="boot-title">
+          <h2 id="boot-title">The kernel's own screens</h2>
+          <p>Host-test renders made by the same drawing code the board runs, scaled here to fit. These show kernel boot and recovery screens, not an OS desktop.</p>
+          <div class="shots">
+            <figure><img src="images/boot/hdmi-boot.png" width="960" height="540" loading="lazy" decoding="async" alt="HDMI boot screen with the sandbox-kernel chip mark over color bars and a gray ramp" /><figcaption>HDMI boot panel</figcaption></figure>
+            <figure><img src="images/boot/hdmi-recovery.png" width="960" height="540" loading="lazy" decoding="async" alt="HDMI recovery console with the kernel header and a box of status log lines" /><figcaption>HDMI recovery console</figcaption></figure>
+            <figure><img src="images/boot/eink-starting.png" width="750" height="366" loading="lazy" decoding="async" alt="Black and white e-ink starting screen with the kernel chip mark" /><figcaption>E-ink: starting</figcaption></figure>
+            <figure><img src="images/boot/eink-status.png" width="750" height="366" loading="lazy" decoding="async" alt="E-ink status screen showing uptime, USB state, and the last error" /><figcaption>E-ink: status</figcaption></figure>
           </div>
+        </section>
 
-          <div role="tabpanel" id="p-status" aria-labelledby="tab-status" hidden>
-            <h2>Where it stands</h2>
-            <p class="small">Checked against the develop branch. M0 is qualified on the Zero W v1.1; M1 is in progress.</p>
-            <div class="tablewrap" tabindex="0" role="region" aria-label="Table">
-              <table>
-                <thead><tr><th>Feature</th><th>State</th></tr></thead>
-                <tbody>
-                  <tr><td>A/B kernel updates</td><td class="st ok">On develop</td></tr>
-                  <tr><td>Recovery console</td><td class="st ok">On develop</td></tr>
-                  <tr><td>Saves (ABI 1.7)</td><td class="st ok">On develop</td></tr>
-                  <tr><td>E-ink status screen</td><td class="st ok">On develop</td></tr>
-                  <tr><td>OTG detection</td><td class="st ok">On develop (role read at boot)</td></tr>
-                  <tr><td>HDMI audio</td><td class="st mid">In review (a host-only core is merged, not linked into the kernel)</td></tr>
-                  <tr><td>E-ink API for OSes</td><td class="st mid">In review</td></tr>
-                  <tr><td>Two-way serial</td><td class="st mid">In review</td></tr>
-                  <tr><td>HDMI-CEC input</td><td class="st mid">In review</td></tr>
-                  <tr><td>Examples (Hello World)</td><td class="st mid">In review</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <p class="note">Not yet: a real USB keyboard or gamepad (input is synthetic over USB for now), Wi-Fi and Bluetooth, and boards other than the Zero W.</p>
-          </div>
-
-          <div role="tabpanel" id="p-built" aria-labelledby="tab-built" hidden>
-            <h2>Game-Maker OS</h2>
-            <p>The first OS built on the kernel is <a href="https://github.com/lewismoten/gamemaker-os">Game-Maker OS</a>, a separate project. Its own site is planned at <a href="https://lewismoten.github.io/gamemaker-os/">lewismoten.github.io/gamemaker-os</a>; the link starts working once Pages is enabled there.</p>
-            <h2>The Pocket</h2>
-            <p>The <a href="https://lewismoten.github.io/gamemaker-pocket/">Game-Maker Pocket</a> is a sister project: a small ESP32 touch-screen player with its own browser flasher. It does not run this kernel.</p>
-            <h2>Yours</h2>
-            <p>The kernel is generic on purpose. Your OS uses the same interface Game-Maker OS does.</p>
-          </div>
+        <section class="section" id="built" aria-labelledby="built-title">
+          <h2 id="built-title">Built on it</h2>
+          <h3><a href="https://github.com/lewismoten/gamemaker-os">Game-Maker OS</a></h3>
+          <p>The first OS written for sandbox-kernel lives in a separate repository. It also builds the experimental <code>JS.ELF</code> runtime for JavaScript apps. Your OS uses the same kernel interface; it does not need to be a game system.</p>
+          <p>Start with the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md">OS author's guide</a> and the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/sdk/README.md">C SDK</a>, or follow the <a href="https://github.com/lewismoten/sandbox-kernel/blob/develop/docs/os-authors.md#7-make-your-own-javascript-os">JavaScript path</a>.</p>
         </section>
       </main>
 
@@ -205,31 +222,5 @@ scripts/usb_kernel.py PORT run MYOS.ELF</pre>
         <p>Art made with ChatGPT (GPT-6.1 Sol, OpenAI) from Lewis Moten's directions. Headings use Silkscreen by The Silkscreen Project Authors, <a class="tgt" href="fonts/OFL-Silkscreen.txt">SIL Open Font License 1.1</a>. The boot screens are renders from the kernel's host tests.</p>
       </footer>
     </div>
-    <script>
-      (function () {
-        var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-        function show(t, focus) {
-          tabs.forEach(function (x) {
-            var on = x === t;
-            x.setAttribute('aria-selected', on ? 'true' : 'false');
-            x.tabIndex = on ? 0 : -1;
-            document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
-          });
-          if (focus) t.focus();
-        }
-        tabs.forEach(function (t, i) {
-          t.addEventListener('click', function () { show(t); try { history.replaceState(null, '', '#' + t.id.slice(4)); } catch (e) {} });
-          t.addEventListener('keydown', function (e) {
-            var j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
-            if (j < 0) return;
-            e.preventDefault();
-            show(tabs[(j + tabs.length) % tabs.length], true);
-          });
-        });
-        function fromHash() { var h = location.hash.slice(1), t = h && document.getElementById('tab-' + h); if (t) show(t); }
-        window.addEventListener('hashchange', fromHash);
-        fromHash();
-      })();
-    </script>
   </body>
 </html>
