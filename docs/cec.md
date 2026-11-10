@@ -11,9 +11,17 @@ The transport must retain that ID with the original transfer and pass it to
 `cec_sm_tx_done`; it must not fetch the current ID when a delayed callback arrives.
 Each handoff, including a retry of identical bytes, gets a new ID. Only a completion
 matching the current in-flight transfer can change state. A timeout retires that ID
-as a NACK, so a delayed success or failure cannot clear a subsequent report or retry,
+as a transport error, so a delayed success or failure cannot clear a subsequent report or retry,
 change the queue, or allow another handoff. Duplicate completions are also ignored.
 IDs never wrap: after UINT64_MAX, new handoffs stop until reinitialization.
+
+The transport reports `CEC_SM_TX_ACK`, `CEC_SM_TX_NACK` (an explicit negative
+acknowledgement), or `CEC_SM_TX_ERROR` (an uncertain outcome). Only an explicit
+poll NACK claims a logical address. A poll timeout or transport error retries the
+same candidate up to `CEC_SM_POLL_RETRIES` (two retries, three attempts total).
+Exhausting that budget leaves the device unregistered and silent until
+reinitialization. An ACK moves to the next candidate with a fresh retry budget.
+Non-poll frames retain their single retry on NACK, timeout or transport error.
 
 Before `cec_sm_init` is called again on the same instance, the transport must cancel
 or drain all earlier transfers and callbacks. Calls into an instance must be serialized.
@@ -22,10 +30,11 @@ or serialization of timed-out hardware sends before starting another hardware se
 The CEC core remains unlinked; these internal C interfaces do not change the kernel/SDK
 ABI, its version, syscall records or wire-frame bytes.
 
-The regression in `tests/cec_core.c` reproduces C1: poll at 0 ms, timeout at 1000 ms,
-report handoff, then delayed original poll failure. It checks that the entire state
-is unchanged and another send is blocked until the report's matching completion.
-It also checks stale success, duplicate completion, and a retry with identical bytes.
+The regressions in `tests/cec_core.c` cover a poll at 0 ms, timeout at 1000 ms,
+retry handoff, then delayed original poll ACK/NACK. They check that the entire state
+is unchanged, no address is claimed, and another send is blocked until the retry's
+matching completion. They also cover explicit NACK claims, bounded timeout/error
+retries, duplicate completion, and retries with identical bytes and fresh IDs.
 
 ## Where the values come from
 
@@ -53,6 +62,7 @@ F1-F4 blue/red/green/yellow 0x71-0x74.
 - Replying Feature Abort (reason 0) to Give Device Vendor ID rather than a vendor id; and
   Report Power Status/CEC Version being worth answering (kept because many TVs ask).
 - Broadcast ACK inversion, one-shot polling and 1-byte frames on the VC4 block (hardware slice).
-- The one retry on a NACK, the 1 s send timeout and the 14-character OSD limit.
+- The one retry of non-poll frames, two retries of uncertain polls, the 1 s send
+  timeout and the 14-character OSD limit (local policies, untested on hardware).
 - Where the key mapping puts Root menu (KEY_HOME), Setup menu (KEY_MENU), channel keys and
   colors (policy, not spec).
