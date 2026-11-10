@@ -13,7 +13,7 @@ void boot_note(const char *s) {
  log_line(s);
  if(note_count<24) {unsigned i=0;for(;s[i]&&i<71;i++)notes[note_count][i]=s[i];notes[note_count++][i]=0;}
 }
-void boot_summary(void) {for(unsigned i=0;i<note_count;i++) {char t[80],*p=t;append(&p,"BOOT ");append(&p,notes[i]);log_line(t);}}
+void boot_summary(void) {for(unsigned i=0;i<note_count;i++) {char t[80],*p=t;append(&p,"BOOT ");append(&p,notes[i]);log_line(t);}cec_hw_report();}
 void asset_probe(void) {
  char line[80],*p=line;
  int r=asset_mount();

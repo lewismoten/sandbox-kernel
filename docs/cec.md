@@ -1,10 +1,78 @@
-# HDMI-CEC cores (host-only slices)
+# HDMI-CEC
 
-Current status: unlinked and hardware-untested; no CEC input reaches event0.
+Current status: linked into the runtime image (device and host roles) and host-tested against a
+fake register file; **not yet run on a TV**. The first live session is
+`.for-lewis/research/pi/2026-11-10-cec-tv-test.md` (the maintainer's notes, outside this repository).
 
-`drivers/cec_msg.c`, `cec_keys.c` and `cec_sm.c` (headers in `include/`) are pure C: no
-registers, no clocks, not in the kernel image yet. `tests/test_cec_core.py` builds them on the
-host and runs `tests/cec_core.c` (set `CEC_SANITIZE=1` to opt into ASan/UBSan). Hardware and the input glue come later.
+## Layers
+
+| File | Job |
+| --- | --- |
+| `drivers/cec_msg.c`, `cec_keys.c`, `cec_sm.c` | frames, UI command to key with repeat and a 550 ms release, address claim and replies (pure) |
+| `drivers/cec_regs.c`, `include/cec_regs.h` | the HDMI core's CEC register offsets and fields; divider and bit-timing words for an HSM clock |
+| `drivers/cec_drv.c` | transport over a read/write pair: programs the block, sends the state machine's frames, handles a received frame or a finished send, cancels a stuck send, logs |
+| `drivers/cec_edid.c` | the physical address from the display's HDMI vendor block in its EDID |
+| `drivers/cec_log.c` | the bounded session log (2 KiB, oldest whole lines dropped) |
+| `drivers/cec_hw.c` | the real registers (HDMI core at 0x20902000), HSM clock from the clock manager, the EDID from the firmware mailbox, key events into `/dev/input/event0`, `CEC.TXT` |
+
+`tests/test_cec_core.py` and `tests/test_cec_drv.py` build them on the host (set `CEC_SANITIZE=1`
+for the first to opt into ASan/UBSan). The second drives `cec_drv.c` with a fake chip: divider 4092
+for the 163.68 MHz HSM clock, the threshold words, a claim after a poll that nobody answers, the
+announcement, received keys and replies, a stuck send, and the log bound.
+
+## What happens on the board
+
+1. Boot: `config.txt` carries `hdmi_ignore_cec=1` and `hdmi_ignore_cec_init=1`
+   (`scripts/assemble_boot.py`). The firmware's own CEC task otherwise claims a playback address,
+   answers the TV with the name "raspberry" and sends its own Active Source, so two devices would
+   fight over one address. `hdmi_ignore_cec=1` is the switch that hands the bus over (the
+   firmware then behaves as if the TV had no CEC); `hdmi_ignore_cec_init=1` is kept as well so no
+   start-up Active Source can come from the firmware even if a future firmware version honors only
+   that one. Whether the firmware really leaves the registers alone is confirmed only on a TV.
+2. After HDMI is up (`cec_hw_init`, next to `hdmi_audio_init`): the divider is `hsm / 40000`
+   (4092 at the 163.68 MHz measured on 2026-11-09), the thresholds are the microsecond values
+   divided by the 25 us tick, the address is 15 (unregistered).
+3. The physical address comes from the EDID (mailbox tag 0x00030020, CEA extension, HDMI vendor
+   block). If the EDID cannot be read the kernel assumes 1.0.0.0 and says so in the log.
+4. A poll to address 4 (then 8, then 11): an explicit NACK means free, so it is claimed (written
+   to the register's address field, so the block acknowledges frames sent to it). Then, in
+   order: Report Physical Address (broadcast), Set OSD Name "Game Maker" (broadcast), Image View On to
+   the TV, Active Source. These happen once per boot, at claim time, which is a few seconds
+   before the OS autostarts; the TV switches its input to us.
+5. Replies: Give OSD Name, Give Physical Address, Give Device Power Status (on), Get CEC Version
+   (1.4), Menu Request (Menu Status: deactivated, since there is no TV-driven menu), Request
+   Active Source and Set Stream Path once active. Give Device Vendor ID and anything else directed
+   at us gets Feature Abort "unrecognized opcode"; no vendor ID is claimed.
+6. Keys: User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
+   keyboard and the synthetic device use): Select and Enter are Enter, arrows are arrows, Exit is
+   Esc, 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
+   is Menu. If the USB keyboard left, `input_add()` brings the device back (host role).
+7. Broadcast frames are acknowledged by silence, so the chip's "good" flag says nothing about
+   them: the driver never retries a broadcast. (Linux's handling is the same shape; whether this
+   chip reports the inversion is for the TV session to show: the log prints `ack` or `nack` for every frame.)
+
+## The log
+
+`cec_log` keeps the session in RAM and `cec_hw` writes it to `/OS/SAVES/KERNEL/CEC.TXT` (the saves
+area, so GMOS and the card tools see a normal file): first write 8 s after boot, then at most one
+every 30 s and 20 per boot, and never while a USB install is running. It records the init values
+(physical address, HSM clock, divider), every poll and frame sent with `ack` or `nack`, every
+received frame that is not a held key, each new key press (`UI 01 key 103`, or `UI 66 UNMAPPED`
+for a code the map ignores), send timeouts and the claim result. Each line starts with
+milliseconds since boot.
+
+Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lines (the kernel
+replays them to a new reader about a second after it connects), so a session can be read afterward
+without pulling the card.
+
+## Limits and things the TV session decides
+
+- The chip is polled from the main loop, not by interrupt. A long SD write or USB install can delay
+  a poll; the received frame stays in the block until read. If frames are lost, an interrupt is the next step.
+- `CPU_STATUS` bit 6 is read raw (unmasked): if the block only latches it through the mask, nothing
+  is seen and the log shows the claim poll timing out. The log line "send timed out" is the sign.
+- One-byte polls on this block, the HSM clock (assumed 163.68 MHz only if the clock manager is unreadable)
+  and the EDID status word are all unconfirmed on silicon.
 
 ## Transfer completion guarantee
 

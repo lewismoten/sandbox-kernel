@@ -56,6 +56,9 @@ void log_line(const char *s);
 void cpu_speed(void); /* the ARM clock to its maximum (firmware mailbox), branch prediction on; logs both */
 void boot_note(const char *s); /* log now and again for each new USB reader */
 void boot_summary(void);
+void cec_hw_init(void); /* HDMI-CEC: after the firmware has HDMI up (drivers/cec_hw.c) */
+void cec_hw_task(void);
+void cec_hw_report(void); /* newest CEC log lines to the USB log, for a late reader */
 void asset_probe(void);
 extern const char *last_error;
 void error(const char *s);

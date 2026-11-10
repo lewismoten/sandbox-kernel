@@ -39,6 +39,15 @@ partial refresh, a USB serial link to a Mac, and kernel updates over that link. 
 for facts only. Its code is not included or translated.
 Circle, by R. Stange and contributors, is GPL-3.0-or-later and is not a dependency.
 
+HDMI-CEC hardware layer (`include/cec_regs.h`, `drivers/cec_drv.c`, `drivers/cec_hw.c`): the BCM2835 HDMI
+core's CEC register offsets, bit fields, the 40 kHz bit-clock rule and the bit-timing thresholds in microseconds, and the
+send and receive sequences were read as facts from the Linux kernel's public `drivers/gpu/drm/vc4/vc4_hdmi.c`,
+`vc4_hdmi_regs.h` and `vc4_regs.h` (raspberrypi/linux, branch rpi-6.6.y, GPL-2.0, by Broadcom and the
+Raspberry Pi and Linux contributors, copyright held by them) and the opcode numbers from `include/uapi/linux/cec.h`.
+No code was copied or translated; the registers are described again in this repository's own words and code. The
+`get EDID block` mailbox tag number comes from the Raspberry Pi firmware's public mailbox property interface.
+Linux is not a dependency and no Linux code ships.
+
 Credit the independent sources when their code is actually imported:
 
 - Ha Thach and TinyUSB contributors: MIT USB stack.
