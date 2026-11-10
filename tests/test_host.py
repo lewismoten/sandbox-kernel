@@ -33,6 +33,11 @@ class SenderTests(unittest.TestCase):
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(image.pack(b'X'*64,'sender'))
             with self.assertRaisesRegex(ValueError,'pending update'): usb_kernel.send_kernel(p,f)
         self.assertFalse(any(s.startswith(b'PUT2') for s in p.sent))
+    def test_pending_must_be_a_single_zero(self):
+        for t in ('pending=2','pending=1','pending=0 pending=0','pending=','pending=banana','pending=-1','pending=0x0','pending=\u0661'):
+            self._bad('INFO 2 t confirmed=1 '+t+' updates=ready os=none features=kernel,no-os')
+        for t in ('pending=0','pending=00',''):
+            usb_kernel.check_updates(usb_kernel.info_fields('INFO 2 t confirmed=1 '+t+' updates=ready os=none features=kernel,no-os'))
     def test_unrelated_fields_do_not_block_legacy(self):
         for t in ('xupdates=locked features=kernel,no-os','note=updates=locked features=kernel,no-os'):
             usb_kernel.check_updates(usb_kernel.info_fields('INFO 2 t '+t))

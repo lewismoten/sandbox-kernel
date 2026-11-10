@@ -73,8 +73,11 @@ def info_fields(info):
 def check_updates(f):
     """Fail closed: exactly one updates= field saying ready, or (legacy kernels, no updates= field)
     exactly one features=kernel,no-os. features= is legacy; features=locked contradicts ready."""
-    for k in ('updates','features'):
+    for k in ('updates','features','pending'):
         if isinstance(f.get(k),list): raise ValueError(f'Device INFO repeats {k}=; refusing to update')
+    if 'pending' in f:  # a kernel that reports pending= must say 0 (decimal) before an update starts
+        if not f['pending'].isascii() or not f['pending'].isdigit(): raise ValueError('Device INFO has a malformed pending=; refusing to update')
+        if int(f['pending'])!=0: raise ValueError('Device has a pending update; wait for confirmation')
     if 'updates' in f:
         if f['updates']=='busy': raise ValueError('Device has a pending update; wait for confirmation')
         if f['updates']!='ready' or f.get('features')=='locked': raise ValueError('Device updates locked; inspect logs')

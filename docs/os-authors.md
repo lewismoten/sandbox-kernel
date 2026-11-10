@@ -328,8 +328,9 @@ otherwise, so older `usb_kernel.py` clients keep working. New clients read `upda
 **When `PUT2` is admitted:** `INFO` was sent this session, storage is ready, `updates=ready`
 (not locked) and no update slot is pending. Otherwise `ERR not-ready`. `os=running` alone does
 not block a kernel update. `usb_kernel.py send` parses `INFO` into exact fields and refuses
-before sending if `updates=` or `features=` repeats, `updates=` is not exactly `ready`
-(including `busy`), or `features=locked` contradicts it. With no `updates=` field it accepts
+before sending if `updates=`, `features=` or `pending=` repeats, `updates=` is not exactly `ready`
+(including `busy`), `features=locked` contradicts it, or a `pending=` field is not a plain
+decimal 0. With no `updates=` field it accepts
 only the exact legacy `features=kernel,no-os`. The web page (`web/src/piRemote/protocol.ts`, in
 the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 
