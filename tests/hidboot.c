@@ -60,6 +60,29 @@ static void keymap(void) {
  assert(hidboot_linux_key(0)==0&&hidboot_linux_key(1)==0&&hidboot_linux_key(0x64)==0&&hidboot_linux_key(0xff)==0);
  for(unsigned u=4;u<=0x63;u++) assert(hidboot_linux_key((uint8_t)u)!=0);
 }
+static void aliases(void) {   /* usages 0x31 and 0x32 both map to Linux key 43 */
+ struct hidboot s;hidboot_init(&s);ngot=0;
+ uint8_t a[8]={0,0,0x31,0x32},b[8]={0,0,0x32},z[8]={0};
+ assert(hidboot_feed(&s,a,8)==0&&ngot==1&&got[0].code==43&&got[0].value==1);
+ ngot=0;assert(hidboot_feed(&s,b,8)==0&&ngot==0);   /* still held through 0x32 */
+ ngot=0;assert(hidboot_feed(&s,b,8)==0&&ngot==0);
+ assert(hidboot_feed(&s,z,8)==0&&ngot==1&&got[0].code==43&&got[0].value==0);
+ hidboot_init(&s);ngot=0;uint8_t c[8]={0,0,0x31};uint8_t d[8]={0,0,0x32};
+ hidboot_feed(&s,c,8);ngot=0;assert(hidboot_feed(&s,d,8)==0&&ngot==0);  /* substitution: key stays down */
+ assert(hidboot_release_all(&s)==0&&ngot==1&&got[0].code==43&&got[0].value==0);
+}
+static void tails(void) {   /* a valid keyboard match followed by a damaged tail inside wTotalLength */
+ static const uint8_t base[]={CFG(0),IF(0,1,1),EP(0x81,8,10)};
+ struct usbdesc_kbd k,keep={0x55,0x55,0x55,0x55,0x55};uint8_t t[32];
+ static const uint8_t tails_[3][2]={{0,0},{0,4},{9,4}};static const unsigned tl[3]={1,2,2};
+ for(int i=0;i<3;i++) {
+  unsigned n=sizeof base;memcpy(t,base,n);memcpy(t+n,tails_[i],tl[i]);n+=tl[i];t[2]=n&255;t[3]=0;
+  k=keep;assert(usbdesc_find_boot_keyboard(t,n,&k)==USBDESC_E_MALFORMED);
+  assert(memcmp(&k,&keep,sizeof k)==0);   /* out untouched on failure */
+ }
+ memcpy(t,base,sizeof base);t[2]=sizeof base;t[3]=0;
+ assert(usbdesc_find_boot_keyboard(t,sizeof base,&k)==USBDESC_OK&&k.endpoint==0x81);
+}
 static void descriptors(void) {
  struct usbdesc_kbd k;
  uint8_t *b=copy(kb_first,sizeof kb_first,1);
@@ -106,4 +129,4 @@ static void fuzz_return_codes(void) {
   int d=hidboot_diff(&s,buf,n,c);assert(d>=0?(unsigned)d<=HIDBOOT_CHANGES_MAX:n!=8);
  }
 }
-int main(void) {down_up();rollover();big_and_dups();keymap();descriptors();fuzz_return_codes();return 0;}
+int main(void) {down_up();rollover();big_and_dups();keymap();aliases();tails();descriptors();fuzz_return_codes();return 0;}

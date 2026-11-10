@@ -23,8 +23,9 @@ uint16_t hidboot_linux_key(uint8_t u) {
 }
 void hidboot_init(struct hidboot *s) {memset(s->prev,0,sizeof s->prev);}
 
-static int held(const uint8_t *r,uint8_t u) {
- for(unsigned i=2;i<HIDBOOT_REPORT;i++) if(r[i]==u) return 1;
+/* Held means some usage in the report maps to Linux key k (two usages can share one key). */
+static int held(const uint8_t *r,uint16_t k) {
+ for(unsigned i=2;i<HIDBOOT_REPORT;i++) if(r[i]>=4&&hidboot_linux_key(r[i])==k) return 1;
  return 0;
 }
 int hidboot_diff(struct hidboot *s,const uint8_t *rep,uint32_t len,struct input_change *out) {
@@ -33,8 +34,8 @@ int hidboot_diff(struct hidboot *s,const uint8_t *rep,uint32_t len,struct input_
  int n=0;
  for(unsigned i=2;i<HIDBOOT_REPORT;i++) {                            /* releases */
   uint8_t u=s->prev[i];uint16_t k;
-  if(u<4||held(rep,u)||!(k=hidboot_linux_key(u))) continue;
-  int dup=0;for(unsigned j=2;j<i;j++) if(s->prev[j]==u) dup=1;
+  if(u<4||!(k=hidboot_linux_key(u))||held(rep,k)) continue;
+  int dup=0;for(unsigned j=2;j<i;j++) if(s->prev[j]>=4&&hidboot_linux_key(s->prev[j])==k) dup=1;
   if(dup) continue;
   out[n].type=EV_KEY;out[n].code=k;out[n].value=0;n++;
  }
@@ -48,8 +49,8 @@ int hidboot_diff(struct hidboot *s,const uint8_t *rep,uint32_t len,struct input_
  }
  for(unsigned i=2;i<HIDBOOT_REPORT;i++) {                            /* presses */
   uint8_t u=rep[i];uint16_t k;
-  if(u<4||held(s->prev,u)||!(k=hidboot_linux_key(u))) continue;
-  int dup=0;for(unsigned j=2;j<i;j++) if(rep[j]==u) dup=1;
+  if(u<4||!(k=hidboot_linux_key(u))||held(s->prev,k)) continue;
+  int dup=0;for(unsigned j=2;j<i;j++) if(rep[j]>=4&&hidboot_linux_key(rep[j])==k) dup=1;
   if(dup) continue;
   out[n].type=EV_KEY;out[n].code=k;out[n].value=1;n++;
  }
