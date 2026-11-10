@@ -1,24 +1,96 @@
-# USB host keyboard: fixed host-role build
+# USB keyboard mode with an installed host companion
 
-Current status: `make USB_ROLE=host all` links TinyUSB HID host and the keyboard
-input glue described in slice 2 below. It is **hardware-untested**. The default
-`USB_ROLE=device` is the Mac CDC link. There is no automatic role switching, hub
-support or CDC in a host image. Host images run only as consumed trials and
-never confirm; `make boot` refuses them.
+The normal kernel provides the Mac USB link. A separate `USB_ROLE=host` kernel
+can stay installed in the idle A/B slot as a **host companion**. On each power-on,
+the normal kernel samples the OTG adapter's ID pin. Grounded ID and no enumerated
+USB device link for 500 ms select the companion for that boot. No confirmed slot,
+trial attempt or boot-control record is changed by this handoff. Without the
+adapter, the next power-on runs the normal kernel and its Mac link again.
 
-## Historical device-role ID-detection plan
+This automatic handoff and the host stack still need hardware qualification.
+Connect the adapter **before powering on**. Plugging it into an already running
+kernel does not select keyboard mode: ID is sampled only at boot. Unplugging a
+keyboard releases its keys, but returning to the Mac link requires powering off,
+removing the OTG adapter, and powering on with the normal Mac data cable.
 
-The following ID-window notes describe `drivers/usb.c` in the device build;
-they do not describe `drivers/usb_host.c` or select the build role.
+## Install once from a Mac
 
-Slice 1 (done): read the OTG ID pin once at boot, latch the result, and show
-`USB: OTG (KEYBOARD NEXT)` when that latched ID was grounded and no Mac has enumerated for
-500 ms. The role intent is not re-sampled (hot-plug is not implemented yet; slice 2). The
-kernel does not start host mode in this slice.
+1. Connect the Pi to the Mac with its normal USB data cable, without the OTG
+   adapter. Run these commands from the repository folder. Replace
+   `/dev/cu.usbmodemXXXX` with the Pi's actual port (`ls /dev/cu.usbmodem*`).
+2. Update the normal device kernel first, then let its 30-second trial confirm:
 
-## Trigger (Lewis's choice)
-Planned: host mode only when ID is grounded (OTG adapter) and no Mac data link; today the
-kernel only reports that state. Otherwise the gadget stays as is. `core/usbrole.c` holds the debounced decision (tests/usbrole.c).
+   ```sh
+   make USB_ROLE=device all
+   python3 scripts/usb_kernel.py /dev/cu.usbmodemXXXX send build/runtime.ski
+   # Reconnect after the reboot; wait at least 30 seconds.
+   python3 scripts/usb_kernel.py /dev/cu.usbmodemXXXX info
+   ```
+
+   INFO must show `pending=0`, `updates=ready`, and `host_companion=0`.
+   If a companion is already installed, `host_companion` may be nonzero.
+3. Build and install the keyboard kernel:
+
+   ```sh
+   make USB_ROLE=host all
+   python3 scripts/usb_kernel.py /dev/cu.usbmodemXXXX install-host build/runtime.ski
+   python3 scripts/usb_kernel.py /dev/cu.usbmodemXXXX info
+   ```
+
+   Wait for `OK host companion installed`. INFO shows a nonzero
+   `host_companion` generation and still shows `pending=0`. Installation does
+   not reboot or consume a trial. If the final reply is lost, reconnect and
+   inspect INFO before deciding whether to resend.
+4. Power off. Disconnect the Mac data cable, attach the OTG adapter and keyboard
+   receiver, and power the Pi through its power connector. The normal kernel
+   starts first, then hands off to the keyboard kernel. Look for `HOST: keyboard`
+   on e-ink and `keyboard ready` on HDMI.
+5. To use the Mac link again, power off, remove the adapter, reconnect the normal
+   data cable, and power on. Repeat step 4 whenever keyboard mode is wanted;
+   the companion remains installed across power cycles.
+
+`USB: OTG: INSTALL KBD` means the keyboard kernel is absent or could not be
+validated. Return to the Mac cable and run step 3. The status text uses all 16
+available e-ink columns without truncation. UART/USB logs give the longer action.
+
+There are only two kernel slots. A normal kernel update replaces the companion;
+install it again after the new device kernel confirms. An interrupted companion
+installation can remove keyboard availability, while preserving the confirmed
+normal kernel. `make boot` continues to refuse host images as factory defaults.
+Use `install-host`, rather than `send`, to keep a keyboard kernel installed.
+
+## Boot and update protections
+
+The image manifest's word 7 identifies device/legacy (0) or host (1). The installer
+requires a tagged host image for `PUT2 host-companion`; arbitrary raw code is not
+authenticated by this tag. Transport CRC, payload SHA, full image hash and sector
+readback checks remain in force. The companion reference is committed only after
+readback, separately from pending trial metadata. Before either kind of kernel
+installation overwrites the idle slot, an old companion reference is revoked by a
+verified metadata commit.
+
+The selector still starts the confirmed device kernel on an ordinary boot. That
+kernel verifies the confirmed fallback and companion, rechecks the live USB-link
+decision after card reads, deinitializes device USB, and uses the existing
+selector handoff record at `0x7000` with boot kind 2. A 72-byte relocated ARM
+trampoline at `0x7800` masks interrupts, cleans caches, disables MMU/caches, copies
+the verified payload to `0x100000`, and enters the normal runtime startup. The SD
+handoff block is refreshed too. This requires no selector replacement on an
+existing card and leaves no persistent boot request to survive a power cycle.
+The handoff happens before audio or OS startup.
+
+Host confirmation code is excluded at compile time. A host kernel refuses a
+confirmed/recovery entry (boot kind 0); it accepts consumed trials (1) or a
+matching installed-companion handoff (2). The latter rechecks its slot/generation
+against metadata before starting host USB and is never treated as a confirmable
+trial. Installed companions remain idle when the adapter is absent. Legacy
+one-shot host trials remain a separate mechanism; tagged trials require a
+selector that understands the role word, whereas companion handoff does not.
+If both control records are lost or the confirmed device image is corrupt,
+normal card-reader rescue rules still apply; the companion is not a fallback
+for the Mac recovery link. See [M0 A/B update format](m0.md).
+
+## Boot-time ID detection
 
 ## Register facts
 - GOTGCTL at 0x20980000 (base 0x20980000, GUSBCFG at +0x0C as used in drivers/usb.c).
@@ -52,7 +124,7 @@ device. During it the code:
   (`usb_irq` returns until `initialized`);
 - forces device straight after (`usbrole_device_gusbcfg`; tested in tests/usbrole.c).
 
-Guarantee, precisely: the kernel code never sets ForceHstMode and never writes HPRT0 (so it never
+Guarantee for the device-role image and its sampling window, precisely: that code never sets ForceHstMode and never writes HPRT0 (so it never
 sets the port power bit or starts host init). The role is not "device for every
 microsecond": for about
 100 ms at boot the core is in OTG mode, not forced device, so a grounded ID could make the
@@ -75,28 +147,12 @@ wrap; not changed here.)
   Live hot-plug sampling needs a brief un-force window (or the A/B-device change
   interrupt); that disturbs a gadget link, so it is slice 2.
 
-## Next slices
-1. Host switch: clear ForceDevMode, set ForceHstMode, wait ~25 ms for CurMod (GINTSTS bit 0),
-   power the port (HPRT.PrtPwr, bit 12), core soft reset first. Return to device on
-   unplug or when a Mac link appears (reboot-free path, or simply reboot at first).
-2. Root port: wait for HPRT.PrtConnDet, reset the port (HPRT.PrtRst, 10 to 20 ms), read
-   speed, set HFIR/HCFG for the PHY clock. Host channels in slave (PIO) mode, matching
-   the PIO DWC2 backend already in use (no USB DMA, include/tusb_config.h).
-3. Enumeration: control transfers on channel 0 (GET_DESCRIPTOR, SET_ADDRESS,
-   SET_CONFIGURATION), split into small testable state machines.
-4. Hub: unpowered hub means bus power only: check the hub descriptor current,
-   SET_FEATURE PORT_POWER, poll port status, reset, enumerate the child. Low-speed
-   keyboards behind a high-speed hub need split transactions (the Zero's core is
-   high-speed): the hard part; test with the keyboard direct first.
-5. HID boot keyboard: SET_PROTOCOL(0), SET_IDLE, poll the interrupt-IN endpoint every
-   bInterval ms, 8-byte boot report to key events into core/input.c.
+## Host implementation
 
-## Code to model on
-Not GPL (no Linux/FreeBSD dwc code copied). Candidates: CSUD, the USB driver in Baking
-Pi (Alex Chadwick, MIT), or Plan 9's usb stack (MIT-style license; VERIFY). Credit the
-source in NOTICE.md when any code is adapted. TinyUSB (already used, MIT) has a DWC2 host
-driver (`portable/synopsys/dwc2/hcd_dwc2.c`) and HID host class; evaluating it first is
-cheapest, though the design file asks to audit its BSP needs.
+The build uses the pinned MIT-licensed TinyUSB DWC2 host backend; no Linux or
+FreeBSD USB code is copied. Hub support and live role switching remain future
+work. The default device build never initializes host USB itself: only the
+verified companion starts that stack.
 
 ## Slice 1: descriptor walker and boot-report parser (host-tested, no hardware)
 
@@ -115,24 +171,10 @@ cheapest, though the design file asks to audit its BSP needs.
 
 ## Slice 2: the host-role build (keyboard on the OTG port)
 
-Build: `make USB_ROLE=host all` (the default, `USB_ROLE=device`, is the Mac link and is unchanged;
-the Makefile follows the existing `PANEL_ROTATE_180 ?=` style of variables). A role change
-relinks everything (`build/usb_role.stamp`). The role is fixed at build time: there is no ID
-autodetect, no hub and no Mac link in a host image (the one port cannot be both), so the
-serial reader and the protocol see nothing. So a host image never confirms its A/B trial:
-after 30 s it logs "Host-role test image: not confirmed", and the next power cycle boots the
-confirmed device-role kernel again, Mac link included.
-
-How that is enforced, and where it stops (review R1): the confirm code is not compiled into a host
-image (`tests/test_usbhost_regress.py` preprocesses `core/main.c` both ways). A host image that the
-selector starts as anything but a consumed trial (a confirmed boot, or both control records lost)
-does nothing: it prints "not on trial" on the UART and lets the watchdog reset the board, and it
-never starts USB. `make boot` (`scripts/assemble_boot.py`) refuses a `USB_ROLE=host` runtime, so a
-factory card never has a host image in confirmed slot A. The selector itself does not know roles.
-The fallback on the next boot needs the consumed record to be intact (`docs/m0.md`); if the card
-loses both control records while the host image sits in the slot the selector tries first, the board
-boots it unconfirmed and needs the card reader. Power cuts and card faults are not tested here. Send it from a device-role kernel as
-usual; to test again, send it again.
+Build: `make USB_ROLE=host all`. The default `USB_ROLE=device` is the Mac link.
+A role change relinks everything through `build/usb_role.stamp`. Each runtime
+has one fixed USB role; the automatic boot decision selects between images.
+There is no CDC link or hub support in a host image.
 
 What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
 device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
@@ -166,3 +208,28 @@ the keyboard no longer uses up the slot. The first boot-protocol keyboard interf
 polled; its (device, interface) pair is remembered, so reports from, and the unmount of, any other
 interface are ignored. A keyboard that offers no boot protocol is skipped. `input_init()` now runs
 before USB or the SD card can deliver a report, so a key held at mount is kept.
+
+## Hardware acceptance for automatic keyboard mode
+
+- Install the new device kernel and companion over the Mac cable. Record INFO's
+  confirmed generation, companion generation and `pending=0`.
+- Cold boot with the adapter and receiver attached: confirm handoff, `USB host up`,
+  attachment VID:PID, `keyboard ready`, key presses, held-key release on unplug,
+  and keyboard replug. Inspect the two startup screens and watchdog behavior.
+- Repeat cold boots with the adapter several times without reinstalling anything.
+  Then boot without it and verify the Mac enumerates, INFO still has the same
+  confirmed/companion generations, and the host never confirmed after 30 seconds.
+- Test floating ID, grounded ID with an enumerated link where electrically
+  appropriate, and a receiver that is not a boot-protocol keyboard. A short link
+  loss must not cause a handoff. Verify actual ID sensing, port power/VBUS, DWC2
+  reset after device deinit, and SD adoption across the in-memory handoff.
+- With no companion, confirm `USB: OTG: INSTALL KBD` fits; with a damaged companion,
+  confirm device recovery remains available on the next boot without the adapter.
+- Interrupt installation/replacement at slot write and metadata commit boundaries;
+  boot without the adapter and confirm the Mac fallback is intact. Perform a
+  normal device update, confirm it, then reinstall the companion.
+
+Host tests exercise the role debounce (including timer wrap), link priority,
+missing-companion action/width, trial exclusion, real installer/readback/hash
+and metadata persistence/revocation. They do not execute ARM cache/MMU transitions,
+USB registers or physical power cuts.

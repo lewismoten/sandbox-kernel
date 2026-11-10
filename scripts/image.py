@@ -7,21 +7,22 @@ IMAGE_MAGIC=0x31494b53
 CONTROL_MAGIC=0x31434b53
 NO_SLOT=0xffffffff
 
-def pack(payload,build_id):
+def pack(payload,build_id,role="device"):
     build=build_id.encode('ascii')
     if not 4<=len(payload)<=MAX_IMAGE-256 or len(build)>31 or any(c<32 or c>126 for c in build): raise ValueError('payload/build ID')
-    header=struct.pack('<8I',IMAGE_MAGIC,1,1,0x10000,len(payload),0x100000,0x100000,0)
+    header=struct.pack('<8I',IMAGE_MAGIC,1,1,0x10000,len(payload),0x100000,0x100000,int(role=="host"))
     return header+hashlib.sha256(payload).digest()+build.ljust(32,b'\0')+bytes(160)+payload
 
 def validate(image):
     if not 260<=len(image)<=MAX_IMAGE: raise ValueError('size')
-    if struct.unpack_from('<8I',image)!=(IMAGE_MAGIC,1,1,0x10000,len(image)-256,0x100000,0x100000,0) or any(image[96:256]) or hashlib.sha256(image[256:]).digest()!=image[32:64]: raise ValueError('manifest/hash')
+    if struct.unpack_from('<I',image,28)[0]>1 or struct.unpack_from('<7I',image)!=(IMAGE_MAGIC,1,1,0x10000,len(image)-256,0x100000,0x100000) or any(image[96:256]) or hashlib.sha256(image[256:]).digest()!=image[32:64]: raise ValueError('manifest/hash')
     build=image[64:96]
     if b'\0' not in build or any(build[build.index(0):]) or any(c<32 or c>126 for c in build[:build.index(0)]): raise ValueError('build ID')
     return image
 
 def control_record(image,sequence=1):
     validate(image)
+    if struct.unpack_from('<I',image,28)[0]: raise ValueError('host kernel cannot be confirmed')
     buf=bytearray(struct.pack('<128I',*([CONTROL_MAGIC,1,sequence,0,NO_SLOT,0,1,0,NO_SLOT]+[0]*119)))
     buf[64:96]=hashlib.sha256(image).digest();struct.pack_into('<I',buf,508,zlib.crc32(buf[:508]));return bytes(buf)
 
@@ -81,8 +82,8 @@ def fat_image(folder,output):
 
 if __name__=='__main__':
     ap=argparse.ArgumentParser(description=__doc__);sub=ap.add_subparsers(dest='action',required=True)
-    p=sub.add_parser('pack');p.add_argument('input',type=pathlib.Path);p.add_argument('output',type=pathlib.Path);p.add_argument('--build-id',default='m0-dev')
+    p=sub.add_parser('pack');p.add_argument('input',type=pathlib.Path);p.add_argument('output',type=pathlib.Path);p.add_argument('--build-id',default='m0-dev');p.add_argument('--role',choices=('device','host'),default='device')
     p=sub.add_parser('fat');p.add_argument('folder',type=pathlib.Path);p.add_argument('output',type=pathlib.Path)
     a=ap.parse_args()
-    if a.action=='pack': a.output.write_bytes(pack(a.input.read_bytes(),a.build_id))
+    if a.action=='pack': a.output.write_bytes(pack(a.input.read_bytes(),a.build_id,a.role))
     else: fat_image(a.folder,a.output)

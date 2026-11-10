@@ -60,6 +60,24 @@ class SenderTests(unittest.TestCase):
             f=pathlib.Path(d)/'runtime.ski';f.write_bytes(b)
             self.assertEqual(usb_kernel.send_kernel(p,f),2)
         self.assertEqual(sum(s.startswith(b'PUT2') for s in p.sent),1)
+    def test_install_host_command_and_ack(self):
+        b=image.pack(b'H'*4,'host',role='host')
+        info='INFO 2 test confirmed=1 pending=0 host_companion=0 updates=ready'
+        p=FakePort([info,'READY 1024','VERIFY','OK host companion installed'])
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/'host.ski';f.write_bytes(b)
+            self.assertEqual(usb_kernel.send_kernel(p,f,companion=True),0)
+        self.assertTrue(p.sent[1].startswith(b'PUT2 host-companion zero-w-armv6 '))
+        self.assertEqual(p.sent[2],b)
+
+    def test_install_host_refuses_legacy_receiver_and_device_payload(self):
+        for role,extra,why in [('host','','Update the device kernel first'),('device',' host_companion=0','USB_ROLE=host')]:
+            p=FakePort(['INFO 2 test pending=0 updates=ready'+extra])
+            with tempfile.TemporaryDirectory() as d:
+                f=pathlib.Path(d)/'runtime.ski';f.write_bytes(image.pack(b'X'*4,'role',role=role))
+                with self.assertRaisesRegex(ValueError,why):usb_kernel.send_kernel(p,f,companion=True)
+            self.assertEqual(p.sent,[b'INFO\n'])
+
     def test_put_file_blocks_and_hash(self):
         import hashlib, zlib
         data=b'E'*1500;info='INFO 2 test confirmed=1'

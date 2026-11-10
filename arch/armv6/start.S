@@ -173,3 +173,31 @@ user_exit:
 kernel_sp: .word 0
 kernel_ttbr: .word 0
 user_frame_ptr: .word 0
+
+#ifndef SELECTOR
+/* Relocated to 0x7800 before use. No stack, literals or calls after the runtime
+   starts being overwritten. Source is in runtime BSS above the destination;
+   forward copying is safe even if the ranges overlap. r3 is the new entry. */
+.section .text.companion_copy,"ax"
+.global companion_copy_start, companion_copy_end
+companion_copy_start:
+    cpsid if
+    mov r4, #0
+    mcr p15, 0, r4, c7, c14, 0
+    mcr p15, 0, r4, c7, c10, 4
+    mrc p15, 0, r5, c1, c0, 0
+    bic r5, r5, #0x1000
+    bic r5, r5, #5
+    mcr p15, 0, r5, c1, c0, 0
+    mcr p15, 0, r4, c7, c5, 4
+1:  ldrb r4, [r0], #1
+    strb r4, [r1], #1
+    subs r2, r2, #1
+    bne 1b
+    mov r4, #0
+    mcr p15, 0, r4, c7, c5, 0
+    mcr p15, 0, r4, c7, c10, 4
+    mcr p15, 0, r4, c7, c5, 4
+    bx r3
+companion_copy_end:
+#endif

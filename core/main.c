@@ -8,6 +8,7 @@
 #include "fb_art.h"
 #include "audio_null.h"
 #include "hdmi_audio.h"
+#include "usbrole.h"
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
@@ -16,19 +17,22 @@ void error(const char *s) {last_error=s;log_line(s);}
 void kernel_main(void) {
  uint32_t boot_time=micros();
  uint32_t h[8];memcpy(h,(const void *)0x7000,sizeof(h));
- if(h[0]!=HANDOFF_MAGIC||h[1]!=1||h[2]>1||h[3]>1||h[6]<128*1024*1024u||h[7]!=crc32(h,28)) {uart_init();uart_puts("Invalid selector handoff\r\n");for(;;){}}
- boot_slot=h[2];boot_generation=h[4];boot_trial=h[3];
+ if(h[0]!=HANDOFF_MAGIC||h[1]!=1||h[2]>1||h[3]>BOOT_COMPANION||h[6]<128*1024*1024u||h[7]!=crc32(h,28)) {uart_init();uart_puts("Invalid selector handoff\r\n");for(;;){}}
+ boot_slot=h[2];boot_generation=h[4];boot_trial=h[3]==1;
 #if USB_ROLE_HOST
- /* R1: a host-role image only ever runs as a consumed trial. Entered any other way (a confirmed or
+ /* R1: a host-role image runs only as a consumed trial or a boot-only companion. Entered any other way (a confirmed or
     metadata-lost boot) it does nothing: no USB, no confirmation. The watchdog the selector armed
     resets the board every few seconds, and the UART names the reason. */
- if(!h[3]) {uart_init();uart_puts("Host-role image is not on trial; not running. Restore the device kernel (card reader).\r\n");for(;;){}}
+ if(!h[3]) {uart_init();uart_puts("Host-role image is not on trial or companion handoff; not running. Restore the device kernel (card reader).\r\n");for(;;){}}
 #endif
  /* The first visible image is completed before USB, SD or timer IRQ setup.
     System-timer free-running hardware is used only for bounded panel delays. */
  input_init(); /* R3: before USB or SD can deliver a keyboard report; the OS-facing note stays below */
  panel_start();while(!panel_boot_done())panel_task("starting",0);
- mmu_init();uart_init();irq_init();usb_init();
+ mmu_init();uart_init();irq_init();
+#if !USB_ROLE_HOST
+ usb_init();
+#endif
  log_line("sandbox-kernel " BUILD_ID " Zero W v1.1 RASPPI=1");
  char num[12];number(num,h[5]);log_line("Reset cause (PM_RSTS decimal):");log_line(num);
  number(num,boot_slot);log_line("Selected slot:");log_line(num);
@@ -45,6 +49,29 @@ void kernel_main(void) {
    if(!control_commit(c)) {updates_ready=false;error("Fallback commit failed");}
   }
  }
+#if USB_ROLE_HOST
+ if(h[3]==BOOT_COMPANION&&(!updates_ready||control[4]!=NO_SLOT||boot_slot==control[3]||control[9]!=boot_generation)) {
+  error("Companion metadata mismatch");for(;;){}
+ }
+ usb_init();
+#else
+ /* Decide before framebuffer/audio/OS startup: no running DMA or program to
+    quiesce. ID is latched at boot; a live device link always cancels intent. */
+ if(!boot_trial&&updates_ready&&boot_slot==control[3]) {
+  (void)usb_host_wanted(); /* anchor the debounce before any USB task work */
+  uint32_t since=micros();
+  do {
+   usb_task(); /* no protocol commands during the short boot decision window */
+   enum usb_role intent=usb_host_wanted()?USB_ROLE_HOST_WANTED:USB_ROLE_DEVICE;
+   enum usb_companion_action action=usbrole_companion_action(intent,control[9]!=0,true);
+   if(action!=USB_COMPANION_NONE) {
+    if(action==USB_COMPANION_MISSING||!host_companion_launch())
+     log_line("OTG: keyboard kernel missing or invalid; install host companion over Mac USB");
+    break;
+   }
+  } while(!expired(since,USBROLE_HOST_STABLE_US+1000u));
+ }
+#endif
  /* M1 probes: HDMI framebuffer and read-only assets. Neither touches USB,
     the panel or any card sector; failures are logged, never fatal. */
  /* Slice 3: the synthetic input device (USB KEY/AXIS), present from boot. */
@@ -59,9 +86,9 @@ void kernel_main(void) {
  bool autostart=boot_storage_policy(storage_ready);
  if(autostart) {char t[48]="OS autostart in 10 s: ";const char *a=autostart_pick();memcpy(t+22,a,strlen(a)+1);log_line(t);}
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
- bool trial=h[3]&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
+ bool trial=h[3]==1&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
- if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
+ if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
   clock_us();audio_null_task();usb_task();protocol_task();os_task();
   if(autostart_cancelled()) autostart=false;

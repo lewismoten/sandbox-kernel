@@ -72,7 +72,8 @@ class ImageProperties(unittest.TestCase):
                 with self.subTest(offset=offset, bit=bit):
                     bad = bytearray(wire)
                     bad[offset] ^= 1 << bit
-                    self.rejected(bytes(bad))
+                    if offset==28 and bit==0: self.accepted(bytes(bad)) # role=host
+                    else: self.rejected(bytes(bad))
 
     def test_truncation_extension_and_bad_size_words(self):
         wire = self.golden()

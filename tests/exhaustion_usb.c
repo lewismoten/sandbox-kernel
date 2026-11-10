@@ -23,6 +23,7 @@ void tud_int_handler(unsigned p) {(void)p;}
 bool tud_mounted(void) {return mounted;}
 bool tud_cdc_connected(void) {return connected;}
 bool tusb_init(void) {return true;}
+bool tud_deinit(uint8_t port) {(void)port;return true;}
 uint32_t tud_cdc_write_available(void) {return credits;}
 void tud_task(void) {tasks++;}
 void tud_cdc_write_char(char c) {

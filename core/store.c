@@ -34,8 +34,15 @@ static bool record_valid(const uint32_t *c) {
  if(c[0]!=CONTROL_MAGIC||c[1]!=1||!c[2]||c[2]==~0u||c[3]>1|| (c[4]>1&&c[4]!=NO_SLOT)||c[5]>1||c[8]!=NO_SLOT||!c[6]) return false;
  if(c[4]!=NO_SLOT&&(c[4]==c[3]||c[7]<=c[6])) return false;
  if(c[4]==NO_SLOT) {if(c[5]||c[7])return false;for(unsigned i=24;i<32;i++)if(c[i])return false;}
- for(unsigned i=9;i<16;i++) if(c[i]) return false;
- for(unsigned i=32;i<127;i++) if(c[i]) return false;
+ /* word 9: installed idle-slot host generation; words 32..39: its hash.
+    Installation and a pending trial are mutually exclusive. */
+ if(c[9]) {
+  if(c[4]!=NO_SLOT||c[9]<=c[6])return false;
+  uint32_t any=0;for(unsigned i=32;i<40;i++)any|=c[i];if(!any)return false;
+ }
+ if(!c[9])for(unsigned i=32;i<40;i++)if(c[i])return false;
+ for(unsigned i=10;i<16;i++) if(c[i]) return false;
+ for(unsigned i=40;i<127;i++) if(c[i]) return false;
  return c[127]==crc32(c,508);
 }
 bool store_init(void) {
@@ -115,7 +122,7 @@ bool slot_load(unsigned slot,uint8_t *dest,uint32_t *bytes) {
  if(!image_valid(dest,size)) return false;
  if(control[0]==CONTROL_MAGIC) {
   uint8_t hash[32]; sha256(dest,size,hash);
-  const uint32_t *expected=slot==control[3]?control+16:slot==control[4]?control+24:NULL;
+  const uint32_t *expected=slot==control[3]?control+16:slot==control[4]?control+24:control[9]?control+32:NULL;
   if(!expected||memcmp(hash,expected,32)) return false;
  }
  *bytes=size; return true;

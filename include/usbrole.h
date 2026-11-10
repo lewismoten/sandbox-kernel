@@ -5,6 +5,9 @@
 #include <stdint.h>
 /* Debounced USB role decision. Pure logic: no registers, host-testable. */
 enum usb_role { USB_ROLE_DEVICE, USB_ROLE_HOST_WANTED };
+#define USBROLE_MISSING_COMPANION "OTG: INSTALL KBD" /* 16 display columns */
+enum usb_companion_action { USB_COMPANION_NONE, USB_COMPANION_MISSING, USB_COMPANION_HANDOFF };
+enum usb_companion_action usbrole_companion_action(enum usb_role role,bool installed,bool confirmed_device_boot);
 #define USBROLE_HOST_STABLE_US 500000u /* wanted must hold this long (us) before HOST_WANTED */
 struct usbrole { enum usb_role role; bool cand; uint32_t since; };
 #define USBROLE_GOTGCTL 0x20980000u

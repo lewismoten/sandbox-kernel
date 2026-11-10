@@ -83,21 +83,25 @@ def check_updates(f):
         if f['updates']!='ready' or f.get('features')=='locked': raise ValueError('Device updates locked; inspect logs')
     elif f.get('features')!='kernel,no-os': raise ValueError('Device updates locked; inspect logs')
 
-def send_kernel(port,path):
+def send_kernel(port,path,companion=False):
     image=validate(path.read_bytes());info=handshake(port);print(info)
     before=info_fields(info);check_updates(before)
-    port.send(f'PUT2 kernel zero-w-armv6 {len(image)} {zlib.crc32(image):08x}\n'.encode())
+    if companion:
+        if 'host_companion' not in before: raise ValueError('Update the device kernel first; it does not support host companions')
+        if int.from_bytes(image[28:32],'little')!=1: raise ValueError('Host companion requires a USB_ROLE=host image')
+    kind='host-companion' if companion else 'kernel'
+    port.send(f'PUT2 {kind} zero-w-armv6 {len(image)} {zlib.crc32(image):08x}\n'.encode())
     expect(port,'READY 1024',5)
     for offset in range(0,len(image),1024):
         block=image[offset:offset+1024];port.send(block)
         final=offset+len(block)==len(image)
         expect(port,'VERIFY' if final else f'ACK {offset+len(block)}',10)
     # Never repeat PUT2 after VERIFY. A lost reply must be resolved by INFO.
-    try: expect(port,'OK pending rebooting',120)
+    try: expect(port,'OK host companion installed' if companion else 'OK pending rebooting',120)
     except (OSError,TimeoutError) as exc:
         print(f'Final result unknown ({exc}); reconnect and run info. Prior confirmed={before.get("confirmed")}. Do not resend blindly.',file=sys.stderr)
         return 2
-    print('Pending committed; reconnect, run info, and watch for 30-second confirmation.')
+    print('Host companion installed. Power off, attach the OTG keyboard adapter, then power on.' if companion else 'Pending committed; reconnect, run info, and watch for 30-second confirmation.')
     return 0
 
 NAME83=r'[A-Z0-9_-]{1,8}(\.[A-Z0-9_-]{1,3})?'
@@ -228,6 +232,7 @@ def stop_program(port):
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
+    p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
     sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
@@ -242,6 +247,7 @@ def main():
     sub.add_parser('audio',help='AUDIO: backend state, drain rate, underruns')
     a=ap.parse_args();port=Serial(a.port)
     try:
+        if a.action=='install-host': return send_kernel(port,a.kernel,companion=True)
         if a.action=='send': return send_kernel(port,a.kernel)
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())
         if a.action=='run': return run_program(port,a.name.upper(),a.seconds)

@@ -39,8 +39,12 @@ class HostRegress(unittest.TestCase):
         self.assertNotIn('Trial confirmed', host)
         self.assertNotIn('control_commit(c)', host.split('Fallback commit failed')[1])  # only the fallback-clear commit precedes
         self.assertIn('Trial confirmed after 30 seconds', device)
-        self.assertIn('not on trial', host)                  # a non-trial host boot does nothing
+        self.assertIn('not on trial or companion handoff', host)                  # a non-trial host boot does nothing
         self.assertNotIn('not on trial', device)
+        self.assertIn('Companion metadata mismatch', host)
+        self.assertNotIn('host_companion_launch()', host)
+        self.assertIn('host_companion_launch()', device)
+        self.assertIn('h[3]==1', host) # companion is never treated as a trial
         # the refusal comes before USB, SD or panel start-up
         self.assertLess(host.index('not on trial'), host.index('usb_init();'))
 

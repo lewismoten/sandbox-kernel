@@ -21,7 +21,7 @@ static unsigned used,phase;
 static uint32_t expected,received,transport_crc,activity,block_end,sector_index,install_since;
 static unsigned inactive;
 static uint8_t image_hash[32];
-static bool executing,overflow,session,putf;
+static bool executing,overflow,session,putf,companion;
 static bool waiting_stop;
 static unsigned tx_left,tx_took;static uint32_t tx_since;
 #define TX_IDLE_US 2000000u /* a TX body that stalls this long is abandoned (docs/serial.md) */
@@ -135,6 +135,7 @@ static void command_line(void) {
   usb_reply("INFO 2 zero-w armv6 ABI=1.0 profile=zero-w-armv6 capacity=2097152 active=");field(boot_slot);
   usb_reply(" confirmed=");field(control[0]==CONTROL_MAGIC?control[6]:0);
   usb_reply(" pending=");field(control[0]==CONTROL_MAGIC&&control[4]!=NO_SLOT?control[7]:0);
+  usb_reply(" host_companion=");field(control[0]==CONTROL_MAGIC?control[9]:0);
   usb_reply(" active_generation=");field(boot_generation);
   usb_reply(!updates_ready?" updates=locked":control[4]!=NO_SLOT?" updates=busy":" updates=ready");
   usb_reply(os_running()?" os=running":os_starts?" os=stopped":" os=none");
@@ -143,7 +144,7 @@ static void command_line(void) {
   usb_reply(" install_timeout=120 serial=");usb_reply(serial_transport_name());usb_reply("\n");return;
  }
  const char *p=line;uint32_t size,crc=0;
- if(used<10||!token(&p,"PUT2")||!token(&p,"kernel")||!token(&p,"zero-w-armv6")||!decimal(&p,&size)||*p++!=' ') {fail("command");return;}
+ if(used<10||!token(&p,"PUT2")||(!(companion=token(&p,"host-companion"))&&!token(&p,"kernel"))||!token(&p,"zero-w-armv6")||!decimal(&p,&size)||*p++!=' ') {fail("command");return;}
  for(unsigned i=0;i<8;i++) {unsigned c=(uint8_t)*p++;if(c>='0'&&c<='9')c-='0';else if(c>='a'&&c<='f')c=c-'a'+10;else {fail("crc-format");return;}crc=(crc<<4)|c;}
  if(*p||size<64||size>MAX_IMAGE) {fail("size");return;}
  if(!storage_ready) {fail("not-ready");return;}
@@ -178,6 +179,13 @@ static void work(void) {
     char t[64]="File installed ";unsigned k=15;if(in_os(put_name)){memcpy(t+k,"/OS",3);k+=3;}t[k++]='/';memcpy(t+k,put_name,strlen(put_name)+1);log_line(t);return;
    }
    if(!image_valid(staging,expected)) {fail("manifest");return;}
+   if(companion&&((const uint32_t *)staging)[7]!=1) {fail("host-role-required");return;}
+   /* Revoke the old companion before overwriting its slot. A power cut can only
+      lose keyboard availability; the confirmed device payload is untouched. */
+   if(control[9]) {
+    uint32_t c[128];memcpy(c,control,512);c[9]=0;memset(c+32,0,32);
+    if(!control_commit(c)) {updates_ready=false;fail("commit-uncertain-query-info");return;}
+   }
    sha256(staging,expected,image_hash);sector_index=0;phase=4;install_since=micros();return;
   }
   if(expired(install_since,120000000)&&phase<7) {fail("install-timeout");return;}
@@ -196,8 +204,10 @@ static void work(void) {
   if(phase==6) {
    uint32_t c[128];memcpy(c,control,512);c[4]=inactive;c[5]=0;
    if(c[6]==0xfffffffeu) {fail("generation");return;}
-   c[7]=c[6]+1;memcpy(c+24,image_hash,32);
+   if(companion) {c[4]=NO_SLOT;c[9]=c[6]+1;memcpy(c+32,image_hash,32);}
+   else {c[7]=c[6]+1;memcpy(c+24,image_hash,32);}
    if(!control_commit(c)) {updates_ready=false;fail("commit-uncertain-query-info");return;}
+   if(companion) {phase=0;usb_reply("OK host companion installed\n");return;}
    phase=7;activity=micros();usb_reply("OK pending rebooting\n");return;
   }
   if(phase==7&&expired(activity,500000))reboot();
@@ -224,4 +234,31 @@ static void work(void) {
 }
 void protocol_task(void) {if(executing)return;executing=true;work();executing=false;}
 /* Called once storage metadata exists; reads confirmed payload before PUT2. */
-bool verify_confirmed(void) {uint32_t n;return control[0]==CONTROL_MAGIC&&slot_load(control[3],staging,&n);}
+bool verify_confirmed(void) {uint32_t n;return control[0]==CONTROL_MAGIC&&slot_load(control[3],staging,&n)&&((const uint32_t *)staging)[7]==0;}
+
+#ifndef HOST_TEST
+#if !USB_ROLE_HOST
+/* The verified image uses the existing selector handoff ABI. A tiny low-RAM
+   trampoline copies it over this runtime after masking IRQs and cleaning caches.
+   No reset request or persistent boot selection is involved. */
+extern const uint8_t companion_copy_start[],companion_copy_end[];
+bool host_companion_launch(void) {
+ uint32_t n;
+ if(protocol_busy()||!updates_ready||control[0]!=CONTROL_MAGIC||control[4]!=NO_SLOT||!control[9])return false;
+ executing=true; /* SD service_io must not parse a new update into staging */
+ bool ok=slot_load(1-control[3],staging,&n)&&((const uint32_t *)staging)[7]==1;
+ executing=false;
+ if(!ok||!usb_host_wanted())return false; /* a link appearing during SD reads wins */
+ uint32_t h[8];memcpy(h,(const void *)0x7000,sizeof h);
+ h[2]=1-control[3];h[3]=BOOT_COMPANION;h[4]=control[9];h[7]=crc32(h,28);
+ memcpy((void *)0x7000,h,sizeof h);
+ uint32_t sdb[8];sd_export(sdb);memcpy((void *)0x7040,sdb,sizeof sdb);
+ memcpy((void *)0x7800,companion_copy_start,(size_t)(companion_copy_end-companion_copy_start));
+ usb_device_stop();watchdog_feed();
+ uint32_t z=0;
+ __asm__ volatile("mcr p15,0,%0,c7,c10,0\n mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c5,0\n mcr p15,0,%0,c7,c5,4"::"r"(z):"memory");
+ ((void (*)(const void *,void *,uint32_t,uint32_t))0x7800)(staging+256,(void *)RUNTIME_BASE,n-256,RUNTIME_BASE);
+ for(;;){}
+}
+#endif
+#endif

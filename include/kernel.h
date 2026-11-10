@@ -65,6 +65,9 @@ void panel_task(const char *state,uint32_t seconds);
 void usb_init(void);
 void usb_irq(void);
 bool usb_healthy(void);
+bool usb_host_wanted(void);
+void usb_device_stop(void);
+bool host_companion_launch(void);
 void usb_task(void);
 const char *usb_state(void);
 void protocol_task(void);
@@ -78,15 +81,18 @@ bool usb_reply_pending(void);
 #define IMAGE_MAGIC 0x31494b53u
 #define CONTROL_MAGIC 0x31434b53u
 #define NO_SLOT 0xffffffffu
+#define BOOT_COMPANION 2u /* boot-only handoff, never a confirmable trial */
 #define HANDOFF_MAGIC 0x31484b53u
 /* image header, 256 bytes: magic/version/profile/ABI/payload size/load/entry,
- * reserved word, SHA256[32], build ID[32], zero padding. */
+ * USB role (0=device/legacy, 1=host), SHA256[32], build ID[32], zero padding. */
 bool image_valid(const uint8_t *image,uint32_t bytes);
 struct file_extent { uint32_t sectors[4097]; uint32_t count,bytes; };
 extern struct file_extent slots[2],controls[2];
 extern uint32_t control[128];
 /* control words: magic,version,sequence,confirmed,pending,consumed,
- * confirmed generation,pending generation,no-OS, then zero to word126; CRC127. */
+ * confirmed generation,pending generation,no-OS; word9=host companion generation
+ * (0=absent, idle slot, no pending); 16..23 confirmed hash, 24..31 pending hash,
+ * 32..39 companion hash; other words zero, CRC127. */
 bool store_init(void);
 extern const uint32_t *sd_handoff_block; /* runtime: selector card state (8 words), else NULL */
 bool file_read(const struct file_extent *f,uint32_t sector,void *data);

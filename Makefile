@@ -50,6 +50,10 @@ $(TUSB_STAMP): scripts/fetch.py
 deps: $(TUSB_STAMP)
 FORCE:
 # a role change must relink (and recompile: one command builds everything)
+# Force it even when make compares both output/stamp timestamps within one second.
+ifneq ($(shell cat build/usb_role.stamp 2>/dev/null),$(USB_ROLE))
+build/runtime.elf: FORCE
+endif
 build/usb_role.stamp: FORCE | build
 	@echo '$(USB_ROLE)' | cmp -s - $@ || echo '$(USB_ROLE)' > $@
 build/build_id.h: FORCE | build
@@ -65,7 +69,7 @@ build/runtime.img: build/runtime.elf
 	$(OBJCOPY) -O binary $< $@
 	$(SIZE) $<
 build/runtime.ski: build/runtime.img scripts/image.py
-	$(PYTHON) scripts/image.py pack $< $@ --build-id $(BUILD_ID)
+	$(PYTHON) scripts/image.py pack $< $@ --build-id $(BUILD_ID) --role $(USB_ROLE)
 boot: all
 	$(PYTHON) scripts/assemble_boot.py
 # Example OS programs (examples/*/), built with the SDK only; each folder has its own Makefile.

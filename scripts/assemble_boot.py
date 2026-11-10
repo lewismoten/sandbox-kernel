@@ -9,7 +9,7 @@ def refuse_host_role(stamp=None):
     """R1: the factory image is confirmed slot A, and a host-role image never confirms; refuse it here."""
     stamp=stamp or ROOT/'build/usb_role.stamp'
     role=stamp.read_text().strip() if stamp.exists() else 'device'
-    if role!='device': raise SystemExit('refusing to assemble a card image from a USB_ROLE=%s runtime: send a host image from a device-role kernel as a trial instead'%role)
+    if role!='device': raise SystemExit('refusing to assemble a card image from a USB_ROLE=%s runtime: install a host companion from a device-role kernel instead'%role)
 
 def main():
     refuse_host_role()

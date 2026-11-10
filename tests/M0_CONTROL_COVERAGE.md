@@ -38,7 +38,7 @@ compare outcomes with the independently stated wire rules, not a blanket
 | Confirmed/pending slot and attempts | Invalid values, same-slot pending, absent pending with consumed attempt; both slots and both attempt states accepted when applicable |
 | Generations | Confirmed zero rejected; pending zero/equal/lower rejected; unsigned signed-boundary crossing accepted; exhausted-generation wrap rejected by commit |
 | No-OS sentinel | Correct sentinel accepted; repaired-CRC alternatives rejected |
-| Reserved zeros | Every word 9–15 and 32–126 set independently to 1, high bit, all ones, then resealed |
+| Reserved zeros | With no companion, word 9 and words 10–15 / 32–126 set independently to 1, high bit, all ones, then resealed |
 | Absent pending metadata | Each pending-hash word independently made nonzero, nonzero pending generation and consumed attempt rejected |
 | Hash validation separation | Zero/opaque hashes allowed as record content; a checksummed but wrong confirmed hash fails real `slot_load()` |
 | Newest valid record wins | All 36 ordered pairs of six boundary sequences, plus 128 seeded pairs with unrelated generations |
@@ -143,3 +143,10 @@ component's external evidence archive, not in production or shared test files.
 Combined integration, NOTICE attribution and USB framing results are recorded in
 [M0_HOST_FUZZ.md](M0_HOST_FUZZ.md). Safe publication is tracked separately from
 these local host results.
+
+The idle-slot host companion extension uses word 9 (generation) and words 32–39
+(hash), mutually exclusive with pending trials. `test_m0.py` additionally covers
+its real installation, repeated remount/slot verification, role rejection, and
+revocation before a normal update writes the slot. The independent record oracle
+above understands this extension; reserved-word mutation cases use absent-companion
+fixtures.

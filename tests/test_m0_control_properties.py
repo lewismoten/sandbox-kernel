@@ -71,7 +71,12 @@ def wire_valid(data):
         return False
     if w[5] not in (0, 1) or w[6] == 0 or w[8] != NONE:
         return False
-    if any(data[36:64]) or any(data[128:508]):
+    if any(data[40:64]) or any(data[160:508]):
+        return False
+    if w[9]:
+        if w[4] != NONE or w[9] <= w[6] or not any(data[128:160]):
+            return False
+    elif any(data[128:160]):
         return False
     if w[4] == NONE:
         if w[5] != 0 or w[7] != 0 or any(data[96:128]):

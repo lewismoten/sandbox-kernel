@@ -93,6 +93,53 @@ class CoreTests(unittest.TestCase):
         ctl=(C.c_uint32*128).in_dll(self.c,'control');self.assertEqual((ctl[3],ctl[4],ctl[5]),(0,1,0))
         ctl[5]=1;self.c.control_commit.argtypes=[C.POINTER(C.c_uint32)];self.c.control_commit.restype=C.c_bool
         self.assertTrue(self.c.control_commit(ctl));self.assertEqual(ctl[5],1)
+    def install_companion(self, candidate):
+        self.cmd('INFO\n')
+        self.assertEqual(self.cmd(f'PUT2 host-companion zero-w-armv6 {len(candidate)} {zlib.crc32(candidate):08x}\n'),'READY 1024\n')
+        self.transfer(candidate)
+        return self.install()
+
+    def test_host_companion_survives_mount_and_keeps_confirmed(self):
+        candidate=image.pack(b'H'*768,'host',role='host')
+        self.assertEqual(self.install_companion(candidate),'OK host companion installed\n')
+        ctl=(C.c_uint32*128).in_dll(self.c,'control')
+        self.assertEqual((ctl[3],ctl[4],ctl[5],ctl[6],ctl[7],ctl[9]),(0,image.NO_SLOT,0,1,0,2))
+        self.assertEqual(bytes(ctl)[128:160],hashlib.sha256(candidate).digest())
+        for _ in range(3):
+            self.assertTrue(self.c.initialize())
+            self.assertEqual((ctl[3],ctl[4],ctl[9]),(0,image.NO_SLOT,2))
+            dest=C.create_string_buffer(image.MAX_IMAGE);n=C.c_uint32()
+            self.c.slot_load.restype=C.c_bool
+            self.assertTrue(self.c.slot_load(1,dest,C.byref(n)))
+            self.assertEqual(dest.raw[:n.value],candidate)
+        self.assertIn('host_companion=2',self.cmd('INFO\n'))
+        self.assertIn('updates=ready',self.cmd('INFO\n'))
+        # A damaged companion cannot pass the same loader used for handoff;
+        # mounting and verifying the confirmed device still work.
+        with self.media.open('r+b') as f:
+            f.seek(self.layout['KERNB.BIN']['first_lba']*512+256);f.write(b'!')
+        self.assertTrue(self.c.initialize())
+        self.assertFalse(self.c.slot_load(1,dest,C.byref(n)))
+
+    def test_companion_rejects_device_image_before_any_write(self):
+        self.assertIn('ERR host-role-required',self.install_companion(self.known))
+        self.assertEqual(self.c.write_count(),0)
+
+    def test_normal_update_revokes_companion_before_slot_write(self):
+        candidate=image.pack(b'H'*768,'host',role='host')
+        self.assertEqual(self.install_companion(candidate),'OK host companion installed\n')
+        self.assertTrue(self.c.initialize())
+        self.begin(self.known);self.transfer(self.known)
+        self.c.inject_failure(self.c.write_count()+1) # revocation succeeds, slot write fails
+        self.assertIn('ERR write',self.install())
+        self.assertTrue(self.c.store_init())
+        ctl=(C.c_uint32*128).in_dll(self.c,'control')
+        self.assertEqual((ctl[3],ctl[4],ctl[9]),(0,image.NO_SLOT,0))
+        self.assertEqual(bytes(ctl)[128:160],bytes(32))
+
+    def test_companion_cannot_be_factory_confirmed(self):
+        with self.assertRaises(ValueError):image.control_record(image.pack(b'H'*4,'host',role='host'))
+
     def test_write_failure_never_pending(self):
         self.begin(self.known);self.transfer(self.known);self.c.inject_failure(1)
         self.assertIn('ERR write',self.install());ctl=(C.c_uint32*128).in_dll(self.c,'control');self.assertEqual(ctl[4],image.NO_SLOT)

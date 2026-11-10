@@ -41,7 +41,7 @@ void sha256(const void *p,size_t n,uint8_t out[32]) {
 bool image_valid(const uint8_t *p,uint32_t n) {
  if(n<260 || n>MAX_IMAGE) return false;
  uint32_t w[8]; memcpy(w,p,32);
- if(w[0]!=IMAGE_MAGIC || w[1]!=1 || w[2]!=PROFILE || w[3]!=0x10000 || w[4]!=n-256 || w[5]!=RUNTIME_BASE || w[6]!=RUNTIME_BASE || w[7]) return false;
+ if(w[0]!=IMAGE_MAGIC || w[1]!=1 || w[2]!=PROFILE || w[3]!=0x10000 || w[4]!=n-256 || w[5]!=RUNTIME_BASE || w[6]!=RUNTIME_BASE || w[7]>1) return false;
  bool terminated=false;
  for(unsigned i=64;i<96;i++) {if(!p[i])terminated=true;else if(terminated||p[i]<32||p[i]>126)return false;}
  if(!terminated)return false;

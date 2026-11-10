@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; Copyright (c) 2026 Lewis Moten */
 #include "usbrole.h"
 #include <assert.h>
+#include <string.h>
 int main(void) {
  struct usbrole s;usbrole_init(&s);
  assert(usbrole_id_grounded(0)&&!usbrole_id_grounded(1u<<16)&&usbrole_id_grounded(0xfffeffffu));
@@ -44,5 +45,15 @@ int main(void) {
  assert(!(usbrole_device_gusbcfg(0xffffffffu)&(1u<<29))&&(usbrole_device_gusbcfg(0)&(1u<<30)));
  assert(usbrole_window_may_open(0)&&usbrole_window_may_open(0xffffefffu));
  assert(!usbrole_window_may_open(1u<<12));                          /* port already powered: skip the window */
+ assert(strlen(USBROLE_MISSING_COMPANION)<=16);
+ assert(!strcmp(USBROLE_MISSING_COMPANION,"OTG: INSTALL KBD"));
+ usbrole_init(&s);
+ assert(usbrole_companion_action(usbrole_step(&s,true,false,0),true,true)==USB_COMPANION_NONE);
+ assert(usbrole_companion_action(usbrole_step(&s,true,false,499999),true,true)==USB_COMPANION_NONE);
+ assert(usbrole_companion_action(usbrole_step(&s,true,false,500000),true,true)==USB_COMPANION_HANDOFF);
+ assert(usbrole_companion_action(s.role,false,true)==USB_COMPANION_MISSING);
+ assert(usbrole_companion_action(s.role,true,false)==USB_COMPANION_NONE); /* never from a trial */
+ assert(usbrole_companion_action(usbrole_step(&s,true,true,500001),true,true)==USB_COMPANION_NONE);
+ assert(usbrole_companion_action(usbrole_step(&s,false,false,500002),true,true)==USB_COMPANION_NONE);
  return 0;
 }

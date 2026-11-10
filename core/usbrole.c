@@ -8,3 +8,8 @@ enum usb_role usbrole_step(struct usbrole *s,bool id_grounded,bool enumerated,ui
  if(now_us-s->since>=USBROLE_HOST_STABLE_US) s->role=USB_ROLE_HOST_WANTED;
  return s->role;
 }
+
+enum usb_companion_action usbrole_companion_action(enum usb_role role,bool installed,bool confirmed_device_boot) {
+ if(role!=USB_ROLE_HOST_WANTED||!confirmed_device_boot)return USB_COMPANION_NONE;
+ return installed?USB_COMPANION_HANDOFF:USB_COMPANION_MISSING;
+}
