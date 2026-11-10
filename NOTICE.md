@@ -78,6 +78,8 @@ Reinhard Panhuber and other listed authors, are retained in
 [licenses/TinyUSB.txt](licenses/TinyUSB.txt), and in fetched sources. `dwc2_type.h` also carries a 2019 STMicroelectronics BSD 3-Clause notice, kept in that appendix.
 `scripts/license_appendix.py` regenerates the appendix from the fetched files. Fetching
 replaces the whole `third_party/tinyusb` folder and writes `SHA256.json` with the hash of every retained file.
+Host builds apply the MIT-licensed local `patches/tinyusb-0.21-host.patch` to generated copies
+of `usbh.c` and `hub.c` in `build/tinyusb-host`; the fetched sources remain unchanged.
 
 V4 reset/register/waveform facts and sequence were adapted independently from
 Waveshare team's `EPD_2in13_V4.c` (V1.1, 2021-10-30) at commit

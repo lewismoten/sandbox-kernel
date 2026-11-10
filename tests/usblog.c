@@ -13,6 +13,11 @@ int main(void) {
  usblog_fmt_endpoint(l,3,0,0x81,3,8,10);assert(!strcmp(l,"D3 I0 ep 0x81 int mps 8 every 10"));
  usblog_fmt_note(l,3,0xFF,"mounted");assert(!strcmp(l,"D3 mounted"));
  usblog_fmt_note(l,3,2,"x");assert(!strcmp(l,"D3 I2 x"));
+ usblog_fmt_control(l,1,0x80,6,0x100,0,18,1,20,"failed");
+ assert(!strcmp(l,"D1 CTRL 80/06 v=0100 i=0000 len=18 failed retry=1 wait=20ms"));
+ usblog_fmt_control(l,1,0x80,6,0x100,0,18,2,0,"recovered");
+ assert(strstr(l,"recovered retry=2"));
+ usblog_fmt_port_retry(l,5,2,2,"exhausted");assert(!strcmp(l,"hub5 port2 enum exhausted 2/2"));
  usblog_clear();assert(usblog_version()>0);uint32_t v=usblog_version();
  usblog_add("one");usblog_add("two\nthree");assert(usblog_version()!=v);
  assert(!strcmp(usblog_text(&n),"one\ntwo three\n")&&n==14);

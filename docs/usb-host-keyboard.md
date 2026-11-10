@@ -142,8 +142,8 @@ every microsecond.
 `usbrole_step` takes the raw 32-bit `micros()` and compares unsigned microsecond deltas
 (500,000 us). `micros()` wraps at 2^32 us (71.6 min); dividing it by 1000 first broke the
 debounce at the wrap. Tests cover the wrap and exactly 500 ms across it. (TinyUSB's own
-`tusb_time_millis_api` still does `micros()/1000`, so its millisecond counter jumps at the
-wrap; not changed here.)
+`tusb_time_millis_api` in the device role still does `micros()/1000`; the host adapter
+now accumulates unsigned microsecond deltas so its retry deadlines survive this wrap.)
 - Hot-plug is not implemented: the ID level is sampled once at boot and latched; only the
   "no computer enumerated" half of the decision is live (300 ms debounce, `usbrole_step`).
   Live hot-plug sampling needs a brief un-force window (or the A/B-device change
@@ -152,7 +152,7 @@ wrap; not changed here.)
 ## Host implementation
 
 The build uses the pinned MIT-licensed TinyUSB DWC2 host backend; no Linux or
-FreeBSD USB code is copied. Hub support and live role switching remain future
+FreeBSD USB code is copied. One hub and downstream keyboards are supported; live role switching remains future
 work. The default device build never initializes host USB itself: only the
 verified companion starts that stack.
 
@@ -190,7 +190,7 @@ record) and the `LASTBOOT` command prints them; `usb_kernel.py lastboot` sends i
 bottom-right corner and shown in INFO.
 
 What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
-device, HID only. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
+hub and up to four downstream devices, HID keyboards. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
 host-testable glue. TinyUSB sets boot protocol on a boot-subclass HID interface before its
 mount callback; the glue arms the interrupt endpoint (a refused submit is retried three times, then the keyboard is removed: keys released, status `HOST: device, no keyboard`), `hidboot_feed` turns reports into
 `input_frame` changes, and an unmount calls `hidboot_release_all` then `input_remove`.
@@ -250,15 +250,60 @@ USB registers or physical power cuts.
 ## The USB log (USB.TXT)
 
 In the host role the kernel keeps a short text record of the bus and saves it to
-`/OS/SAVES/KERNEL/USB.TXT` (replaced each boot, at most 1600 bytes plus an events line, written
+`/OS/SAVES/KERNEL/USB.TXT` (replaced each boot, at most 8192 bytes plus an events line, written
 once the log has been quiet for 1.5 s, at most 12 times a boot). Per device: address, hub and port
 (`otg-port` when it is on the OTG port itself), speed (LS/FS/HS), `split` when the DWC2 driver runs
 it through split transactions, VID:PID, device class, EP0 size; per interface: class/subclass/protocol
 and endpoints (address, type, max packet, interval); then what the kernel did (`keyboard ACCEPTED`,
 `HID skipped: not a boot keyboard`, `HID slots full`, `CONFIG REJECTED: ...`, `mounted`, `removed`). A
 device that was read but is not mounted after 4 s gets a `NOT MOUNTED` line (TinyUSB drops a failed
-enumeration silently and this build has no TinyUSB debug log). The last line counts attach and remove
-events.
+enumeration silently and this build has no TinyUSB debug log). The last line counts attach and remove events. Hub enumeration completion is
+tracked explicitly: TinyUSB does not invoke its normal device mount callback for hubs.
+
+The host-only overlay (`patches/tinyusb-0.21-host.patch`, applied to generated copies
+under `build/tinyusb-host` by `scripts/usb_host_overlay.py`) keeps the fetched,
+hash-pinned upstream sources intact. Device-role builds use upstream sources directly.
+The stack retries failed control transfers three times, after 20/40/80 ms, including
+refused controller submissions. A STALL is reported immediately: HID SET_IDLE and
+SET_PROTOCOL may legitimately stall, and TinyUSB's HID driver still handles those.
+Failed optional string reads skip the remaining strings and continue configuration.
+Other unsuccessful enumeration requests now end enumeration rather than treating
+STALL as success or leaving a class driver stalled indefinitely.
+
+Hub interrupt bitmaps are accumulated while another device enumerates. Pending bits
+are processed one at a time once both enumeration and EP0 are idle, then the hub
+interrupt poll is rearmed. This prevents overlapping port-status callbacks from
+replacing the shared hub status/callback state. After a failed downstream enumeration,
+the stack closes its endpoints and releases its address and keys, waits 200 ms (then
+400 ms), and restarts the existing debounce/status/reset sequence, at most twice.
+A physical reconnect starts a fresh retry budget. Unplugging the hub clears its queued
+changes and recovery state. These delays do not block keyboard polling or USB events.
+
+Examples (addresses, port, request and retry count vary):
+
+```text
+D1 CTRL 81/06 v=2200 i=0001 len=63 failed retry=1 wait=20ms
+D1 CTRL 81/06 v=2200 i=0001 len=63 recovered retry=1
+D1 NOT MOUNTED: enumeration failed (see CTRL/retry lines)
+hub5 port2 enum reset retry 1/2
+hub5 port2 enum recovered 1/2
+D5 enumeration complete
+```
+
+The CTRL line gives `bmRequestType/bRequest`, `wValue`, `wIndex`, and `wLength`;
+`81/06 v=2200` is a report-descriptor read, `00/09` SET_CONFIGURATION,
+and `23/03 v=0004 i=0002` a hub PORT_RESET for port 2. Terminal outcomes are
+`exhausted` or `stalled`; a recovered control request includes the retry count.
+If both port retries fail, expect `hub5 port2 enum exhausted 2/2`; the other ports
+continue. The four-second `NOT MOUNTED` watchdog remains for incomplete enumeration,
+without claiming every incomplete enumeration was a control failure. An accepted
+keyboard interface is not proof that all interfaces finished configuring.
+
+`tests/test_usbhost_retry.py` compiles the actual patched host/hub stack with a fake
+HCD and deterministic time: backoff deadlines, refused submits, success/exhaustion,
+STALL, optional string refusal, microsecond clock wrap, disconnect cancellation,
+deferred multi-port changes, cleanup and a fresh PORT_RESET after enumeration failure. It requires `make deps` (otherwise skipped).
+These tests do not qualify the hub, receiver, bus power or split transactions on hardware.
 
 Read it from a Mac with the normal kernel running (no adapter): `usb_kernel.py <port> usblog`
 (`USBLOG <n>` returns the file in numbered pieces, newlines as `|`).

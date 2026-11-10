@@ -5,6 +5,7 @@
 #include "tusb.h"
 #include "usbkbd.h"
 #include "usblog.h"
+#include "usbhost_hooks.h"
 #include "host/hcd.h"
 static bool initialized;
 static const char *init_fail="unavailable";
@@ -115,12 +116,30 @@ void usb_log(const char *s) {(void)s;}
 /* A device that was read but never mounted within 4 s: say so once (TinyUSB drops a failed enumeration silently). */
 static void watchdog(void) {
  for(unsigned i=0;i<8;i++) if(dv[i].d&&!dv[i].mounted&&!dv[i].warned&&expired(dv[i].t,4000000)) {
-  dv[i].warned=true;char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration stalled (a control request failed)");lg(l);
+  dv[i].warned=true;char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration incomplete (see CTRL/retry lines)");lg(l);
  }
+}
+void tuh_control_retry_cb(uint8_t d,const tusb_control_request_t *r,xfer_result_t result,unsigned retry,unsigned delay_ms) {
+ char l[USBLOG_LINE];
+ const char *outcome=delay_ms?"failed":result==XFER_RESULT_SUCCESS?"recovered":result==XFER_RESULT_STALLED?"stalled":result==XFER_RESULT_ABORTED?"cancelled":"exhausted";
+ usblog_fmt_control(l,d,r->bmRequestType,r->bRequest,r->wValue,r->wIndex,r->wLength,retry,delay_ms,outcome);lg(l);
+}
+void tuh_enumeration_result_cb(uint8_t d,uint8_t hub,uint8_t port,bool success) {
+ (void)hub;(void)port;
+ char l[USBLOG_LINE];
+ usblog_fmt_note(l,d,0xFF,success?"enumeration complete":"NOT MOUNTED: enumeration failed (see CTRL/retry lines)");lg(l);
+ if(success)dv_done(d,false);
+}
+void tuh_hub_retry_cb(uint8_t hub,uint8_t port,unsigned retry,const char *outcome) {
+ char l[USBLOG_LINE];usblog_fmt_port_retry(l,hub,port,retry,outcome);lg(l);
 }
 void usb_task(void) {if(initialized){tuh_task();watchdog();}}
 /* The counters of attach/remove events, for the closing line of USB.TXT. */
 void usb_host_events(uint32_t *attach,uint32_t *remove) {*attach=ev_attach;*remove=ev_remove;}
 void service_io(void) {usb_task();protocol_task();}
-uint32_t tusb_time_millis_api(void) {return micros()/1000;}
+uint32_t tusb_time_millis_api(void) {
+ /* Keep TinyUSB deadlines monotonic across the 32-bit microsecond wrap. */
+ static uint32_t last,ms,remainder;uint32_t now=micros(),delta=now-last;last=now;
+ ms+=delta/1000;remainder+=delta%1000;ms+=remainder/1000;remainder%=1000;return ms;
+}
 bool usb_healthy(void) {return initialized;}
