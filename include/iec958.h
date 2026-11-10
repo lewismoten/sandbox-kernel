@@ -16,7 +16,7 @@
 /* Subframe word: bits 0-3 preamble tag, 4-27 sample (24-bit slot, 16-bit PCM
  * sits in bits 12-27, the low 8 bits of the slot are zero), 28 valid (0 = good
  * audio), 29 user data (0), 30 channel status bit, 31 parity (bits 4-31 even). */
-enum { IEC958_PRE_B = 0x1, IEC958_PRE_M = 0x2, IEC958_PRE_W = 0x3 }; /* tags: B/Z = left at frame 0 of a block, M/X = other left, W/Y = right; the biphase patterns are the backend's. VERIFY */
+enum { IEC958_PRE_B = 0x8, IEC958_PRE_M = 0x2, IEC958_PRE_W = 0x4 }; /* tags (B/Z = left at frame 0 of a block, M/X = other left, W/Y = right), as ALSA's iec958 subframe format carries them; the HDMI MAI's B-frame identifier is 0x8, which agrees for B. M and W VERIFY */
 /* Consumer channel status for 2-channel 16-bit PCM at `rate` (48000, 44100 or
  * 32000). Byte 4 says 16-bit samples (max 20 bits, sample word length 16:
  * 0x02; VERIFY) to match the 16-bit PCM in a 24-bit subframe slot. Fills 24 bytes (192 bits): bit n of the block rides frame n.

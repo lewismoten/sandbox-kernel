@@ -17,7 +17,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define AUDIO_RING_RATE 48000u
-#define AUDIO_RING_FRAMES 4096u /* power of two: about 85 ms */
+#define AUDIO_RING_FRAMES 16384u /* power of two: about 340 ms (4096 was 85 ms, shorter than one title-screen read) */
 #define AUDIO_FRAME_BYTES 4u
 struct audio_ring {
     uint32_t wr, rd; /* free-running frame counts; queued = wr - rd */

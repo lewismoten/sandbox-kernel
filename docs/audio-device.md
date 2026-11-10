@@ -75,3 +75,36 @@ later slice feeds `/dev/audio` from it.
   ticks, second tone, end), two voices summing with clipping, equal-volume sums,
   the voice limit, idle silence, and a 2 s null-backend run with no overrun or
   underrun.
+
+# Slice 4: HDMI backend (hardware)
+
+`drivers/hdmi_audio.c` replaces the null backend when `hdmi_audio_init` succeeds
+(after `fb_start`, so the firmware's HDMI is up). Otherwise the null backend stays
+and the reason is logged (`AUDIO hdmi: unavailable ...`, also in the `AUDIO` command).
+The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested by
+`tests/test_hdmi_audio.py`.
+
+- **Clocks:** 1080p60 is 148.5 MHz; at 48 kHz N = 6144, CTS = 148500 (`hdmi_nct`).
+  The MAI sample divider is the best fraction of HSM clock / 48000 (continued fractions,
+  N up to 24 bits, M up to 256). The HSM clock is read from the Clock Manager
+  (`CM_HSMCTL` 0x2d6, `CM_HSMDIV` 0x30e0 on the test board: PLLD_PER 500 MHz / 3.0547 =
+  163.68 MHz, N = 743393, M = 218).
+- **Audio InfoFrame:** type 0x84, version 1, length 10, PB1 = 1 (2 channels, coding type
+  from the stream), checksum so the 14 bytes sum to 0, written to packet RAM slot 4 and enabled.
+- **MAI and DMA:** the FIFO takes IEC 958 subframes (the packer's output) from a DMA channel
+  (1-6, chosen from the firmware's mask) running a ring of 8 control blocks, each one 384
+  frames (two channel-status blocks, 8 ms), paced by DREQ 17. The task refills the segments
+  the DMA has left from the `/dev/audio` ring (silence when empty; underruns counted only
+  while a program has the device open).
+- **Firmware:** `scripts/assemble_boot.py` writes `hdmi_drive=2` (HDMI, not DVI, signaling:
+  DVI carries no audio packets). The boot config on the card must carry it.
+- **Test hooks (USB):** `TONE <hz> <ms>` (50-4000 Hz, up to 1000 ms; a square tone at about
+  10% amplitude through the mixer) and `AUDIO` (backend, segments played, drain rate in
+  frames a second, DMA starvation, DMA errors, ring underruns, MAI_CTL).
+  `scripts/usb_kernel.py <port> tone 440 1000` / `audio`.
+- **Hardware (2026-11-09, second Pi):** the FIFO drains at 47.5-48 kframes/s, no DMA errors, no
+  starvation, no ring underruns over seconds of silence.
+
+Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_regs.h`,
+`vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);
+HDMI 1.4b and CEA-861.

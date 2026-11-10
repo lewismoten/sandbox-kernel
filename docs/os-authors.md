@@ -294,8 +294,8 @@ described in `docs/design.md`.)
 | 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
 
-**Not yet:** sound you can hear (`/dev/audio` exists, but only a null backend drains it; the PCM host core in `docs/audio-host-core.md` is not linked into the kernel), a real USB keyboard or gamepad (input is synthetic
-only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI audio and HDMI-CEC, and the
+**Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Not yet:** a real USB keyboard or gamepad (input is synthetic
+only), Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
 general SD writing are not supported either.
 

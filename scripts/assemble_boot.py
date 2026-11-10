@@ -18,7 +18,7 @@ def main():
     record=control_record(image)
     (dest/'BOOTCT0.BIN').write_bytes(record+bytes(4096-512))
     (dest/'BOOTCT1.BIN').write_bytes(record+bytes(4096-512))
-    (dest/'config.txt').write_text('kernel=kernel.img\nkernel_address=0x8000\narm_64bit=0\ndevice_tree=\ngpu_mem=32\ncore_freq=250\ncore_freq_min=250\nforce_turbo=0\nenable_uart=1\ninit_uart_clock=3000000\nhdmi_force_hotplug=1\nhdmi_group=1\nhdmi_mode=16\ndisable_overscan=1\nscaling_kernel=8\n')  # hdmi_*: force HDMI on at 1920x1080 60 Hz (CEA mode 16) even when no display is detected at power-on; the GPU scales each mode to it with nearest-neighbor (scaling_kernel=8), so 960x540 is exactly 2x
+    (dest/'config.txt').write_text('kernel=kernel.img\nkernel_address=0x8000\narm_64bit=0\ndevice_tree=\ngpu_mem=32\ncore_freq=250\ncore_freq_min=250\nforce_turbo=0\nenable_uart=1\ninit_uart_clock=3000000\nhdmi_force_hotplug=1\nhdmi_group=1\nhdmi_mode=16\nhdmi_drive=2\ndisable_overscan=1\nscaling_kernel=8\n')  # hdmi_drive=2: HDMI (not DVI) signaling, which carries the audio packets the kernel's HDMI audio backend sends (docs/audio-device.md); hdmi_*: force HDMI on at 1920x1080 60 Hz (CEA mode 16) even when no display is detected at power-on; the GPU scales each mode to it with nearest-neighbor (scaling_kernel=8), so 960x540 is exactly 2x
     # Full notices at the root; .txt names fit 8.3.
     shutil.copyfile(ROOT/'LICENSE',dest/'MIT.TXT')
     shutil.copyfile(ROOT/'licenses/TinyUSB.txt',dest/'TINYUSB.TXT')
