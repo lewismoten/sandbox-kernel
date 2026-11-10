@@ -67,16 +67,17 @@ shipped. No FatFs code is used: the original writer operates only on preallocate
 FAT32 file data sectors. No libc or libgcc runtime is linked; unsigned EABI
 division and memory/string helpers are original MIT implementations.
 
-TinyUSB **0.18.0**, Ha Thach and contributors, is fetched directly from
-<https://github.com/hathach/tinyusb/releases/tag/0.18.0>. Archive SHA-256:
-`e7fa1bd723213749a0362c79eaccc99e84c8adea8f0a63588c4e4812608b7aa9`.
-Only the core/common/device/CDC/OS-none/DWC2 source subset is retained by the
+TinyUSB **0.21.0**, Ha Thach and contributors, is fetched directly from
+<https://github.com/hathach/tinyusb/releases/tag/0.21.0>. Archive SHA-256:
+`b7cdf35c5ccefb0f61640aff94a732ab4ebcb21498201e4a161545891b23ba01`.
+Only the core/common/device/host/CDC/HID/OS-none/DWC2 source subset is retained by the
 fetch script; no upstream BSP or SDK is used. The sources are unmodified.
 Original `include/broadcom/` headers satisfy the BCM port's glue interfaces.
 The MIT license and per-file notices, including William D. Jones, Jan Duempelmann,
 Reinhard Panhuber and other listed authors, are retained in
-[licenses/TinyUSB.txt](licenses/TinyUSB.txt), and in fetched sources. Fetching
-writes `third_party/tinyusb/SHA256.json` with every retained file's hash.
+[licenses/TinyUSB.txt](licenses/TinyUSB.txt), and in fetched sources. `dwc2_type.h` also carries a 2019 STMicroelectronics BSD 3-Clause notice, kept in that appendix.
+`scripts/license_appendix.py` regenerates the appendix from the fetched files. Fetching
+replaces the whole `third_party/tinyusb` folder and writes `SHA256.json` with the hash of every retained file.
 
 V4 reset/register/waveform facts and sequence were adapted independently from
 Waveshare team's `EPD_2in13_V4.c` (V1.1, 2021-10-30) at commit
