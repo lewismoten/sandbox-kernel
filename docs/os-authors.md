@@ -86,7 +86,8 @@ itself with `usb_kernel.py send`.
 
 In order:
 
-1. **E-ink "starting" screen**, drawn before USB or the SD card is set up.
+1. **E-ink "starting" screen** (the mark, `SANDBOX KERNEL`, `STARTING...`), drawn before USB or
+   the SD card is set up.
 2. MMU, UART, interrupts and USB are initialized. The log prints the build ID, the reset
    cause, the selected slot and the generation.
 3. **Card scan:** the SD card is initialized (`store_init`), the fallback slot is
@@ -150,23 +151,47 @@ loop (`core/protocol.c`) keeps answering `INFO`, `PUTF`, `RUN`, `STOP` and the i
 commands. Log lines say `OS none; recovery console (USB PUTF and RUN available)` or
 `OS stopped; kernel recovery console kept`.
 
+### The kernel's own screens
+
+The kernel carries its own generic branding (the chip-with-K mark and the name
+`sandbox-kernel`); it never shows the name of any OS program. Anyone running an OS on it
+sees only that. The art is in `art/boot/` (with its layout notes), baked into
+`core/logo_data.c` by `scripts/make_boot_art.py`.
+
+- **HDMI boot screen:** color bars over a 16-step gray ramp, with a small panel in the
+  middle (the mark, `sandbox-kernel`, `bare-metal boot`). It is drawn at 960x540 (the
+  kernel's own mode) and 640x480, and again whenever a fault puts the kernel's screen back.
+- **HDMI recovery console:** when no OS program is running (none was found at boot, or USB
+  stopped it) the kernel shows a header and a 60 by 12 box with its own log lines, newest
+  at the bottom, redrawn as lines arrive. A program that exits on its own leaves its last
+  frame up, as before. The console is 960x540 only.
+- **E-ink:** the starting and status screens below.
+
+`scripts/render_screen.py OUTDIR` renders all of them on the host to PNG.
+
 ### Reading the e-ink panel
 
-The 250x122 panel (`core/render.c`, `render_status`) shows the logo, `GAME-MAKER`, the
-build ID, and three lines:
+The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark, the title
+`SANDBOX KERNEL`, the build ID, and three lines (values are clipped at 16 characters):
 
 | Line | Meaning |
 | --- | --- |
 | `UP:` | uptime since the kernel started |
-| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, or a start-up failure such as `USB POWER MBOX TIMEOUT` |
-| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared |
+| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and the USB keyboard is **not yet** supported), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
+| `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared. Normal refusals (`not-ready`) do not set it |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
 `Timer progress lost`, `Trial storage health failed`, an SD step name when the card did not
-start, and `OS autostart rejected; trying DIAG.ELF`. In `core/protocol.c`, `fail()` sets
-`ERR:` to the reason of the last failed USB command, so **`not-ready` on the panel is the
-last USB command that was refused because the device was not ready for it** (for example
-`PUTF` while an OS program was running). It does not mean the kernel is broken.
+start, and `OS autostart rejected; trying DIAG.ELF`. Which replies set `ERR:` (`core/protocol.c`):
+
+| Reply | Sets `ERR:`? |
+| --- | --- |
+| `fail()` errors: bad command, `size`, `crc-format`, CRC or SHA-256 mismatch, write failure | yes |
+| storage not ready (`PUTF`, `RUN`, `PUT2` when storage is down): `ERR not-ready` through `fail()` | yes (`not-ready`) |
+| flow-control refusals through `refuse()`: no `INFO` yet, an OS program running, a locked or pending update | no, reply only |
+| direct replies: `ERR input value` (`KEY`, `AXIS`), `ERR run ASSET NOT FOUND` (`RUN`) | no, reply only |
+
+`STOP` and `INPUT` use `refuse()` for their not-ready cases. A refusal never clears an earlier error.
 The panel redraws only when its content changes, and a full refresh takes seconds.
 
 ## 3. Writing a program
@@ -283,7 +308,7 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 
 | Command | What it does |
 | --- | --- |
-| `info` | print the device's `INFO` line: slots, generations, features |
+| `info` | print the device's `INFO` line: slots, generations, `updates=ready\|locked`, `os=running\|stopped\|none`, features |
 | `tail` | print the kernel log (`LOG ...` lines) until you stop it |
 | `put FILE [--name NAME]` | install FILE as `/OS/<NAME>` (upper-case 8.3, 1 byte to 1 MiB, CRC and SHA-256 checked) |
 | `putgame FOLDER DIR` | install every file as `/GAMES/<DIR>/<NAME>` |
@@ -294,6 +319,22 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
 | `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot) |
+
+**The `INFO` fields:** `updates=ready` means this kernel accepts update requests (a capability);
+`updates=locked` means it does not; `updates=busy` means a new kernel is already pending, so wait
+for its confirmation. `os=running` is an OS program running now, `os=stopped` one ran and was
+stopped, `os=none` none has run since boot. `features=` is **legacy**, kept for compatibility:
+it still reads `kernel,no-os` when updates are ready (it never meant "no OS") and `locked`
+otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
+
+**When `PUT2` is admitted:** `INFO` was sent this session, storage is ready, `updates=ready`
+(not locked) and no update slot is pending. Otherwise `ERR not-ready`. `os=running` alone does
+not block a kernel update. `usb_kernel.py send` parses `INFO` into exact fields and refuses
+before sending if `updates=`, `features=` or `pending=` repeats, `updates=` is not exactly `ready`
+(including `busy`), `features=locked` contradicts it, or a `pending=` field is not a plain
+decimal 0. With no `updates=` field it accepts
+only the exact legacy `features=kernel,no-os`. The web page (`web/src/piRemote/protocol.ts`, in
+the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 
 **The not-ready rule:** `PUTF` (and so `put`, `putgame`, `putapp`) is refused with
 `ERR not-ready` while an OS program is running, and during a kernel update. **Run `stop`

@@ -24,7 +24,7 @@ bool fb_start(void) {
  p=line;
  if(why) {fb_fail=why;append(&p,why);if(!strcmp(why,"FB MBOX")){append(&p," ");append(&p,property_fail);}boot_note(line);return false;}
  fb_pixels=(uint8_t *)(uintptr_t)fb0.phys;
- fb_pattern(&fb0,fb_pixels);
+ fb_boot_screen(&fb0,fb_pixels);
  append(&p,"FB ok ");append_n(&p,fb0.width);append(&p,"x");append_n(&p,fb0.height);append(&p," ");append_n(&p,fb0.depth);append(&p," ");append_n(&p,fb0.pitch);
  boot_note(line);
  p=line;append(&p,"FB bus ");append_hex(&p,fb0.bus);append(&p," bytes ");append_n(&p,fb0.bytes);append(&p," order ");append_n(&p,fb0.pixel_order);
