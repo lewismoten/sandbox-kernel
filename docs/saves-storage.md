@@ -21,9 +21,17 @@ close, `sbx_rename`); only the accepted path grows.
 
 ## Limits
 
-At most **64 game folders** under `/OS/SAVES` and **32 files** in one game's folder. Creating a
-new folder or file past a cap fails at `sbx_fsync` with `-122` (quota) and writes nothing;
-existing games and files keep saving. The caps keep a runaway app from filling the card.
+At most **64 game folders** under `/OS/SAVES`, **32 files** in one game's folder, and **1 MiB**
+(`FATSAVE_MAX_BYTES`, `include/fatput.h`) of file data in one game's folder in total (the file
+being replaced does not count against itself). Creating a new folder or file, or writing past
+the byte cap, fails at `sbx_fsync` with `-122` (quota) and writes nothing; existing games and
+files keep saving within the caps. The caps keep a runaway app from filling the card. Apps
+cannot delete saves yet (there is no remove call in the ABI), so a game that hits a cap can only
+overwrite its existing files; a person clears space by removing files from the card.
+
+A replaced or removed file's clusters are freed only when no other entry in the same folder
+uses them. On a cross-linked card the kernel leaks the chain instead (log line `FAT CROSSLINK
+leaked`), so one file's rewrite can never free another file's data.
 
 ## Power-cut behavior
 

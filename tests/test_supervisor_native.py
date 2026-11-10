@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Standalone real-path native/sanitizer execution, no ctypes ASan preload."""
+import sys
 import os, pathlib, shlex, subprocess, sys, tempfile, unittest
 from test_m1_user import program, ROOT
 import fatgen, hostlib
@@ -25,6 +26,6 @@ class SupervisorNative(unittest.TestCase):
             for name in files:
                 cmd=[str(out),str(disk),'/OS/'+name]
                 print('$',shlex.join(cmd),flush=True)
-                subprocess.run(cmd,check=True,env={**os.environ,'ASAN_OPTIONS':'detect_leaks=1:halt_on_error=1','UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'})
+                subprocess.run(cmd,check=True,env={**os.environ,'ASAN_OPTIONS':('detect_leaks=0' if sys.platform=='darwin' else 'detect_leaks=1')+':halt_on_error=1','UBSAN_OPTIONS':'halt_on_error=1:print_stacktrace=1'})
 
 if __name__=='__main__': unittest.main()

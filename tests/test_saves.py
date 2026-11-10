@@ -185,3 +185,52 @@ class SaveCalls(CallsBase):
         self.assertEqual(self.open('/sd/OS/CACHE/NEW.IDX', 0x601)[0], 0)
 
 if __name__ == '__main__': unittest.main()
+
+class CrossLink(SaveStorage):
+    """A card where A.SAV's entry points at B.SAV's cluster: freeing A's old chain must not free B's."""
+    def link_ab(self):
+        import mmap
+        self.assertEqual(self.put(b'AAA', b'A.SAV', b'a' * 100), 0)
+        self.assertEqual(self.put(b'AAA', b'B.SAV', b'b' * 100), 0)
+        with open(self.disk, 'r+b') as f, mmap.mmap(f.fileno(), 0) as m:
+            a = m.find(b'A       SAV'); b = m.find(b'B       SAV')
+            m[a + 20:a + 22] = m[b + 20:b + 22]; m[a + 26:a + 28] = m[b + 26:b + 28]
+        self.c.close_disk(); self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+
+    def test_save_rewrite_keeps_cross_linked_partner(self):
+        self.link_ab()
+        self.assertEqual(self.put(b'AAA', b'A.SAV', b'new'), 0)
+        self.assertEqual(self.read('/OS/SAVES/AAA/B.SAV'), b'b' * 100)
+
+    def test_save_remove_keeps_cross_linked_partner(self):
+        self.link_ab()
+        self.c.fatsave_remove.argtypes = [C.c_char_p, C.c_char_p]
+        self.assertEqual(self.c.fatsave_remove(b'AAA', b'A.SAV'), 0)
+        self.assertEqual(self.read('/OS/SAVES/AAA/B.SAV'), b'b' * 100)
+
+    def test_cache_put_and_remove_keep_cross_linked_partner(self):
+        import mmap
+        self.c.fatcache_put.argtypes = [C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatcache_put(b'A.DAT', b'a' * 100, 100), 0)
+        self.assertEqual(self.c.fatcache_put(b'B.DAT', b'b' * 100, 100), 0)
+        with open(self.disk, 'r+b') as f, mmap.mmap(f.fileno(), 0) as m:
+            a = m.find(b'A       DAT'); b = m.find(b'B       DAT')
+            m[a + 20:a + 22] = m[b + 20:b + 22]; m[a + 26:a + 28] = m[b + 26:b + 28]
+        self.c.close_disk(); self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+        self.assertEqual(self.c.fatcache_put(b'A.DAT', b'new', 3), 0)
+        self.assertEqual(self.read('/OS/CACHE/B.DAT'), b'b' * 100)
+        self.assertEqual(self.c.fatcache_remove(b'A.DAT'), 0)
+        self.assertEqual(self.read('/OS/CACHE/B.DAT'), b'b' * 100)
+
+class SaveByteQuota(SaveStorage):
+    def test_game_folder_is_capped_at_one_mib_and_replacing_counts_once(self):
+        half = b'x' * (512 * 1024)
+        self.assertEqual(self.put(b'BIG', b'A.SAV', half), 0)
+        self.assertEqual(self.put(b'BIG', b'B.SAV', half), 0)
+        before = self.c.write_count()
+        self.assertEqual(self.put(b'BIG', b'C.SAV', b'y'), -122)
+        self.assertEqual(self.c.write_count(), before)
+        self.assertEqual(self.put(b'BIG', b'A.SAV', half), 0)   # replacing is not growth
+        self.assertEqual(self.put(b'BIG', b'A.SAV', b'z' * 10), 0)
+        self.assertEqual(self.put(b'BIG', b'C.SAV', b'y' * 100), 0)
+        self.assertEqual(self.put(b'OTHER', b'A.SAV', half), 0)  # another game has its own quota

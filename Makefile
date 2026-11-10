@@ -54,8 +54,9 @@ boot: all
 	$(PYTHON) scripts/assemble_boot.py
 test:
 	$(PYTHON) -m unittest discover -s tests -v
+ASAN_ENV := $(if $(filter Darwin,$(shell uname -s)),ASAN_OPTIONS=detect_leaks=0,)
 test-asan: test
-	$(PYTHON) tests/lfn_asan.py
-	FB_FILL_SANITIZE=1 $(PYTHON) tests/test_fb_fill.py
+	$(ASAN_ENV) $(PYTHON) tests/lfn_asan.py
+	$(ASAN_ENV) FB_FILL_SANITIZE=1 $(PYTHON) tests/test_fb_fill.py
 clean:
 	$(PYTHON) scripts/clean.py

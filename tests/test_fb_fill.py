@@ -24,7 +24,7 @@ def run_probe(directory, source=None, sanitize=False):
     command += [str(ROOT / 'tests/fb_fill_probe.c'),
                 str(source or ROOT / 'core/fb.c'), link, '-o', str(binary)]
     subprocess.run(command, check=True)
-    env = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:halt_on_error=1',
+    env = dict(os.environ, ASAN_OPTIONS=('detect_leaks=0' if sys.platform=='darwin' else 'detect_leaks=1')+':halt_on_error=1',
                UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
     return subprocess.run([str(binary)], capture_output=True, text=True, env=env)
 
