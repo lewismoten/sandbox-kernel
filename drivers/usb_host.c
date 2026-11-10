@@ -6,6 +6,33 @@
 #include "usbkbd.h"
 static bool initialized;
 static const char *init_fail="unavailable";
+/* TinyUSB calls this before SET_CONFIGURATION and before any class opens endpoints.
+   Reject the entire configuration if any HID IN endpoint exceeds its receive buffer,
+   including interfaces our keyboard mount callback would otherwise skip. */
+bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const tusb_desc_configuration_t *config) {
+ (void)daddr;(void)cfg_index;
+ const uint8_t *p=(const uint8_t *)config;
+ uint16_t total=(uint16_t)(p[2]|((uint16_t)p[3]<<8));
+ if(total<sizeof(*config)||total>CFG_TUH_ENUMERATION_BUFSIZE) return false;
+ bool hid=false;
+ for(uint16_t off=0;off<total;) {
+  if(total-off<2||p[off]<2||p[off]>total-off) return false;
+  uint8_t len=p[off],type=p[off+1];
+  if(type==TUSB_DESC_INTERFACE) {
+   if(len<sizeof(tusb_desc_interface_t)) return false;
+   hid=p[off+5]==TUSB_CLASS_HID;
+  } else if(type==TUSB_DESC_ENDPOINT&&hid) {
+   if(len<sizeof(tusb_desc_endpoint_t)) return false;
+   uint16_t size=(uint16_t)(p[off+4]|((uint16_t)p[off+5]<<8))&0x7ffu;
+   if((p[off+2]&0x80u)&&size>CFG_TUH_HID_EPIN_BUFSIZE) {
+    log_line("USB host: HID IN packet exceeds receive buffer");
+    return false; /* one log per rejected configuration, no mount/re-arm loop */
+   }
+  }
+  off+=len;
+ }
+ return true;
+}
 void usb_irq(void) {if(initialized)tuh_int_handler(0,true);}
 void tuh_mount_cb(uint8_t daddr) {uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);}
 void tuh_umount_cb(uint8_t daddr) {(void)daddr;usbkbd_device_gone();usbkbd_detached();}

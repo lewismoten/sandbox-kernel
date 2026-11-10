@@ -5,7 +5,8 @@ import ctypes as C, pathlib, subprocess, sys, tempfile, unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import usb_kernel
-class Counters(C.Structure): _fields_=[(n,C.c_uint32) for n in ('transport','tx_bytes','tx_dropped','rx_bytes','rx_dropped','tx_pending','rx_pending')]
+class Counters(C.Structure):
+    _fields_=[('transport',C.c_uint32)]+[(n,C.c_uint64) for n in ('tx_bytes','tx_dropped','rx_bytes','rx_dropped')]+[(n,C.c_uint32) for n in ('tx_pending','rx_pending')]
 def load():
     out=pathlib.Path(tempfile.mkdtemp())/'serial.so'
     subprocess.run(['cc','-shared','-fPIC','-O1','-Wall','-Wextra','-Werror','-I'+str(ROOT/'include'),str(ROOT/'core/serial.c'),'-o',str(out)],check=True)

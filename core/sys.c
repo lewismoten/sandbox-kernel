@@ -62,7 +62,9 @@ static int write_path(const char *p,uint32_t n,char game[9],char out[13]) {
 }
 /* inst: the input instance an input handle was opened on; pend: a directory
    entry that did not fit the last getdents buffer. */
-static struct {uint8_t kind; bool has_pend; uint16_t gen; int asset; uint32_t inst; struct asset_long_dirent pend; uint32_t meta[3];} fds[SYS_HANDLES];
+/* Eight slot bits leave 56 generation bits. Exhausted slots stay retired, including across reset. */
+#define HANDLE_GEN_MAX (UINT64_MAX >> 8)
+static struct {uint8_t kind; bool has_pend; uint64_t gen; int asset; uint32_t inst; struct asset_long_dirent pend; uint32_t meta[3];} fds[SYS_HANDLES];
 static bool surface_mapped; static uint32_t surface_bytes;
 int64_t sys_exit_status; uint32_t sys_calls,sys_presents,sys_healths; uint64_t sys_health_seq,sys_wake_us;
 extern uint32_t boot_generation;
@@ -71,7 +73,8 @@ static void release(unsigned i) {
  if(fds[i].kind==K_INPUT) input_close(fds[i].inst);
  if(fds[i].kind==K_SERIAL) serial_close();
  if(fds[i].kind==K_AUDIO) audio_dev_close();
- fds[i].kind=K_FREE;fds[i].has_pend=false;fds[i].gen=(uint16_t)(fds[i].gen==0xffffu?1:fds[i].gen+1);
+ fds[i].kind=K_FREE;fds[i].has_pend=false;
+ if(fds[i].gen<=HANDLE_GEN_MAX) fds[i].gen++; /* MAX+1 is the permanent retirement marker */
 }
 static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
 void sys_reset(void) {
@@ -81,9 +84,9 @@ void sys_reset(void) {
 }
 uint32_t sys_open_handles(void) {uint32_t n=0;for(unsigned i=0;i<SYS_HANDLES;i++) n+=fds[i].kind!=K_FREE;return n;}
 static int lookup(uint64_t fd) {
- if(fd>>24||!(fd>>8)) return -EBADF;
+ if(!(fd>>8)) return -EBADF;
  unsigned i=(unsigned)(fd&0xffu);
- if(i>=SYS_HANDLES||fds[i].kind==K_FREE||fds[i].gen!=(uint16_t)(fd>>8)) return -EBADF;
+ if(i>=SYS_HANDLES||fds[i].kind==K_FREE||fds[i].gen!=(fd>>8)) return -EBADF;
  return (int)i;
 }
 static uint32_t fb_surface_bytes(void) {return FB_SURFACE_MAX;} /* the same in every mode */
@@ -91,7 +94,7 @@ static uint32_t fb_bpp(void) {return fb0.depth/8u;}
 static int open_path(const char *p,uint32_t n,uint32_t flags,uint64_t *fd) {
  if((flags&0x600u)&&flags!=0x601u)return -EINVAL;
  if((flags&0x600u)&&(n<13||(memcmp(p,"/sd/OS/CACHE/",13)&&memcmp(p,"/sd/OS/SAVES/",13))))return -30;
- unsigned i=0; while(i<SYS_HANDLES&&fds[i].kind!=K_FREE) i++;
+ unsigned i=0; while(i<SYS_HANDLES&&(fds[i].kind!=K_FREE||fds[i].gen>HANDLE_GEN_MAX)) i++;
  if(i==SYS_HANDLES) return -EMFILE;
  uint32_t access=flags&3u;
  if(n==8&&!memcmp(p,"/dev/log",8)) {if(access==0) return -EACCES; fds[i].kind=K_LOG;}
