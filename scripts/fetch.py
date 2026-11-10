@@ -3,7 +3,7 @@
 """Fetch pinned upstream inputs without invoking git or executing upstream code."""
 import argparse, hashlib, io, json, pathlib, tarfile, urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1]
-TINYUSB_SHA256='e7fa1bd723213749a0362c79eaccc99e84c8adea8f0a63588c4e4812608b7aa9'
+TINYUSB_SHA256='b7cdf35c5ccefb0f61640aff94a732ab4ebcb21498201e4a161545891b23ba01'
 FIRMWARE_TAG='1.20240902'
 FIRMWARE_COMMIT='b5eb52b343e9bc1391a8059a38e12e470c109f5c'
 WAVESHARE_COMMIT='d28b3c4cfc78eef1c6cd6e6e3013654e449d2864'
@@ -15,16 +15,16 @@ def manifest(dest,pin):
     (dest/'SHA256.json').write_text(json.dumps({'pin':pin,'files':records},indent=2)+'\n')
     (dest/'.fetched').write_text(pin+'\n')
 def tinyusb():
-    blob=download('https://codeload.github.com/hathach/tinyusb/tar.gz/refs/tags/0.18.0')
+    blob=download('https://codeload.github.com/hathach/tinyusb/tar.gz/refs/tags/0.21.0')
     if digest(blob)!=TINYUSB_SHA256: raise ValueError('TinyUSB archive hash mismatch')
     dest=ROOT/'third_party/tinyusb';dest.mkdir(parents=True,exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(blob),mode='r:gz') as tar:
         for entry in tar.getmembers():
             name=entry.name.partition('/')[2]
-            allowed=name=='LICENSE' or name in ('src/tusb.c','src/tusb.h','src/tusb_option.h','src/osal/osal.h','src/osal/osal_none.h') or name.startswith(('src/common/','src/device/','src/class/cdc/','src/portable/synopsys/dwc2/'))
+            allowed=name=='LICENSE' or name in ('src/tusb.c','src/tusb.h','src/tusb_option.h','src/osal/osal.h','src/osal/osal_none.h') or name.startswith(('src/common/','src/device/','src/class/cdc/','src/class/hid/','src/host/','src/portable/synopsys/dwc2/'))
             if allowed and entry.isfile() and '..' not in pathlib.PurePosixPath(name).parts:
                 path=dest/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(tar.extractfile(entry).read())
-    manifest(dest,'TinyUSB 0.18.0 archive SHA256 '+TINYUSB_SHA256)
+    manifest(dest,'TinyUSB 0.21.0 archive SHA256 '+TINYUSB_SHA256)
 def firmware():
     dest=ROOT/'third_party/firmware';dest.mkdir(parents=True,exist_ok=True)
     lock=json.loads((ROOT/'scripts/firmware-lock.json').read_text())
