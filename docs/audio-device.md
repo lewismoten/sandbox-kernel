@@ -92,10 +92,16 @@ The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested
 - **Audio InfoFrame:** type 0x84, version 1, length 10, PB1 = 1 (2 channels, coding type
   from the stream), checksum so the 14 bytes sum to 0, written to packet RAM slot 4 and enabled.
 - **MAI and DMA:** the FIFO takes IEC 958 subframes (the packer's output) from a DMA channel
-  (1-6, chosen from the firmware's mask) running a ring of 8 control blocks, each one 384
-  frames (two channel-status blocks, 8 ms), paced by DREQ 17. The task refills the segments
-  the DMA has left from the `/dev/audio` ring (silence when empty; underruns counted only
-  while a program has the device open).
+  (1-6, chosen from the firmware's mask) running a circular ring of 8 control blocks, each one 384
+  frames (two channel-status blocks, 8 ms), paced by DREQ 17. DMA runs continuously.
+  Each segment-complete IRQ increments a monotonic 32-bit counter; task progress uses
+  unsigned counter differences, so full laps and counter wrap remain visible. IRQs
+  must be serviced within 8 ms because the DMA interrupt status is sticky.
+  The task refills completed segments from `/dev/audio` (silence when empty;
+  underruns counted only after the first write while the device is open).
+  A delay of eight or more completions increments starvation and accounts for missed
+  drains before refilling the latest seven safe buffers. No completions for 64 ms
+  counts one stall until progress resumes. Neither path restarts DMA.
 - **Firmware:** `scripts/assemble_boot.py` writes `hdmi_drive=2` (HDMI, not DVI, signaling:
   DVI carries no audio packets). The boot config on the card must carry it.
 - **Test hooks (USB):** `TONE <hz> <ms>` (50-4000 Hz, up to 1000 ms; a square tone at about

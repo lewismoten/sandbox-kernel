@@ -28,7 +28,10 @@ static uint32_t buf[HDMI_DMA_SEGS * SEG_WORDS] __attribute__((aligned(32)));
 static uint32_t pcm[HDMI_DMA_SEG_FRAMES];
 static uint8_t stL[24], stR[24];
 static struct mixer mx;
-static uint32_t last_cur, ahead, segs_played, starved, started_us, errors, tones;
+static volatile uint32_t completions; /* single writer: segment-complete IRQ */
+static uint32_t last_completed, segs_played, starved, started_us, errors, tones;
+static uint32_t last_progress_us;
+static int stalled;
 static struct hdmi_audio_clocks clk;
 static const char *why = "not tried";
 
@@ -51,12 +54,30 @@ static void hex(char *o, uint32_t v) { for (int i = 7; i >= 0; i--) *o++ = "0123
 static void sayhex(const char *a, uint32_t v) { char l[80], h[9], *p = l; const char *s; hex(h, v); for (s = "AUDIO hdmi: "; *s;) *p++ = *s++; for (s = a; *s;) *p++ = *s++; for (char *q = h; *q;) *p++ = *q++; *p = 0; boot_note(l); }
 static int fail(const char *w) { why = w; boot_note("AUDIO hdmi: unavailable, null backend stays:"); boot_note(w); return -1; }
 
-static void fill(uint32_t seg) {
- uint32_t q = audio_ring_queued(&audio0.ring), n = audio0.open ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
- if (n) audio_ring_read(&audio0.ring, pcm, n); /* open: a short queue counts one underrun and pads with silence */
+static void read_pcm(void) {
+ uint32_t q = audio_ring_queued(&audio0.ring), n = (audio0.open && audio0.wrote) ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
+ if (n) audio_ring_read(&audio0.ring, pcm, n); /* after first write: short queues count an underrun and pad with silence */
  for (uint32_t i = n; i < HDMI_DMA_SEG_FRAMES; i++) pcm[i] = 0;
+}
+
+static void fill(uint32_t seg) {
+ read_pcm();
  iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, buf + seg * SEG_WORDS);
  /* The segment always starts a block: 384 = 2 * 192, so the frame counter restarts at 0. */
+}
+
+/* Keep the chain circular; INTEN reports each completed segment without
+ * stopping DMA. Service the IRQ within one segment (8 ms): the DMA INT bit
+ * is sticky, not a hardware event queue. Task delays can span many laps. */
+static void build_ring(void) {
+ dma_build_ring(cbs, HDMI_DMA_SEGS, bus(cbs), bus(buf), SEG_WORDS * 4u, 0x7e000000u | (HDMI_HD_BASE - PERIPH + HD_MAI_DATA));
+ for (uint32_t i = 0; i < HDMI_DMA_SEGS; i++) cbs[i].ti |= DMA_TI_INTEN;
+}
+
+void hdmi_audio_irq(void) {
+ if (hw.ch < 1 || !(dma(DMA_CS) & 4u)) return;
+ dmaw(DMA_CS, (dma(DMA_CS) & ~0x102u) | 4u); /* W1C INT; preserve ACTIVE/priorities, leave END/error */
+ completions++;
 }
 
 int hdmi_audio_init(void) {
@@ -94,10 +115,10 @@ int hdmi_audio_init(void) {
   hc(HC_RAM_PACKET_CONFIG, cfg | (1u << PKT_ID_AUDIO_INFO));
   sayhex("RAM_PACKET_CONFIG ", REG(HDMI_CORE_BASE + HC_RAM_PACKET_CONFIG));
  }
- /* Silence in every segment, then the DMA ring. */
+ /* Silence in every segment, then the looping DMA ring. */
  mixer_init(&mx);
  for (uint32_t i = 0; i < HDMI_DMA_SEGS; i++) { for (uint32_t k = 0; k < HDMI_DMA_SEG_FRAMES; k++) pcm[k] = 0; iec958_pack(pcm, HDMI_DMA_SEG_FRAMES, 0, stL, stR, buf + i * SEG_WORDS); }
- dma_build_ring(cbs, HDMI_DMA_SEGS, bus(cbs), bus(buf), SEG_WORDS * 4u, 0x7e000000u | (HDMI_HD_BASE - PERIPH + HD_MAI_DATA));
+ build_ring();
  drain();
  hd(HD_MAI_CTL, hdmi_mai_ctl_run());
  sayhex("MAI_CTL after write ", REG(HDMI_HD_BASE + HD_MAI_CTL));
@@ -106,12 +127,15 @@ int hdmi_audio_init(void) {
  dmaw(DMA_CS, 0x80000000u); for (uint32_t s = micros(); dma(DMA_CS) & 0x80000000u; ) if (expired(s, 10000)) break;
  dmaw(DMA_CS, 0x6u); /* clear END and INT */
  dmaw(DMA_CONBLK, bus(cbs));
- started_us = micros(); last_cur = 0; ahead = HDMI_DMA_SEGS - 1; segs_played = 0; starved = 0; errors = 0;
+ started_us = micros(); last_progress_us = started_us;
+ completions = 0; last_completed = 0; segs_played = 0; starved = 0; errors = 0; stalled = 0;
+ REG(PERIPH + 0xb210u) = 1u << (16u + (uint32_t)hw.ch); barrier();
  dmaw(DMA_CS, 1u | (1u << 28) | (8u << 16) | (15u << 20)); /* ACTIVE, wait for outstanding writes, priority 8, panic 15 */
  delay_us(30000);
- uint32_t c1 = dma(DMA_CONBLK), mc = REG(HDMI_HD_BASE + HD_MAI_CTL);
+ uint32_t mc = REG(HDMI_HD_BASE + HD_MAI_CTL);
  sayhex("DMA CS ", dma(DMA_CS)); sayhex("DMA DEBUG ", dma(DMA_DEBUG)); sayhex("MAI_CTL ", mc);
- if ((dma(DMA_CS) & 0x100u) || c1 == bus(cbs)) {
+ if ((dma(DMA_CS) & 0x100u) || !completions) {
+  REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
   dmaw(DMA_CS, 0x80000000u); hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
   return fail((dma(DMA_CS) & 0x100u) ? "DMA error" : "DMA is not draining (DREQ or MAI not running)");
  }
@@ -125,12 +149,23 @@ int hdmi_audio_active(void) { return hw.active; }
 void hdmi_audio_task(void) {
  if (!hw.active) return;
  if (mixer_active(&mx)) mixer_pump_dev(&mx, HDMI_DMA_SEG_FRAMES);
- uint32_t cur = dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS);
- uint32_t adv = (cur - last_cur) & (HDMI_DMA_SEGS - 1);
- last_cur = cur; segs_played += adv;
- if (adv > ahead) { starved++; ahead = 0; } else ahead -= adv; /* a late refill replayed old data once */
- if (dma(DMA_CS) & 0x100u) { errors++; dmaw(DMA_CS, 0x100u); }
- for (; ahead < HDMI_DMA_SEGS - 1; ahead++) fill((cur + ahead + 1) & (HDMI_DMA_SEGS - 1));
+ /* Unsigned subtraction retains full laps and tolerates 32-bit wrap. */
+ uint32_t completed = completions, adv = completed - last_completed;
+ uint32_t now = micros();
+ if (adv) { last_progress_us = now; stalled = 0; }
+ else if (!stalled && now - last_progress_us >= HDMI_DMA_SEGS * 8000u) {
+  starved++; stalled = 1; /* no completion for an entire ring duration */
+ }
+ segs_played += adv;
+ if (dma(DMA_CS) & 0x100u) { errors++; dmaw(DMA_CS, (dma(DMA_CS) & ~6u) | 0x100u); }
+ /* Only seven buffers are behind DMA; never refill its current segment.
+  * Account for drains missed before those buffers, including their underruns,
+  * then prepare the most recent completed segments as in the original ring. */
+ uint32_t refill = adv < HDMI_DMA_SEGS ? adv : HDMI_DMA_SEGS - 1u;
+ if (adv >= HDMI_DMA_SEGS) starved++;
+ for (uint32_t i = refill; i < adv; i++) read_pcm();
+ for (uint32_t i = completed - refill; i != completed; i++) fill(i & (HDMI_DMA_SEGS - 1u));
+ last_completed = completed;
  drain();
 }
 int hdmi_audio_tone(uint32_t hz, uint32_t ms) {

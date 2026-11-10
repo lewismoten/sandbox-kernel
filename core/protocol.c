@@ -100,7 +100,10 @@ static void command_line(void) {
   if(!session) {refuse("not-ready");return;}
   os_request_stop();waiting_stop=true;return;
  }
- {char r[160];if(audio_command(line,r,sizeof r)){if(!session)usb_reply("ERR not-ready\n");else usb_reply(r);return;}}
+ if(!strcmp(line,"AUDIO")||(used>=5&&!memcmp(line,"TONE ",5))) {
+  if(!session) {refuse("not-ready");return;}
+  char r[160];if(audio_command(line,r,sizeof r)) {usb_reply(r);return;}
+ }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}
