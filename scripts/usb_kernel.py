@@ -210,6 +210,24 @@ def send_command(port,command):
     while line.startswith('INFO 2 '): line=port.reply(5)
     print(line);return 0 if line.startswith('OK') else 1
 
+def usblog_text(parts):
+    """USBLOG replies carry the file in numbered pieces with '|' for each newline; join them back."""
+    return ''.join(parts).replace('|','\n')
+
+def read_usblog(port):
+    """USBLOG: the host kernel's USB.TXT, fetched piece by piece (a reply is short)."""
+    print(handshake(port));parts=[];i=0;total=1
+    while i<total:
+        port.send(f'USBLOG {i}\n'.encode());line=port.reply(5)
+        while line.startswith('INFO 2 '): line=port.reply(5)
+        if line.startswith('ERR '): print(line);return 1
+        m=re.fullmatch(r'USBLOG (\d+)/(\d+) ?(.*)',line)
+        if not m: print(line);return 1
+        total=int(m.group(2))
+        if total==0: print('no USB.TXT yet (boot once in keyboard mode with a device attached)');return 1
+        parts.append(m.group(3));i+=1
+    print(usblog_text(parts),end='');return 0
+
 def run_program(port,name,seconds):
     """RUN: start /OS/<name>, then show the log for a while."""
     print(handshake(port));port.send(f'RUN {name}\n'.encode())
@@ -236,6 +254,7 @@ def main():
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
     p=sub.add_parser('name',help='give this Pi a short name (1-8 of A-Z 0-9 -), shown on the e-ink and in INFO; stored as /OS/NAME.TXT');p.add_argument('text')
+    sub.add_parser('usblog',help='print /OS/SAVES/KERNEL/USB.TXT: what the keyboard (host) kernel found on the USB bus last boot')
     sub.add_parser('lastboot',help='the previous boot\'s decision and keyboards found, and this boot\'s')
     sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
     p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
@@ -253,6 +272,7 @@ def main():
         if a.action=='send': return send_kernel(port,a.kernel)
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())
         if a.action=='run': return run_program(port,a.name.upper(),a.seconds)
+        if a.action=='usblog': return read_usblog(port)
         if a.action=='lastboot': return send_command(port,'LASTBOOT')
         if a.action=='name':
             import tempfile

@@ -2,6 +2,7 @@
 #include "usbkbd.h"
 #include "hidboot.h"
 #include "input.h"
+#include "usblog.h"
 void log_line(const char *s); /* kernel.h, without its hardware inlines */
 /* Up to USBKBD_MAX boot keyboards at once (a hub may hold two plus a receiver); the input queue sees one device. */
 static struct {struct hidboot kb;bool used;uint8_t daddr,idx;} slot[USBKBD_MAX];static unsigned nkb,ndev;
@@ -27,8 +28,11 @@ static const char *code_name(uint16_t code) {
 static void say(const char *a,const char *b) {
  char t[48];unsigned n=0;while(*a&&n<30)t[n++]=*a++;while(b&&*b&&n<46)t[n++]=*b++;t[n]=0;log_line(t);
 }
+static void note(uint8_t daddr,uint8_t idx,const char *t) { /* "D2 hid1 text": idx is TinyUSB's HID index (the driver logs which interface it is) */
+ char x[USBLOG_LINE-12]="hid0 ";x[3]=(char)('0'+idx%10);unsigned n=5;while(*t&&n<sizeof x-1)x[n++]=*t++;x[n]=0;
+ char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,x);usblog_add(l);}
 static void hex4(char *o,uint16_t v) {for(int i=0;i<4;i++)o[i]="0123456789ABCDEF"[(v>>(12-4*i))&15];}
-void usbkbd_init(void) {for(unsigned i=0;i<USBKBD_MAX;i++)slot[i].used=false;nkb=0;ndev=0;}
+void usbkbd_init(void) {usblog_clear();for(unsigned i=0;i<USBKBD_MAX;i++)slot[i].used=false;nkb=0;ndev=0;}
 void usbkbd_host_up(void) {log_line("USB host up");}
 void usbkbd_attached(uint16_t vid,uint16_t pid) {
  char id[10];hex4(id,vid);id[4]=':';hex4(id+5,pid);id[9]=0;ndev++;say("device attached ",id);
@@ -36,14 +40,14 @@ void usbkbd_attached(uint16_t vid,uint16_t pid) {
 void usbkbd_detached(void) {if(ndev)ndev--;log_line("device removed");}
 static int find(uint8_t daddr,uint8_t idx) {for(unsigned i=0;i<USBKBD_MAX;i++)if(slot[i].used&&slot[i].daddr==daddr&&slot[i].idx==idx)return (int)i;return -1;}
 bool usbkbd_hid_mounted(uint8_t daddr,uint8_t idx,bool boot_keyboard) {
- if(!boot_keyboard) {log_line("HID interface skipped (not a boot keyboard)");return false;}
- if(find(daddr,idx)>=0) return false;
+ if(!boot_keyboard) {log_line("HID interface skipped (not a boot keyboard)");note(daddr,idx,"HID skipped: not a boot keyboard");return false;}
+ if(find(daddr,idx)>=0) {note(daddr,idx,"HID skipped: already mounted");return false;}
  for(unsigned i=0;i<USBKBD_MAX;i++) if(!slot[i].used) {
   hidboot_init(&slot[i].kb);slot[i].used=true;slot[i].daddr=daddr;slot[i].idx=idx;
   if(!nkb++) input_add();
-  log_line("keyboard ready");return true;
+  log_line("keyboard ready");note(daddr,idx,"keyboard ACCEPTED");return true;
  }
- log_line("keyboard skipped (too many)");return false;
+ log_line("keyboard skipped (too many)");note(daddr,idx,"keyboard skipped: HID slots full");return false;
 }
 bool usbkbd_report(uint8_t daddr,uint8_t idx,const uint8_t *rep,uint32_t len) {
  int i=find(daddr,idx);if(i<0) return false;
@@ -56,7 +60,7 @@ bool usbkbd_report(uint8_t daddr,uint8_t idx,const uint8_t *rep,uint32_t len) {
 static void drop_slot(unsigned i,const char *why) {
  hidboot_release_all(&slot[i].kb);slot[i].used=false;
  if(!--nkb) input_remove();
- log_line(why);
+ log_line(why);note(slot[i].daddr,slot[i].idx,why);
 }
 void usbkbd_hid_unmounted(uint8_t daddr,uint8_t idx) {int i=find(daddr,idx);if(i>=0) drop_slot((unsigned)i,"keyboard removed");}
 /* The device is gone, whichever interface: every keyboard on that device address. */

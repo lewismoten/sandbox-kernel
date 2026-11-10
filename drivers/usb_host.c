@@ -4,28 +4,55 @@
 #include "kernel.h"
 #include "tusb.h"
 #include "usbkbd.h"
+#include "usblog.h"
+#include "host/hcd.h"
 static bool initialized;
 static const char *init_fail="unavailable";
+/* USB.TXT (core/usblog.c): each device as TinyUSB reads it, then what the kernel did with it. */
+static void lg(const char *l) {usblog_add(l);}
+static const char *speed_name(uint8_t s) {return s==TUSB_SPEED_HIGH?"HS":s==TUSB_SPEED_LOW?"LS":s==TUSB_SPEED_FULL?"FS":"??";}
+static struct {uint8_t d;bool mounted,warned;uint32_t t;} dv[8];
+static volatile uint32_t ev_attach,ev_remove;
+void tuh_event_hook_cb(uint8_t rhport,uint32_t eventid,bool in_isr) {
+ (void)rhport;(void)in_isr;
+ if(eventid==HCD_EVENT_DEVICE_ATTACH) ev_attach++; else if(eventid==HCD_EVENT_DEVICE_REMOVE) ev_remove++;
+}
+static void dv_seen(uint8_t d) {
+ for(unsigned i=0;i<8;i++) if(dv[i].d==d) {dv[i].mounted=false;dv[i].warned=false;dv[i].t=micros();return;}
+ for(unsigned i=0;i<8;i++) if(!dv[i].d) {dv[i].d=d;dv[i].mounted=false;dv[i].warned=false;dv[i].t=micros();return;}
+}
+static void dv_done(uint8_t d,bool gone) {for(unsigned i=0;i<8;i++) if(dv[i].d==d) {if(gone)dv[i].d=0;else dv[i].mounted=true;}}
+void tuh_enum_descriptor_device_cb(uint8_t daddr,const tusb_desc_device_t *d) {
+ tuh_bus_info_t bi={0};tuh_bus_info_get(daddr,&bi);dv_seen(daddr);
+ /* The DWC2 driver starts split transactions for a low/full-speed device exactly when the root port runs at high speed. */
+ bool split=hcd_port_speed_get(0)==TUSB_SPEED_HIGH&&bi.speed!=TUSB_SPEED_HIGH;
+ char l[USBLOG_LINE];
+ usblog_fmt_device(l,daddr,bi.hub_addr,bi.hub_port,speed_name(bi.speed),split,d->idVendor,d->idProduct,d->bDeviceClass,d->bDeviceSubClass,d->bDeviceProtocol,d->bMaxPacketSize0);
+ lg(l);
+}
 /* TinyUSB calls this before SET_CONFIGURATION and before any class opens endpoints.
    Reject the entire configuration if any HID IN endpoint exceeds its receive buffer,
    including interfaces our keyboard mount callback would otherwise skip. */
 bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const tusb_desc_configuration_t *config) {
- (void)daddr;(void)cfg_index;
+ (void)cfg_index;
  const uint8_t *p=(const uint8_t *)config;
  uint16_t total=(uint16_t)(p[2]|((uint16_t)p[3]<<8));
- if(total<sizeof(*config)||total>CFG_TUH_ENUMERATION_BUFSIZE) return false;
- bool hid=false;
+ if(total<sizeof(*config)||total>CFG_TUH_ENUMERATION_BUFSIZE) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad total length");lg(l);return false;}
+ bool hid=false;uint8_t itf=0;
  for(uint16_t off=0;off<total;) {
-  if(total-off<2||p[off]<2||p[off]>total-off) return false;
+  if(total-off<2||p[off]<2||p[off]>total-off) {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"CONFIG REJECTED: bad descriptor length");lg(l);return false;}
   uint8_t len=p[off],type=p[off+1];
   if(type==TUSB_DESC_INTERFACE) {
    if(len<sizeof(tusb_desc_interface_t)) return false;
    hid=p[off+5]==TUSB_CLASS_HID;
+   {char l[USBLOG_LINE];itf=p[off+2];usblog_fmt_interface(l,daddr,itf,p[off+5],p[off+6],p[off+7],p[off+4]);lg(l);}
   } else if(type==TUSB_DESC_ENDPOINT&&hid) {
    if(len<sizeof(tusb_desc_endpoint_t)) return false;
    uint16_t size=(uint16_t)(p[off+4]|((uint16_t)p[off+5]<<8))&0x7ffu;
+   {char l[USBLOG_LINE];usblog_fmt_endpoint(l,daddr,itf,p[off+2],p[off+3],size,p[off+6]);lg(l);}
    if((p[off+2]&0x80u)&&size>CFG_TUH_HID_EPIN_BUFSIZE) {
     log_line("USB host: HID IN packet exceeds receive buffer");
+    {char l[USBLOG_LINE];usblog_fmt_note(l,daddr,itf,"CONFIG REJECTED: HID IN packet bigger than the 64 byte buffer");lg(l);}
     return false; /* one log per rejected configuration, no mount/re-arm loop */
    }
   }
@@ -34,8 +61,14 @@ bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const 
  return true;
 }
 void usb_irq(void) {if(initialized)tuh_int_handler(0,true);}
-void tuh_mount_cb(uint8_t daddr) {uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);}
-void tuh_umount_cb(uint8_t daddr) {usbkbd_device_gone(daddr);usbkbd_detached();}
+void tuh_mount_cb(uint8_t daddr) {
+ uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);
+ char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"mounted (configuration set, every driver done)");lg(l);dv_done(daddr,false);
+}
+void tuh_umount_cb(uint8_t daddr) {
+ usbkbd_device_gone(daddr);usbkbd_detached();
+ char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"removed");lg(l);dv_done(daddr,true);
+}
 /* R4: arm the interrupt endpoint, retrying a refused submit a few times; if it stays refused the
    keyboard is removed (keys released, status truthful) rather than left ready with no poll. */
 static void arm(uint8_t daddr,uint8_t idx) {
@@ -45,6 +78,12 @@ static void arm(uint8_t daddr,uint8_t idx) {
 void tuh_hid_mount_cb(uint8_t daddr,uint8_t idx,const uint8_t *desc,uint16_t len) {
  (void)desc;(void)len;
  /* TinyUSB's default protocol is boot, set before this callback for boot-subclass interfaces. */
+ {tuh_itf_info_t info;char l[USBLOG_LINE];
+  if(tuh_hid_itf_get_info(daddr,idx,&info)) {
+   char t[60]="hid0 = interface 0, boot protocol 0, mode ";
+   t[3]=(char)('0'+idx%10);t[17]=(char)('0'+info.desc.bInterfaceNumber%10);t[34]=(char)('0'+tuh_hid_interface_protocol(daddr,idx)%10);
+   const char *m=tuh_hid_get_protocol(daddr,idx)==HID_PROTOCOL_BOOT?"boot":"report";unsigned n=42,k=0;while(m[k])t[n++]=m[k++];t[n]=0;
+   usblog_fmt_note(l,daddr,0xFF,t);lg(l);}}
  bool boot_kbd=tuh_hid_interface_protocol(daddr,idx)==HID_ITF_PROTOCOL_KEYBOARD&&tuh_hid_get_protocol(daddr,idx)==HID_PROTOCOL_BOOT;
  if(usbkbd_hid_mounted(daddr,idx,boot_kbd)) arm(daddr,idx);
 }
@@ -68,12 +107,20 @@ void usb_init(void) {
  usbkbd_init();
  initialized=true;
  if(!tusb_init()) {initialized=false;init_fail="TUSB HOST INIT";error("USB host init failed");return;}
- usbkbd_host_up();
+ usbkbd_host_up();usblog_add("host up: DWC2 host, TinyUSB 0.21, hubs and splits as configured");
 }
 void usb_reply(const char *s) {(void)s;}
 bool usb_reply_pending(void) {return false;}
 void usb_log(const char *s) {(void)s;}
-void usb_task(void) {if(initialized)tuh_task();}
+/* A device that was read but never mounted within 4 s: say so once (TinyUSB drops a failed enumeration silently). */
+static void watchdog(void) {
+ for(unsigned i=0;i<8;i++) if(dv[i].d&&!dv[i].mounted&&!dv[i].warned&&expired(dv[i].t,4000000)) {
+  dv[i].warned=true;char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration stalled (a control request failed)");lg(l);
+ }
+}
+void usb_task(void) {if(initialized){tuh_task();watchdog();}}
+/* The counters of attach/remove events, for the closing line of USB.TXT. */
+void usb_host_events(uint32_t *attach,uint32_t *remove) {*attach=ev_attach;*remove=ev_remove;}
 void service_io(void) {usb_task();protocol_task();}
 uint32_t tusb_time_millis_api(void) {return micros()/1000;}
 bool usb_healthy(void) {return initialized;}

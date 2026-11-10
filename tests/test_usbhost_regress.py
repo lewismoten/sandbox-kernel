@@ -14,7 +14,7 @@ class HostRegress(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='usbhost-') as d:
             exe = str(Path(d) / 'x')
             subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O1', '-DHOST_TEST', '-Iinclude', '-Itests/stubs',
-                            'core/hidboot.c', 'core/usbkbd.c', 'core/input.c', 'tests/usbhost_regress.c', '-o', exe], cwd=ROOT, check=True)
+                            'core/hidboot.c', 'core/usbkbd.c', 'core/usblog.c', 'core/input.c', 'tests/usbhost_regress.c', '-o', exe], cwd=ROOT, check=True)
             subprocess.run([exe], cwd=ROOT, check=True, timeout=30)
 
     def test_r3_input_initialized_before_any_usb_servicing(self):

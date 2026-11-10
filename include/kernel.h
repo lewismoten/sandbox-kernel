@@ -72,6 +72,7 @@ bool usb_mounted(void);       /* a Mac data link is up (device role); always fal
 bool usb_id_grounded(void);   /* the OTG adapter grounded the ID pin at boot (device role) */
 void usb_set_boot_note(const char *text); /* e-ink USB line while no Mac link is up; NULL clears */
 void usb_task(void);
+void usb_host_events(uint32_t *attach,uint32_t *remove); /* host role: attach and remove events TinyUSB saw (for USB.TXT) */
 const char *usb_state(void);
 void protocol_task(void);
 bool protocol_busy(void);

@@ -4,6 +4,7 @@
 #include "clock.h"
 #include "usbkbd.h"
 #include "input.h"
+#include "usblog.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +17,11 @@ int main(void) {
  /* R3: input_init runs first (main.c), then a keyboard mounts and a held key arrives. */
  input_init();usbkbd_init();
  assert(usbkbd_hid_mounted(1,0,true)&&usbkbd_report(1,0,A,8)&&held(KEY_A));
+ /* USB.TXT says what happened to each interface and why. */
+ input_init();usbkbd_init();
+ assert(!usbkbd_hid_mounted(2,1,false)&&usbkbd_hid_mounted(2,0,true));
+ {const char *t=usblog_text(0);assert(strstr(t,"D2 hid1 HID skipped: not a boot keyboard")&&strstr(t,"D2 hid0 keyboard ACCEPTED"));}
+ usbkbd_device_gone(2);assert(strstr(usblog_text(0),"D2 hid0 keyboard removed"));
  /* R2: mouse first, keyboard second, consumer control third, a second keyboard fourth. */
  input_init();usbkbd_init();
  assert(!usbkbd_hid_mounted(1,0,false));                 /* mouse */

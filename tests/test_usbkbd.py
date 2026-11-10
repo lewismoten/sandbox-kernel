@@ -11,7 +11,7 @@ class UsbKbdTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='usbkbd-') as d:
             exe = str(Path(d) / "usbkbd")
             subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O1', '-Iinclude',
-                            "core/hidboot.c", "core/usbkbd.c", "tests/usbkbd.c", "-o", exe], cwd=ROOT, check=True)
+                            "core/hidboot.c", "core/usbkbd.c", "core/usblog.c", "tests/usbkbd.c", "-o", exe], cwd=ROOT, check=True)
             subprocess.run([exe], cwd=ROOT, check=True, timeout=30)
 
 if __name__ == '__main__':

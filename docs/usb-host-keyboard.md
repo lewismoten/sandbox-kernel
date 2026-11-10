@@ -246,3 +246,25 @@ Host tests exercise the role debounce (including timer wrap), link priority,
 missing-companion action/width, trial exclusion, real installer/readback/hash
 and metadata persistence/revocation. They do not execute ARM cache/MMU transitions,
 USB registers or physical power cuts.
+
+## The USB log (USB.TXT)
+
+In the host role the kernel keeps a short text record of the bus and saves it to
+`/OS/SAVES/KERNEL/USB.TXT` (replaced each boot, at most 1600 bytes plus an events line, written
+once the log has been quiet for 1.5 s, at most 12 times a boot). Per device: address, hub and port
+(`otg-port` when it is on the OTG port itself), speed (LS/FS/HS), `split` when the DWC2 driver runs
+it through split transactions, VID:PID, device class, EP0 size; per interface: class/subclass/protocol
+and endpoints (address, type, max packet, interval); then what the kernel did (`keyboard ACCEPTED`,
+`HID skipped: not a boot keyboard`, `HID slots full`, `CONFIG REJECTED: ...`, `mounted`, `removed`). A
+device that was read but is not mounted after 4 s gets a `NOT MOUNTED` line (TinyUSB drops a failed
+enumeration silently and this build has no TinyUSB debug log). The last line counts attach and remove
+events.
+
+Read it from a Mac with the normal kernel running (no adapter): `usb_kernel.py <port> usblog`
+(`USBLOG <n>` returns the file in numbered pieces, newlines as `|`).
+
+Support facts (checked in the sources, 2026-11-10): TinyUSB 0.21's DWC2 host driver does split
+transactions (`hcd_dwc2.c`, `split_en` set for any non-high-speed device when the root port runs at
+high speed), so full and low-speed devices behind a high-speed hub are supported. The HID glue accepts
+any interface that is a boot keyboard (subclass 1, protocol 1), on any interface number, and ignores
+mouse and other interfaces; report IDs on another interface do not matter.
