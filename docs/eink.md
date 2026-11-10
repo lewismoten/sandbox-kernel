@@ -70,7 +70,7 @@ way to ask for a full refresh; the kernel decides.
 | At most **30** accepted updates in any 60 s | `EAGAIN` beyond | VERIFY: guess; stops a loop from running the panel flat out |
 | **Ghost-clearing full refresh** after every **50** partial refreshes, and never sooner than **180 s** after the last full one | done by the kernel on the next redraw | Waveshare wiki and manual, 2.13" V4: "refresh interval of at least 180 s; refresh at least once every 24 hours; after several partial refreshes, do a full refresh". VERIFY the 50 against the SSD1680 panel guidance and the real panel |
 | A full refresh at least once every **24 h** | kernel: its own deadline of **23 h** after the last full refresh, kept even when the screen never changes (a static page is redrawn in full) | same source; one hour of margin |
-| The boot refresh | counts as a full refresh: the 180 s gap and the 23 h deadline run from boot | the next refresh can never land inside the gap |
+| The boot refresh | counts as a full refresh: the 180 s gap and the 23 h deadline run from the boot full-refresh command trigger | the next refresh can never land inside the gap |
 
 `EAGAIN` is -11. The rejected submission is dropped, not queued: wait and try again. A
 sensible animation is at most one frame a second.
