@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Mac/POSIX stdlib CDC sender and log tail. Use /dev/cu.usbmodem* on macOS."""
-import argparse, errno, hashlib, os, pathlib, re, select, sys, termios, time, tty, zlib
+import argparse, errno, hashlib, os, pathlib, re, select, struct, sys, termios, time, tty, zlib
 from image import validate
 
 class Serial:
@@ -36,6 +36,18 @@ class Serial:
             if len(self.buf)>65536: raise ValueError('unbounded device line')
         raw,_,tail=self.buf.partition(b'\n');self.buf=bytearray(tail)
         return raw.rstrip(b'\r').decode('ascii',errors='replace')
+    def exact(self,n,timeout=5):
+        """Binary body: consume buffered bytes first, never interpret newline/LOG."""
+        if not 0<=n<=256: raise ValueError('capture body length')
+        end=time.monotonic()+timeout
+        while len(self.buf)<n:
+            remaining=end-time.monotonic()
+            if remaining<=0 or not select.select([self.fd],[],[],remaining)[0]: raise TimeoutError('capture body')
+            try: data=os.read(self.fd,4096)
+            except BlockingIOError: continue
+            if not data: raise OSError('CDC disconnected')
+            self.buf.extend(data)
+        data=bytes(self.buf[:n]);del self.buf[:n];return data
     def reply(self,timeout):
         end=time.monotonic()+timeout
         while True:
@@ -263,8 +275,84 @@ def cec_log(port,seconds):
     if not seen: print('no CEC lines (is this the CEC build, and has HDMI CEC started?)',file=sys.stderr)
     return 0 if seen else 1
 
+SHOT_MAX=4*1024*1024
+
+def shot_header(line,kind,offset,previous=None):
+    m=re.fullmatch(r'SHOT (EINK|FB)' + r' ([0-9]{1,10})'*10,line)
+    if not m or m[1]!=kind: raise ValueError(f'capture reply: {line!r}')
+    ident,w,h,stride,depth,order,total,got,n,crc=map(int,m.groups()[1:])
+    if any(v>0xffffffff for v in (ident,w,h,stride,depth,order,total,got,n,crc)): raise ValueError('capture integer overflow')
+    if not ident or order not in (0,1) or not 0<w<=4096 or not 0<h<=4096: raise ValueError('capture geometry')
+    if kind=='EINK':
+        if (w,h,stride,depth,total)!=(122,250,16,1,4000): raise ValueError('e-ink format')
+    elif depth not in (8,16,32) or stride!=w*(depth//8) or total!=stride*h+(1024 if depth==8 else 0): raise ValueError('framebuffer format')
+    if not 0<total<=SHOT_MAX or got!=offset or offset%256 or offset>=total or n!=min(256,total-offset): raise ValueError('capture bounds')
+    meta=(ident,w,h,stride,depth,order,total)
+    if previous is not None and meta!=previous: raise ValueError('screen mode/snapshot changed; retry capture')
+    return meta,n,crc
+
+def shot_rgb(meta,data):
+    _,w,h,stride,depth,order,total=meta
+    if len(data)!=total: raise ValueError('capture size')
+    if depth==1:
+        rgb=bytearray(250*122*3)
+        for y in range(122):
+            for x in range(250):
+                nx,ny=(121-y,x) if order else (y,249-x)
+                v=255 if data[ny*stride+nx//8]&(128>>(nx%8)) else 0
+                k=(y*250+x)*3;rgb[k:k+3]=bytes((v,v,v))
+        return 250,122,bytes(rgb)
+    pixels=data[1024:] if depth==8 else data;rgb=bytearray(w*h*3)
+    for i in range(w*h):
+        if depth==8:
+            c=struct.unpack_from('<I',data,pixels[i]*4)[0];r,g,b=(c>>16)&255,(c>>8)&255,c&255
+        elif depth==16:
+            c=struct.unpack_from('<H',pixels,i*2)[0];r,g,b=(c>>11)&31,(c>>5)&63,c&31
+            r,g,b=(r*255//31,g*255//63,b*255//31)
+            if order:r,b=b,r
+        else:
+            b,g,r=pixels[i*4:i*4+3]
+            if order:r,b=b,r
+        rgb[i*3:i*3+3]=bytes((r,g,b))
+    return w,h,bytes(rgb)
+
+def rgb_png(w,h,rgb):
+    """Minimal RGB8 PNG: filter 0, zlib IDAT, CRC on every PNG chunk."""
+    if not 0<w<=4096 or not 0<h<=4096 or len(rgb)!=w*h*3 or len(rgb)>3*SHOT_MAX: raise ValueError('PNG bounds')
+    def chunk(tag,body):
+        return struct.pack('>I',len(body))+tag+body+struct.pack('>I',zlib.crc32(tag+body))
+    rows=b''.join(b'\0'+rgb[y*w*3:(y+1)*w*3] for y in range(h))
+    return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>2I5B',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(rows))+chunk(b'IEND',b'')
+
+def screen_capture(port,path,eink=False,scale=1):
+    if not 1<=scale<=16: raise ValueError('scale must be 1..16')
+    print(handshake(port));kind='EINK' if eink else 'FB';meta=None;data=bytearray();offset=0
+    deadline=time.monotonic()+180
+    while meta is None or offset<meta[-1]:
+        if time.monotonic()>deadline: raise TimeoutError('capture transfer')
+        ident=meta[0] if meta else 0
+        command=f'EINKSHOT {ident} {offset}' if eink else f'FBSHOT {scale} {ident} {offset}'
+        port.send((command+'\n').encode())
+        end=time.monotonic()+5
+        while True:
+            line=port.line(max(0,end-time.monotonic()))
+            if line.startswith(('LOG ','OS ','OS~ ','INFO 2 ')): continue
+            break
+        if line=='ERR shot busy': time.sleep(0.002);continue
+        meta,n,crc=shot_header(line,kind,offset,meta)
+        block=port.exact(n)
+        if zlib.crc32(block)!=crc: raise ValueError('capture CRC mismatch; reconnect and retry')
+        data.extend(block);offset+=n
+        time.sleep(0.002)
+    w,h,rgb=shot_rgb(meta,data);path.write_bytes(rgb_png(w,h,rgb))
+    print(f'Wrote {path} ({w}x{h})')
+    print('E-ink: last sent plane; refresh, ghosting or panel failure may differ.' if eink else 'HDMI: live read; frames/palette may change during transfer; blanking is not shown.',file=sys.stderr)
+    return 0
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
+    p=sub.add_parser('einkshot',help='save the last sent e-ink image as PNG');p.add_argument('out',type=pathlib.Path)
+    p=sub.add_parser('fbshot',help='save the live HDMI framebuffer as RGB PNG');p.add_argument('out',type=pathlib.Path);p.add_argument('--scale',type=int,default=1)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
@@ -285,6 +373,7 @@ def main():
     sub.add_parser('audio',help='AUDIO: backend state, drain rate, underruns')
     a=ap.parse_args();port=Serial(a.port)
     try:
+        if a.action in ('einkshot','fbshot'): return screen_capture(port,a.out,a.action=='einkshot',getattr(a,'scale',1))
         if a.action=='install-host': return send_kernel(port,a.kernel,companion=True)
         if a.action=='send': return send_kernel(port,a.kernel)
         if a.action=='put': return send_file(port,a.file,a.name or a.file.name.upper())

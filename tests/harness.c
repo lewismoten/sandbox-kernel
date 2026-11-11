@@ -35,6 +35,8 @@ bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nest
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
+void usb_reply_bytes(const uint8_t *p,uint32_t n) {if(out+n>=sizeof(output))abort();memcpy(output+out,p,n);out+=n;}
+unsigned output_size(void) {return out;}
 void usb_reply(const char *s) {size_t n=strlen(s);if(out+n>=sizeof(output))abort();memcpy(output+out,s,n+1);out+=n;}
 bool usb_reply_pending(void) {return false;}
 const char *take_output(void) {output[out]=0;out=0;return output;}
@@ -46,6 +48,12 @@ bool initialize(void) {storage_ready=store_init();updates_ready=storage_ready&&v
 /* M1 slice 2: the kernel map, framebuffer, logs and watchdog seen by
    core/uspace.c, core/sys.c, core/os.c and core/fatput.c. */
 #include "fb.h"
+#include "shot.h"
+#ifndef PANEL_PROBE
+bool panel_snapshot(uint8_t out[4000]) {for(unsigned i=0;i<4000;i++)out[i]=(uint8_t)i;return true;}
+uint32_t panel_snapshot_order(void) {return 1;}
+#endif
+uint32_t fb_mode_generation;
 struct fb_info fb0;uint8_t *fb_pixels;uint32_t boot_trial;
 static uint32_t ktable[4096];
 const uint32_t *mmu_table(void) {return ktable;}
@@ -56,7 +64,7 @@ void log_line(const char *s) {size_t n=strlen(s);if(logn+n+2>=sizeof(logs))logn=
 const char *take_log(void) {static char copy[1<<16];memcpy(copy,logs,logn+1);logn=0;logs[0]=0;return copy;}
 static uint8_t hw[3900*540]; /* the kernel's 960x540x32 screen, pitch padded */
 uint8_t *fb_setup(uint32_t order,int present) {
- memset(&fb0,0,sizeof fb0);fb_pixels=NULL;if(!present)return NULL;
+ fb_mode_generation++;memset(&fb0,0,sizeof fb0);fb_pixels=NULL;if(!present)return NULL;
  fb0.width=640;fb0.height=480;fb0.depth=32;fb0.pitch=2700;fb0.bytes=sizeof(hw);fb0.pixel_order=order;
  memset(hw,0xaa,sizeof hw);fb_pixels=hw;return hw;
 }
@@ -70,6 +78,6 @@ int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
  if(stop_on_mode) {stop_on_mode=false;os_request_stop();}
  if(!fb_pixels) return -19;
  uint32_t pitch=w*(d/8u)+60u; if(pitch*h>sizeof hw) return -5;
- fb0.width=w;fb0.height=h;fb0.depth=d;fb0.pitch=pitch;memset(hw,0,sizeof hw);fb_mode_sets++;return 0;
+ fb0.width=w;fb0.height=h;fb0.depth=d;fb0.pitch=pitch;memset(hw,0,sizeof hw);fb_mode_sets++;fb_mode_generation++;return 0;
 }
-int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb) {memcpy(fb_palette+first,rgb,count*4u);return 0;}
+int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb) {memcpy(fb_palette+first,rgb,count*4u);for(uint32_t i=0;i<count;i++) {fb_shot_palette[first+i]=rgb[i];fb_shot_palette_known[first+i]=true;}return 0;}

@@ -75,3 +75,64 @@ a line starting `OS ` or `OS~ ` becomes a new reply kind `os`, shown in the log 
 `tests/test_serial.py` (framing both ways, overflow counting, reader switching, host decoding),
 `tests/test_serial_sys.py` (the real call path, `TX`, `INFO`), and `tests/exhaustion_usb.c`
 (OS lines and `LOG` lines in one ring, never mixed).
+
+## Screen capture (protocol 2 extension, no app ABI change)
+
+`usb_kernel.py <port> einkshot out.png` and `fbshot out.png [--scale N]`
+read screens while the OS runs, without stopping it or changing power policy.
+Scale is integer nearest-neighbor decimation, 1..16 (default 1).
+Both commands require INFO and are compiled in both USB roles; the current host
+role has no CDC link, so capture is usable there only if a link is provided.
+Use one reader, with one outstanding request at a time.
+
+Requests are `EINKSHOT <id> <offset>\n` or
+`FBSHOT <scale> <id> <offset>\n`. All numbers are unsigned decimal.
+Start with id=0, offset=0; use the returned id for subsequent offsets.
+A response is this ASCII line, immediately followed by exactly count raw bytes
+(no trailing newline):
+
+```
+SHOT <kind> <id> <width> <height> <stride> <depth> <order> <total> <offset> <count> <crc32>\n
+```
+
+Kind is `EINK` or `FB`. CRC is unsigned decimal IEEE CRC-32 (Python zlib.crc32)
+of those count bytes. Offset addresses the virtual packed capture stream.
+Count is min(256,total-offset); offsets must be multiples of 256 and less than
+total. Each response, including header and body, fits the 512-byte reply ring.
+Logs and OS output cannot interrupt a response. Other complete text lines may
+precede it; readers must skip LOG, OS, OS~ and delayed INFO lines.
+The kernel accepts at most one capture chunk per 2 ms (128,000 payload bytes/s);
+`ERR shot busy` means retry after 2 ms. No transfer-wide lock or framebuffer copy
+is held while waiting for the host. A disconnect releases protocol state.
+
+EINK is the 122x250 native controller plane, stride 16, depth 1, MSB first,
+0=black, 1=white, total 4000. Order is PANEL_ROTATE_180 (0 or 1); the host
+maps native coordinates back to the 250x122 landscape layout. The driver keeps
+the last plane whose refresh command was successfully sent. A start request
+copies it into a fixed 4000-byte snapshot; a new start invalidates the old id.
+Before any refresh has been sent it returns `ERR shot unavailable`. This is
+sent image data, not optical readback: BUSY refresh, ghosting, controller/SPI
+failure, a disabled panel or lost power can make the physical panel differ.
+
+FB is sampled from the mapped HDMI framebuffer (what was last presented, not
+an app's unpresented surface), with no padding: width=ceil(source_width/scale),
+height=ceil(source_height/scale), stride=width*(depth/8). Depth is 8, 16 or 32;
+order 0=BGR, 1=RGB. Pixels are little endian; 16-bit is RGB565 (red in bits
+15..11 for BGR order, exchanged with blue for RGB order); 32-bit is B,G,R,X
+or R,G,B,X. For depth 8, a 1024-byte palette precedes pixel data: 256
+little-endian 0x00RRGGBB words, from successful kernel palette calls. Entries
+not yet set are unknown; reading an unknown index returns `ERR shot palette`
+instead of inventing colors. The tool converts these formats to RGB PNG.
+The id is the framebuffer mode generation; mode changes return `ERR shot stale`
+and require a fresh capture. Pixel/palette changes within a mode may produce a
+torn image; each chunk's CRC covers what was actually copied. HDMI blanking or
+TV processing is not represented. Source dimensions are at most 4096x4096;
+the packed stream including palette is at most 4 MiB (use a larger scale if
+necessary). Each request reads at most 256 pixel/palette bytes; no mailbox,
+storage operation, screen write, full-frame scan or OS stop is performed.
+
+Refusals are `ERR shot command`, `range`, `unavailable`, `stale`, `palette`,
+`busy`, or `ERR not-ready` before INFO. They do not set the panel's sticky error.
+The host validates dimensions, format, lengths, offsets, ids and every chunk CRC
+before writing a PNG, using only Python's standard library and zlib. A truncated
+response times out; reconnect after a timeout/CRC error to discard residual bytes.

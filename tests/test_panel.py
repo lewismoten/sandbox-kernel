@@ -47,6 +47,27 @@ class Panel(SupervisorBase):
         self.assertEqual(self.c.panel_probe_full_count(), 1)
         self.assertEqual(self.c.panel_probe_boot_trigger(), 127_000)
 
+    def test_capture_tracks_trigger_not_scheduled_or_failed_plane(self):
+        self.c.panel_snapshot.restype = C.c_bool
+        plane = C.create_string_buffer(4000)
+        self.assertFalse(self.c.panel_snapshot(plane))
+        self.pump(127)  # the first successful full-refresh trigger
+        self.assertTrue(self.c.panel_snapshot(plane))
+        sent = plane.raw
+        expected = C.create_string_buffer(4000)
+        self.c.render_starting(expected)
+        self.assertEqual(sent, expected.raw)
+        self.pump(173)
+        self.assertTrue(self.c.panel_snapshot(plane))
+        sent = plane.raw
+        page = bytes(eink.PAGE)
+        self.assertEqual(self.c.eink_page(page, len(page), C.c_uint64(self.c.clock_us())), 0)
+        self.c.panel_probe_fault(2)
+        self.pump(300)
+        self.assertTrue(self.c.panel_probe_disabled())
+        self.assertTrue(self.c.panel_snapshot(plane))
+        self.assertEqual(plane.raw, sent)  # failed/new desired plane never replaces sent data
+
     def test_boot_full_command_spacing(self):
         self.boot()
         page = bytearray(eink.PAGE)

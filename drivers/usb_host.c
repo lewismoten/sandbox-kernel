@@ -110,6 +110,7 @@ void usb_init(void) {
  if(!tusb_init()) {initialized=false;init_fail="TUSB HOST INIT";error("USB host init failed");return;}
  usbkbd_host_up();usblog_add("host up: DWC2 host, TinyUSB 0.21, hubs and splits as configured");
 }
+void usb_reply_bytes(const uint8_t *p,uint32_t n) {(void)p;(void)n;}
 void usb_reply(const char *s) {(void)s;}
 bool usb_reply_pending(void) {return false;}
 void usb_log(const char *s) {(void)s;}

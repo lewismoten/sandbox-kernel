@@ -6,7 +6,7 @@
 #include "../drivers/usb.c"
 #include "../core/serial.c"
 static bool mounted=true,connected=true,busy;
-static unsigned credits,sent,tasks;
+static unsigned credits,sent,tasks,incoming;
 static char wire[8192];
 volatile bool usb_reset_seen;
 const char *property_fail="fake";
@@ -25,6 +25,7 @@ bool tud_cdc_connected(void) {return connected;}
 bool tusb_init(void) {return true;}
 bool tud_deinit(uint8_t port) {(void)port;return true;}
 uint32_t tud_cdc_write_available(void) {return credits;}
+uint32_t tud_cdc_available(void) {return incoming;}
 void tud_task(void) {tasks++;}
 void tud_cdc_write_char(char c) {
  assert(credits && sent+1<sizeof wire); credits--; wire[sent++]=c;wire[sent]=0;
@@ -78,6 +79,19 @@ int main(void) {
  drain(0);usb_log("before");serial_write((const uint8_t *)"a\nb",3);drain(0);usb_log("after");
  drain(256);
  assert(!strcmp(wire,"LOG before\nOS a\nOS~ b\nLOG after\n"));
+ /* A partially transmitted log finishes before a binary capture header.
+    Neither a queued log nor OS output can land inside its raw body. */
+ usb_log("partial");drain(5);assert(sent==5 && !memcmp(wire,"LOG p",5) && log_active);
+ static const uint8_t body[]={0,10,255,'L','O','G'};
+ usb_reply("SHOT test\n");usb_reply_bytes(body,sizeof body);usb_log("after shot");
+ incoming=1;busy=true;drain(64);
+ const char prefix[]="artial\nSHOT test\n";
+ assert(sent==sizeof(prefix)-1+sizeof(body));
+ assert(!memcmp(wire,prefix,sizeof(prefix)-1));
+ assert(!memcmp(wire+sizeof(prefix)-1,body,sizeof(body)));
+ assert(!log_active && wp==rp && lr!=lw);
+ busy=false;drain(64);assert(sent==0); /* a pending request prevents a fresh log */
+ incoming=0;drain(64);assert(!strcmp(wire,"LOG after shot\n"));
  connected=false;drain(0);serial_write((const uint8_t *)"x",1);drain(64);assert(sent==0 && lr==lw);
  return 0;
 }

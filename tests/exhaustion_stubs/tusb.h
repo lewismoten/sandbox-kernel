@@ -32,6 +32,7 @@ bool tud_cdc_connected(void);
 bool tusb_init(void);
 bool tud_deinit(uint8_t port);
 uint32_t tud_cdc_write_available(void);
+uint32_t tud_cdc_available(void);
 void tud_task(void);
 void tud_cdc_write_char(char c);
 void tud_cdc_write_str(const char *s);

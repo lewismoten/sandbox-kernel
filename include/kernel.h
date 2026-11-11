@@ -88,6 +88,7 @@ bool protocol_busy(void);
 bool verify_confirmed(void);
 void protocol_reset(void);
 void usb_reply(const char *s);
+void usb_reply_bytes(const uint8_t *p,uint32_t n);
 void usb_log(const char *s);
 bool usb_reply_pending(void);
 /* Wire format is LE uint32 fields, never host native structs on disk. */

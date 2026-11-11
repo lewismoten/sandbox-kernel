@@ -4,6 +4,14 @@
 #include "render.h"
 #include "eink.h"
 #include "clock.h"
+#include "shot.h"
+#ifndef PANEL_ROTATE_180
+#define PANEL_ROTATE_180 1
+#endif
+static uint8_t sent[4000];
+static bool sent_valid;
+bool panel_snapshot(uint8_t out[4000]) {if(!sent_valid)return false;memcpy(out,sent,4000);return true;}
+uint32_t panel_snapshot_order(void) {return PANEL_ROTATE_180;}
 #define SPI (PERIPH+0x204000)
 static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos;
@@ -53,7 +61,7 @@ void panel_task(const char *state,uint32_t seconds) {
   if(phase==10) {memcpy(shown,frame,4000);full=false;wait_phase(11,10000);return;}
   cmd(0x22);datum(full?0xf7:0xff);cmd(0x20);
   /* Count boot and later refreshes at the successful command trigger, never at scheduling. */
-  if(!disabled)eink_note_refresh(full,clock_us());
+  if(!disabled) {memcpy(sent,frame,4000);sent_valid=true;eink_note_refresh(full,clock_us());}
   wait_phase(9,0);return;
  }
  case 11:if(!expired(since,delay))return;phase=0;return;

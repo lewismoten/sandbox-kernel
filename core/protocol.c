@@ -13,6 +13,7 @@ static inline uint32_t tud_cdc_read(void *b,uint32_t n) {(void)b;(void)n;return 
 static inline void tud_cdc_read_flush(void) {}
 #endif
 #include "serial.h"
+#include "shot.h"
 #include "audio_null.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
@@ -27,11 +28,12 @@ static bool executing,overflow,session,putf,companion;
 static bool waiting_stop;
 static unsigned tx_left,tx_took;static uint32_t tx_since;
 #define TX_IDLE_US 2000000u /* a TX body that stalls this long is abandoned (docs/serial.md) */
+static bool shot_drain,shot_limited;static uint32_t shot_since;
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
-bool protocol_busy(void) {return phase!=0;}
-void protocol_reset(void) {if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
+bool protocol_busy(void) {return phase!=0||shot_drain;}
+void protocol_reset(void) {shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
 static void refuse(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");phase=0;used=0;overflow=false;putf=false;}
 /* ERR rule: a real error (bad command, storage, CRC, fault) goes through fail(),
    which also sets the e-ink "ERR:" line (sticky). A flow-control refusal, "not-ready"
@@ -111,8 +113,24 @@ static void tx_command(const char *p) {
  if(!decimal(&p,&n)||*p||n<1||n>SERIAL_CHUNK) {usb_reply("ERR tx length\n");return;}
  tx_left=n;tx_took=0;tx_since=micros();
 }
+/* One bounded response; drain it before parsing another command or sending logs. */
+static void shot_command(const char *p,bool eink) {
+ uint32_t scale=1,id,offset;
+ if(!session) {refuse("not-ready");return;}
+ if((!eink&&(!decimal(&p,&scale)||*p++!=' '))||!decimal(&p,&id)||*p++!=' '||!decimal(&p,&offset)||*p) {refuse("shot command");return;}
+ if(shot_limited&&!expired(shot_since,2000)) {refuse("shot busy");return;}
+ shot_limited=true;shot_since=micros();
+ struct shot_chunk s;const char *why=shot_read(eink,scale,id,offset,&s);
+ if(why) {refuse(why);return;}
+ usb_reply(eink?"SHOT EINK ":"SHOT FB ");
+ uint32_t fields[]={s.id,s.width,s.height,s.stride,s.depth,s.order,s.total,s.offset,s.count,crc32(s.data,s.count)};
+ for(unsigned i=0;i<10;i++) {field(fields[i]);usb_reply(i==9?"\n":" ");}
+ usb_reply_bytes(s.data,s.count);shot_drain=true;
+}
 static void command_line(void) {
  line[used]=0;
+ if(used>9&&!memcmp(line,"EINKSHOT ",9)) {shot_command(line+9,true);return;}
+ if(used>7&&!memcmp(line,"FBSHOT ",7)) {shot_command(line+7,false);return;}
  if(!strcmp(line,"STOP")) {
   if(!session) {refuse("not-ready");return;}
   os_request_stop();waiting_stop=true;return;
@@ -168,6 +186,9 @@ static void work(void) {
  if(usb_reset_seen) {usb_reset_seen=false;protocol_reset();}
  /* STOP can be parsed inside SD service_io. Acknowledge only after the
     main-loop os_task boundary has revoked the old execution context. */
+ if(shot_drain) {if(!usb_reply_pending())shot_drain=false;return;}
+ /* A capture header and body must start at a clean reply boundary. */
+ if(phase==0&&usb_reply_pending())return;
  if(waiting_stop) {
   if(os_stop_pending()) return;
   waiting_stop=false;

@@ -3,6 +3,7 @@
  * an uncached execute-never mapping, then the test pattern. Logs one line. */
 #include "kernel.h"
 #include "fb.h"
+#include "shot.h"
 const char *fb_fail="none";
 struct fb_info fb0;
 uint32_t fb_mode_generation;
@@ -43,6 +44,7 @@ int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
  if(why) {fb_fail=why;return -5;}
  if(!mmu_map_uncached(f.phys,f.bytes)) {fb_fail="FB MAP";return -5;}
  fb_mode_generation++;
+ memset(fb_shot_palette_known,0,sizeof fb_shot_palette_known);
  fb0=f;fb_pixels=(uint8_t *)(uintptr_t)f.phys;
  for(uint32_t i=0;i<f.bytes/4u;i++) ((volatile uint32_t *)(void *)fb_pixels)[i]=0;
  fb_mode_us=micros()-t;
@@ -53,5 +55,7 @@ int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
 int fb_set_palette(uint32_t first,uint32_t count,const uint32_t *rgb) {
  static uint32_t m[FB_PALETTE_WORDS] __attribute__((aligned(16)));
  uint32_t words=fb_palette_request(m,first,count,rgb);
- return property_message(m,words,500000)&&m[1]==0x80000000u&&!m[5]?0:-5;
+ if(!property_message(m,words,500000)||m[1]!=0x80000000u||m[5])return -5;
+ for(uint32_t i=0;i<count;i++) {fb_shot_palette[first+i]=rgb[i]&0xffffffu;fb_shot_palette_known[first+i]=true;}
+ return 0;
 }

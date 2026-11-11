@@ -8,6 +8,7 @@ extern volatile bool usb_reset_seen;
 static bool initialized,inside,suspended;
 static char replies[512],logs[4096];
 static unsigned rp,wp,lr,lw;
+static bool log_active;
 static uint32_t dropped;
 static const tusb_desc_device_t device={
  .bLength=sizeof(tusb_desc_device_t),.bDescriptorType=TUSB_DESC_DEVICE,.bcdUSB=0x0200,
@@ -72,8 +73,12 @@ void usb_init(void) {
  /* Device role is forced above; internal UTMI+ PHY selected by TinyUSB. */
  initialized=true;if(!tusb_init()) {initialized=false;init_fail="TUSB INIT";error("TUSB INIT");}
 }
+void usb_reply_bytes(const uint8_t *p,uint32_t n) {
+ if(n>sizeof(replies)-(wp-rp)) {error("Reply queue full");return;}
+ while(n--)replies[wp++%sizeof(replies)]=(char)*p++;
+}
 void usb_reply(const char *s) {while(*s) {if(wp-rp>=sizeof(replies)) {error("Reply queue full");return;}replies[wp++%sizeof(replies)]=*s++;}}
-bool usb_reply_pending(void) {return wp!=rp || (initialized&&tud_cdc_write_available()!=CFG_TUD_CDC_TX_BUFSIZE);}
+bool usb_reply_pending(void) {return log_active || wp!=rp || (initialized&&tud_cdc_write_available()!=CFG_TUD_CDC_TX_BUFSIZE);}
 void usb_log(const char *s) {
  size_t n=strlen(s);if(n+5>sizeof(logs)-(lw-lr)) {dropped++;return;}
  const char *prefix="LOG ";while(*prefix)logs[lw++%sizeof(logs)]=*prefix++;
@@ -94,11 +99,12 @@ void usb_task(void) {
  inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task();
  serial_set_reader(tud_mounted()&&tud_cdc_connected());
  if(!tud_mounted()) {inside=false;return;}
- while(rp!=wp&&tud_cdc_write_available()) {tud_cdc_write_char(replies[rp++%sizeof(replies)]);}
- if(!protocol_busy()&&rp==wp&&tud_cdc_connected()) {
+ while(log_active&&lr!=lw&&tud_cdc_write_available()) {char c=logs[lr++%sizeof(logs)];tud_cdc_write_char(c);log_active=c!='\n';}
+ while(!log_active&&rp!=wp&&tud_cdc_write_available()) {tud_cdc_write_char(replies[rp++%sizeof(replies)]);}
+ if(!protocol_busy()&&rp==wp&&!tud_cdc_available()&&tud_cdc_connected()) {
   if(summary_due&&expired(summary_at,1000000)) {summary_due=false;boot_summary();}
   os_lines();
-  while(lr!=lw&&tud_cdc_write_available())tud_cdc_write_char(logs[lr++%sizeof(logs)]);
+  while(lr!=lw&&tud_cdc_write_available()) {char c=logs[lr++%sizeof(logs)];tud_cdc_write_char(c);log_active=c!='\n';}
   if(dropped&&lr==lw&&tud_cdc_write_available()>=26) {tud_cdc_write_str("LOG dropped (slow reader)\n");dropped=0;}
  }
  tud_cdc_write_flush();inside=false;

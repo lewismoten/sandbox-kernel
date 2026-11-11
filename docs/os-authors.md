@@ -620,6 +620,8 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `key NAME...` | press keys on the synthetic input device: `up down left right enter esc q space`, a Linux code, or `NAME:down` / `NAME:up` / `NAME:repeat` |
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
+| `einkshot OUT.png` | save the last e-ink plane sent by the kernel, including status/name/build lines |
+| `fbshot OUT.png [--scale N]` | read the last presented HDMI framebuffer while your OS runs; integer decimation 1..16 |
 | `console` | two-way OS serial session; Ctrl-] exits |
 | `audio` | USB `AUDIO` backend and mixer diagnostics |
 | `tone HZ MS` | USB `TONE` diagnostic tone; see section 4 |
@@ -678,6 +680,22 @@ PUTF can forward storage-specific `fatput_fail` text. Input replies include
 Check replies and resolve uncertain update commits with INFO (`core/protocol.c:64`,
 `core/protocol.c:87`, `core/protocol.c:145`, `core/protocol.c:158`, `core/protocol.c:165`,
 `core/protocol.c:219`).
+
+### Reading screens from the host
+
+Agents can read both screens without a camera or cooperation from your OS.
+Use `usb_kernel.py <port> einkshot panel.png` or
+`usb_kernel.py <port> fbshot hdmi.png --scale 2`. These read-only requests do not
+stop the OS, present its pending surface, or wake a blanked display. HDMI is a
+chunked live read and can tear if your program presents or changes palette during
+capture; mode changes require retrying. E-ink returns a stable copy of the last
+successfully triggered controller plane, including the kernel's own status screen
+and Pi name. Physical refresh, ghosting and failures can make the panel differ.
+Indexed modes require palette entries to have been set through the kernel; unknown
+indices are refused. No application ABI or capability changes are needed.
+Both roles compile the commands; today's host-role keyboard build has no USB CDC
+link, so connect using the device role. Limits, CRCs and binary framing are in
+[serial.md](serial.md#screen-capture-protocol-2-extension-no-app-abi-change).
 
 ### Talking to your OS over serial
 
