@@ -13,9 +13,9 @@ from a bus read that itself never completes or a stopped system timer.
 
 | Poll / location | Deadline / termination | Failure behavior |
 | --- | --- | --- |
-| `dwc2_common.c`: AHB idle before/after reset | 100 us each | Return false through PHY/core/role init; deinit returns early |
-| Core reset self-clear, or v4.20a reset-done | 100 us each | Same; distinct counters for both revisions |
-| `dwc2_common.h`: TX/RX FIFO flush | 100 us each | Return false; callers stop before reusing FIFO state; close-all releases its lock |
+| `dwc2_common.c`: AHB idle before/after reset | 20 ms each (`USB_WAIT_INIT_US`, boot-only, sleeps in 1 ms slices) | Return false through PHY/core/role init; deinit returns early |
+| Core reset self-clear, or v4.20a reset-done | 20 ms each (boot-only, sleeps) | Same; distinct counters for both revisions |
+| `dwc2_common.h`: TX/RX FIFO flush | 20 ms in core/host/device init, 100 us at runtime (endpoint disable, bus reset) | Return false; callers stop before reusing FIFO state; close-all releases its lock |
 | `hcd_dwc2.c`: forced host-mode acknowledgment | 150 ms, **boot only**, sleeps up to 1 ms between reads | Init returns false; long deadline accommodates hardware mode debounce |
 | Channel disable / send-IN request queue, periodic and nonperiodic | 100 us | Return false through transfer submission or leave ISR immediately |
 | HCD and DCD RX FIFO IRQ drain | 250 us per drain | Mask controller interrupts and return, even if RXFLVL is stuck or continuously replenished |

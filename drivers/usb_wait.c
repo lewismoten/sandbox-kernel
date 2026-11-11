@@ -19,9 +19,9 @@ bool usb_wait_reg(volatile const uint32_t *reg,uint32_t mask,uint32_t value,uint
  while((*reg&mask)!=value) {
   uint32_t elapsed=(uint32_t)(micros()-start);
   if(elapsed>=limit) {usb_wait_timeout(kind);return false;}
-  /* Host mode is forced only at boot. Hardware debounce is slow: sleep,
-   * rather than holding the CPU for the whole 150 ms deadline. */
-  if(kind==USB_WAIT_HOST_MODE) {
+  /* Long limits are boot-only (host mode debounce, core reset): sleep,
+   * rather than holding the CPU for the whole deadline. */
+  if(limit>=1000u) {
    uint32_t left=limit-elapsed;idle_wait(left<1000u?left:1000u);
   }
  }

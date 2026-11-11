@@ -27,7 +27,7 @@ class USBWait(unittest.TestCase):
                     '-DHOST_TEST',*(['-DUSB_ROLE_HOST=1'] if host else []),
                     '-I'+str(dest),'-Iinclude','tests/usb_wait.c','drivers/usb_wait.c','core/usblog.c','core/usbhost_stats.c',
                     str(dest/'common/tusb_fifo.c'),str(dest/'tusb.c'),'-o',str(exe)],cwd=ROOT,check=True)
-                cases=[0,1,2,3,4,7,12,13]+([5,6] if host else [8,9,10,11])
+                cases=[0,1,2,3,4,7,12,13,14]+([5,6] if host else [8,9,10,11])
                 for case in cases:
                     variants=range(4) if case==6 else range(2) if case in (0,3,4) else range(1)
                     for variant in variants:

@@ -11,6 +11,10 @@ enum usb_wait_kind {
  USB_WAIT_SEMAPHORE, USB_WAIT_DELAY, USB_WAIT_COUNT
 };
 #define USB_WAIT_REG_US 100u
+/* Boot-only init waits (AHB idle, core soft reset, reset done, whole-FIFO flush in
+ * core/host/device init) can take milliseconds; Linux's dwc2 allows ~10 ms each.
+ * Limits of 1 ms or more sleep in 1 ms slices; runtime waits keep USB_WAIT_REG_US. */
+#define USB_WAIT_INIT_US 20000u
 /* Force-mode debounce can take 100 ms; this boot-only wait sleeps in 1 ms slices. */
 #define USB_WAIT_MODE_US 150000u
 #define USB_WAIT_IRQ_US 250u

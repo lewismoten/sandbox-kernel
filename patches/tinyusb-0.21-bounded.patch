@@ -59,7 +59,7 @@
 
      // Flush the FIFO, and wait until we have confirmed it cleared.
 -    dfifo_flush_tx(dwc2, epnum);
-+    if (!dfifo_flush_tx(dwc2, epnum)) return false;
++    if (!dfifo_flush_tx(dwc2, epnum, USB_WAIT_REG_US)) return false;
    } else {
      if (!edpt_is_enabled(dep) || epnum == 0) {
        // non-control not-enabled: stall if set
@@ -103,7 +103,7 @@
 
 -  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
 -  dfifo_flush_rx(dwc2);
-+  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) {
++  if (!dfifo_flush_tx(dwc2, 0x10, USB_WAIT_REG_US) || !dfifo_flush_rx(dwc2, USB_WAIT_REG_US)) {
 +    usbd_spin_unlock(false);
 +    return;
 +  }
@@ -148,7 +148,7 @@
    // 4. Set up DFIFO
 -  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
 -  dfifo_flush_rx(dwc2);
-+  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) return;
++  if (!dfifo_flush_tx(dwc2, 0x10, USB_WAIT_INIT_US) || !dfifo_flush_rx(dwc2, USB_WAIT_INIT_US)) return;
    dfifo_device_init(rhport);
 
    // 5. Reset device address
@@ -236,7 +236,7 @@
    // The software must check that bit 31 in this register is set to 1 (AHB Master is Idle) before starting any operation
 -  while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {
 -  }
-+  if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_REG_US, USB_WAIT_AHB)) return false;
++  if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_INIT_US, USB_WAIT_AHB)) return false;
 
    const uint32_t gsnpsid = dwc2->gsnpsid; // preload gsnpsid which is not readable while resetting
    dwc2->grstctl |= GRSTCTL_CSRST; // reset core
@@ -245,17 +245,17 @@
      // the core, which can take several clocks, depending on the current state of the core. Once this bit has been
      // cleared, the software must wait at least 3 PHY clocks before accessing the PHY domain (synchronization delay).
 -    while (dwc2->grstctl & GRSTCTL_CSRST) {}
-+    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST, 0, USB_WAIT_REG_US, USB_WAIT_RESET)) return false;
++    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST, 0, USB_WAIT_INIT_US, USB_WAIT_RESET)) return false;
    } else {
      // From v4.20a: CSRST bit is write only. The application must clear this bit after checking the bit 29 of this
      // register i.e Core Soft Reset Done CSRT_DONE (w1c)
 -    while (!(dwc2->grstctl & GRSTCTL_CSRST_DONE)) {}
-+    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST_DONE, GRSTCTL_CSRST_DONE, USB_WAIT_REG_US, USB_WAIT_RESET_DONE)) return false;
++    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST_DONE, GRSTCTL_CSRST_DONE, USB_WAIT_INIT_US, USB_WAIT_RESET_DONE)) return false;
      dwc2->grstctl = (dwc2->grstctl & ~GRSTCTL_CSRST) | GRSTCTL_CSRST_DONE;
    }
 
 -  while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {} // wait for AHB master IDLE
-+  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_REG_US, USB_WAIT_AHB);
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_INIT_US, USB_WAIT_AHB);
  }
 
  // Dedicated FS PHY is internal with a clock 48Mhz.
@@ -326,7 +326,7 @@
 
 -  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
 -  dfifo_flush_rx(dwc2);
-+  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) return false;
++  if (!dfifo_flush_tx(dwc2, 0x10, USB_WAIT_INIT_US) || !dfifo_flush_rx(dwc2, USB_WAIT_INIT_US)) return false;
 
    // Clear pending and disable all interrupts
    dwc2->gintsts = 0xFFFFFFFFU;
@@ -389,19 +389,19 @@
  // DFIFO
  //--------------------------------------------------------------------+
 -TU_ATTR_ALWAYS_INLINE static inline void dfifo_flush_tx(dwc2_regs_t* dwc2, uint8_t fnum) {
-+TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_tx(dwc2_regs_t* dwc2, uint8_t fnum) {
++TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_tx(dwc2_regs_t* dwc2, uint8_t fnum, uint32_t us) {
    // flush TX fifo and wait for it cleared
    dwc2->grstctl = GRSTCTL_TXFFLSH | (fnum << GRSTCTL_TXFNUM_Pos);
 -  while (0 != (dwc2->grstctl & GRSTCTL_TXFFLSH_Msk)) {}
-+  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_TXFFLSH_Msk, 0, USB_WAIT_REG_US, USB_WAIT_TX_FLUSH);
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_TXFFLSH_Msk, 0, us, USB_WAIT_TX_FLUSH);
  }
 
 -TU_ATTR_ALWAYS_INLINE static inline void dfifo_flush_rx(dwc2_regs_t* dwc2) {
-+TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_rx(dwc2_regs_t* dwc2) {
++TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_rx(dwc2_regs_t* dwc2, uint32_t us) {
    // flush RX fifo and wait for it cleared
    dwc2->grstctl = GRSTCTL_RXFFLSH;
 -  while (0 != (dwc2->grstctl & GRSTCTL_RXFFLSH_Msk)) {}
-+  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_RXFFLSH_Msk, 0, USB_WAIT_REG_US, USB_WAIT_RX_FLUSH);
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_RXFFLSH_Msk, 0, us, USB_WAIT_RX_FLUSH);
  }
 
  void dfifo_read_packet(dwc2_regs_t* dwc2, uint8_t* dst, uint16_t len);

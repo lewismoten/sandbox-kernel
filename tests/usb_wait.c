@@ -23,9 +23,12 @@ void log_line(const char *s) {(void)s;}
 static enum usb_wait_kind target;
 static uint32_t now;
 static bool emulate;
+static bool slow;
+static uint32_t ready_at;
 void idle_wait(uint32_t us) {now+=us;}
 static void put(volatile const uint32_t *p,uint32_t n) {*(volatile uint32_t *)(uintptr_t)p=n;}
 uint32_t micros(void) {
+ if(slow&&(int32_t)(now-ready_at)>=0) {regs.grstctl|=GRSTCTL_AHBIDL|GRSTCTL_CSRST_DONE;regs.grstctl&=~(GRSTCTL_CSRST|GRSTCTL_TXFFLSH|GRSTCTL_RXFFLSH);}
  if(emulate) {
   if(target!=USB_WAIT_AHB) regs.grstctl|=GRSTCTL_AHBIDL;
   if(target==USB_WAIT_AHB&&(regs.grstctl&GRSTCTL_CSRST)) regs.grstctl&=~GRSTCTL_AHBIDL;
@@ -45,6 +48,17 @@ int main(int argc,char **argv) {
  uint32_t start=now,bound=USB_WAIT_REG_US+8;bool ok=false;
  regs.gintmsk=0xffffffffu;regs.gahbcfg=GAHBCFG_GINT;
  put(&regs.gsnpsid, target==USB_WAIT_RESET_DONE?DWC2_CORE_REV_4_20a:DWC2_CORE_REV_2_80a);
+ if(target==USB_WAIT_AHB||target==USB_WAIT_RESET||target==USB_WAIT_RESET_DONE||target==USB_WAIT_TX_FLUSH||target==USB_WAIT_RX_FLUSH) bound=USB_WAIT_INIT_US+8;
+ if(target==USB_WAIT_COUNT) {
+  /* Slow but healthy controller: reset, AHB idle and flushes finish after 3 ms. */
+  slow=true;ready_at=now+3000;regs.grstctl=GRSTCTL_CSRST|GRSTCTL_TXFFLSH|GRSTCTL_RXFFLSH;
+  CHECK(reset_core(&regs));CHECK(!usb_wait_failed());
+  CHECK(dfifo_flush_tx(&regs,0x10,USB_WAIT_INIT_US)&&dfifo_flush_rx(&regs,USB_WAIT_INIT_US));
+  CHECK(!usb_wait_failed());CHECK((uint32_t)(now-start)<USB_WAIT_INIT_US);
+  /* A runtime-limit wait on the same slow bit still times out at 100 us. */
+  slow=false;regs.grstctl=GRSTCTL_TXFFLSH;CHECK(!dfifo_flush_tx(&regs,0x10,USB_WAIT_REG_US));
+  CHECK(usb_wait_failed());return 0;
+ }
  switch(target) {
  case USB_WAIT_AHB:
   if(variant) {emulate=true;regs.grstctl=GRSTCTL_AHBIDL;}
@@ -52,9 +66,9 @@ int main(int argc,char **argv) {
  case USB_WAIT_RESET: case USB_WAIT_RESET_DONE:
   regs.grstctl=GRSTCTL_AHBIDL;ok=reset_core(&regs);break;
  case USB_WAIT_TX_FLUSH:
-  emulate=variant!=0;ok=variant?dwc2_core_init(0,false,false):dfifo_flush_tx(&regs,0x10);break;
+  emulate=variant!=0;ok=variant?dwc2_core_init(0,false,false):dfifo_flush_tx(&regs,0x10,USB_WAIT_INIT_US);break;
  case USB_WAIT_RX_FLUSH:
-  emulate=variant!=0;ok=variant?dwc2_core_init(0,false,false):dfifo_flush_rx(&regs);break;
+  emulate=variant!=0;ok=variant?dwc2_core_init(0,false,false):dfifo_flush_rx(&regs,USB_WAIT_INIT_US);break;
  case USB_WAIT_RX_IRQ:
   put(&regs.gintsts,GINTSTS_RXFLVL);regs.gintmsk=GINTSTS_RXFLVL;
   bound=USB_WAIT_IRQ_US+8;
