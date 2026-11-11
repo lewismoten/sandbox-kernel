@@ -39,12 +39,11 @@ static int stalled;
 static struct hdmi_audio_clocks clk;
 static const char *why = "not tried";
 /* Never busy-wait for a TV to wake. Initial retry is after ~15 60-Hz frames,
- * then every 500 ms. Connector/mode edges start a new, bounded window.
- * The lifetime cap also bounds mailbox work on a bouncing cable. */
+ * then every 500 ms. Each connector/mode edge starts a new bounded window
+ * (never a per-boot cap: a TV power cycle later must still retry). */
 #define RETRY_FIRST_US 250000u
 #define RETRY_EVERY_US 500000u
 #define RETRY_WINDOW 12u
-#define RETRY_TOTAL 48u
 #define AUDIO_SAVE_MAX 20u
 static struct audio_diag diagnostics;
 static struct audio_observation observed;
@@ -324,11 +323,11 @@ void hdmi_audio_poll(void) {
   audio_diag_line(&diagnostics, timestamp(), "HDMI link changed: retry after settling");
   window_attempts = 0; retry_since = micros(); retry_delay = RETRY_FIRST_US;
  }
- if (hw.active || window_attempts >= RETRY_WINDOW || attempts >= RETRY_TOTAL || protocol_busy()) return;
+ if (hw.active || window_attempts >= RETRY_WINDOW || protocol_busy()) return;
  if (!expired(retry_since, retry_delay)) return;
  (void)hdmi_audio_init();
- if (!hw.active && (window_attempts >= RETRY_WINDOW || attempts >= RETRY_TOTAL))
-  audio_diag_line(&diagnostics, timestamp(), "retry limit reached; null drain continues (new link edge can reopen window within lifetime cap)");
+ if (!hw.active && window_attempts >= RETRY_WINDOW)
+  audio_diag_line(&diagnostics, timestamp(), "retry limit reached; null drain continues (each new link edge reopens a window)");
 }
 
 void hdmi_audio_task(void) {

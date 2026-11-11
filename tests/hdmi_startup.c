@@ -216,13 +216,14 @@ int main(void) {
  assert(hdmi_audio_init() == -1 && !hw.active && !write_count);
  assert(strstr(saved, "ok=1 reply_id=3 pixel_hz=148500000 mailbox=ok\n"));
  /* Firmware never supplies a clock, even through repeated cable edges.
-  * Both mailbox work and writes stop at their independent lifetime caps. */
+  * Mailbox work is bounded per link edge (not per boot, so a TV power cycle
+  * later still retries); card writes stop at their own lifetime cap. */
  reset(0); pixel_hz = 0; assert(hdmi_audio_init() == -1);
  for (unsigned i = 0; i < 200; i++) {
   if (i % 15 == 0) core_regs[HC_HOTPLUG / 4] ^= HOTPLUG_CONNECTED;
   now += 600000; hdmi_audio_poll();
  }
- assert(pixel_queries == RETRY_TOTAL && !hw.active && !audio_hw.task);
+ assert(pixel_queries > 48 && !hw.active && !audio_hw.task);
  assert(card_writes <= AUDIO_SAVE_MAX);
  /* Busy file transfers defer discovery/writes, not the null task. */
  reset(0); pixel_hz = 0; assert(hdmi_audio_init() == -1);
