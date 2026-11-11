@@ -225,8 +225,9 @@ the FIFO split, VBUS being powered, and the keyboard dongle being full speed.
 
 ## Composite dongles and start-up (review R2, R3)
 
-`CFG_TUH_HID=8` counts HID interfaces, including mouse and consumer-control
-interfaces skipped by the keyboard glue. Each accepted boot-keyboard (device, HID index) gets its own
+`CFG_TUH_HID=8` bounds the HID driver table. The host overlay rejects mouse,
+consumer-control, report-only and alternate interfaces before allocating a HID
+slot or opening endpoints; at most four boot keyboards are opened. Each accepted boot-keyboard (device, HID index) gets its own
 slot, up to four total; reports/unmounts affect only the matching slot. The OS
 sees the union of their keys. A first report of nine bytes selects leading
 report-ID stripping for that keyboard; reports shorter than eight bytes are
@@ -261,8 +262,9 @@ USB registers or physical power cuts.
 ## The USB log (USB.TXT)
 
 In the host role the kernel keeps a short text record of the bus and saves it to
-`/OS/SAVES/KERNEL/USB.TXT` (an 8192-byte log buffer plus an events line, written
-once the log has been quiet for 1.5 s, at most 12 times a boot, only when storage
+`/OS/SAVES/KERNEL/USB.TXT` (an 8192-byte record plus an events line, with 2048 bytes reserved for recent
+complete per-second statistics windows. Updates coalesce for 1.5 s, at most
+12 saves a boot, only when storage
 is ready and no OS is running). A successful save replaces the prior record;
 if saving is deferred or fails, the previous boot's file can remain. Per device: address, hub and port
 (`otg-port` when it is on the OTG port itself), speed (LS/FS/HS), `split` when the DWC2 driver runs
@@ -277,9 +279,9 @@ The host-only overlay (`patches/tinyusb-0.21-host.patch`, applied to generated c
 under `build/tinyusb-host` by `scripts/usb_host_overlay.py`) keeps the fetched,
 hash-pinned upstream sources intact. Both roles also compile the separate
 [bounded DWC2 overlay](usb-bounded-waits.md) under `build/tinyusb-bounded`;
-the host overlay separately verifies and copies upstream `usbh.c`/`hub.c`
+the host overlay separately verifies and copies upstream `usbh.c`/`hub.c`/`hid_host.c`
 and carries its own task fault guards. The Makefile uses those host files with
-the bounded common, OS_NONE, HID and DWC2 sources.
+the bounded common, OS_NONE and DWC2 sources and the filtered host HID source.
 The stack retries failed control transfers three times, after 20/40/80 ms, including
 refused controller submissions. A STALL is reported immediately: HID SET_IDLE and
 SET_PROTOCOL may legitimately stall, and TinyUSB's HID driver still handles those.
@@ -297,8 +299,12 @@ A physical reconnect starts a fresh retry budget. Unplugging the hub clears its 
 changes and recovery state. These delays do not block keyboard polling or USB events.
 
 The host adapter calls `tuh_task_ext(0, false)` and processes at most four USB
-events per pass, so a busy hub cannot drain events indefinitely before the next
-OS slice. Enumeration and retry deadlines remain asynchronous. The supervisor
+events per pass. It also checks a shared 1000 us foreground budget before
+controller retries, deferred interrupt submissions and event dispatch; it stops
+admitting work at 750 us, reserving 250 us for the next bounded operation. This
+is cooperative: a callback already executing and asynchronous IRQ work cannot
+be preempted by that check. Lifetime maximum pass time and overruns show whether
+the reserve is sufficient on the board. Enumeration and retry deadlines remain asynchronous. The supervisor
 excludes measured time inside `usb_task()` from OS readiness and heartbeat
 budgets, including USB serviced during a syscall; wall-clock sleep deadlines
 and fault restart windows are unchanged. A pass taking at least 2 ms adds one
@@ -310,6 +316,82 @@ deferred while an OS is running). This protects against false heartbeat faults;
 the separate [bounded-wait port](usb-bounded-waits.md) now limits DWC2 polls
 and IRQ FIFO drains and disables USB after a terminal timeout. Host tests
 do not establish physical latency or interoperability.
+
+## TV slowdown: polling and CPU counters (2026-11-11)
+
+The real TV run reported 114 presents in 19.9 s (about 5.7 FPS) with hub
+1A40:0101, keyboard 1997:2433 (boot interrupt 0x81, interval 8; unsupported
+0x82, interval 1), and keyboard 1A2C:2124 (boot 0x81, interval 10; another
+report-only HID). This is an observation, not a reproduced host benchmark.
+
+Code inspection only partly confirmed the hypothesis. The existing keyboard
+mount callback already declined to arm unsupported HID interfaces, so they did
+not receive reports. Upstream HID nevertheless opened their endpoints before
+that decision. The host overlay now rejects them before opening endpoints or
+sending any HID class requests. Indices of accepted keyboards may consequently
+change. Advertised boot keyboards that fail to enter boot protocol still get
+no report polling. Failed report transfers remove the keyboard and release keys.
+
+DWC2 already used bInterval when retrying periodic NAKs. Successful reports were
+immediately rearmed, bypassing that spacing, and pending NAK retries enabled a
+125 us SOF software countdown on a high-speed root bus. Both were plausible CPU
+costs; neither establishes the cause of the observed frame rate by itself.
+
+All interrupt endpoints, including the hub, now use at least max(bInterval,
+8 ms). FS/LS bInterval is in milliseconds; HS uses 125 us * 2^(bInterval-1),
+then applies the floor. The host retains a deferred transfer's buffer and busy
+state until due. Deadlines advance from the actual submission, without a burst
+after late service. Abort, endpoint close and device removal cancel deferred
+work. DWC2 also enforces the floor on actual wire polls, including NAK retries;
+interrupt NAKs release the channel and wait for a foreground deadline, leaving
+SOF IRQs disabled. Complete-split NYET retries remain part of the same poll and
+retain their existing three-attempt bound. ISO scheduling is unchanged.
+Empty scheduler entries do not mask IRQs or repeatedly read hardware timers.
+
+Once per second, the host appends a bounded statistics window in the reserved
+rolling tail of USB.TXT, preserving descriptors and terminal faults. Every five
+seconds the same summary and per-endpoint lines go to the kernel status log:
+
+```text
+USB win_ms=1000 split=450 passes=1000 task_us=100000
+USB irq_us=10000 max_irq=10 max_pass=100 over=0
+D1 ep81 submit=125 poll=125 ss=125 cs=125 us=8000
+D2 ep81 submit=100 poll=100 ss=100 cs=100 us=10000
+D5 ep81 submit=125 poll=125 ss=0 cs=0 us=8000
+```
+
+This example is an exact synthetic counter test, not a Pi measurement. Addresses
+vary (TinyUSB assigns hubs after the ordinary device range). `win_ms` is the
+actual window length, so a delayed sample is not misreported as a one-second
+rate. `submit` counts attempts passed to the HCD; `poll` counts actual interrupt
+start tokens, including NAK retries; `ss`/`cs` count start/complete split tokens.
+The summary's `split` includes split traffic on control endpoints too. Counts
+are window deltas, unsigned modulo 2^32. Endpoint counters cover up to 16 distinct
+interrupt endpoints; closed rows can be reused by new endpoints. `task_us` is
+wall time in the host stack plus its watchdog (including IRQ preemption), while
+`irq_us` separately records USB IRQ time. Do not add those overlapping values.
+Text formatting/status output is outside those stack timings. `max_irq`,
+`max_pass`, and `over` (passes longer than 1000 us) are boot-lifetime values.
+The USB.TXT tail retains as many complete recent windows as fit in 2048 bytes;
+its maximum size stays 8192 bytes. Disk writes remain deferred while the OS runs;
+let Escape return to recovery and allow a save before powering off. Statistics
+changes cannot postpone the save deadline indefinitely.
+
+`tests/test_usbhost_poll.py` parses both TV composite configurations through the
+real patched host and HID drivers with a configured hub fixture, runs real HID
+configuration callbacks and the runtime keyboard/input glue, and returns a
+changed Escape report on every accepted poll. With 120 us fake HCD operations
+and 1 us fake timer reads, a simulated second gives 125 / 100 keyboard transfers
+and 125 hub transfers; unsupported endpoints have zero opens/transfers/class
+requests. Minimum keyboard gaps are 8001 / 10011 us. Maximum steady polling
+pass is 439 us; maximum including queued event pressure is 882 us, below the
+1000 us budget. Tests also cover late service, wrap, abort, unplug, counter
+window accounting and full-log retention. A separate register-file test executes
+the real DWC2 PIO ACK/NAK paths, counts SS/CS, and checks deadline retries without
+SOF IRQs, HS/FS floors, wrap and cancellation. These numbers are deterministic
+model costs, not board latency guarantees. Retest FPS/Escape on the TV and compare
+`task_us`, `irq_us`, per-endpoint polls, `max_pass` and `over` before attributing
+the slowdown or claiming a frame-rate improvement.
 
 `tests/test_usbhost_heartbeat.py` exercises the actual task wrapper and supervisor
 with a simulated four-second host call, continued ticks/health reports, readiness

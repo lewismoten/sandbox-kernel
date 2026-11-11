@@ -88,11 +88,17 @@ Reinhard Panhuber and other listed authors, are retained in
 `scripts/license_appendix.py` regenerates the appendix from the fetched files. Fetching
 replaces the whole `third_party/tinyusb` folder and writes `SHA256.json` with the hash of every retained file.
 Host builds apply the MIT-licensed local `patches/tinyusb-0.21-host.patch` to generated copies
-of `usbh.c` and `hub.c` in `build/tinyusb-host`; the fetched sources remain unchanged.
+of `usbh.c`, `hub.c` and `hid_host.c` in `build/tinyusb-host`; the fetched sources remain unchanged.
 Both roles also apply the local MIT-licensed `patches/tinyusb-0.21-bounded.patch`
 to verified copies in `build/tinyusb-bounded`. The original DWC2 implementation
 and its upstream notices are retained; local changes add deadlines, timeout
-propagation and interrupt quarantine. Original kernel glue, counters and tests
+propagation, interrupt quarantine, and foreground interrupt-poll deadlines. The
+host overlay additionally filters unsupported HID interfaces before endpoint
+opening, spaces successful interrupt submissions, and checks a cooperative task
+budget. Original diagnostics are in `core/usbhost_stats.c` and
+`include/usbhost_work.h`; `tests/test_usbhost_poll.py` tests the generated stack
+with fake HCD/register files. These changes were written here; no additional
+upstream dependency or hardware reference was introduced. Original kernel glue, counters and tests
 are in `drivers/usb_wait.c`, `include/usb_wait.h`, and `tests/usb_wait.c`. See
 [USB latency bounds](docs/usb-bounded-waits.md) for the loop inventory and validation limits.
 

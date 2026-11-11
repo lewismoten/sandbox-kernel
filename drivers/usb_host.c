@@ -8,6 +8,7 @@
 #include "usbkbd.h"
 #include "usblog.h"
 #include "usbhost_hooks.h"
+#include "usbhost_work.h"
 #include "usb_wait.h"
 #include "host/hcd.h"
 static bool initialized;
@@ -65,7 +66,9 @@ bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const 
  return true;
 }
 void usb_irq(void) {
+ uint32_t begin=micros();
  if(initialized&&!usb_wait_failed()) tuh_int_handler(0,true);
+ usbhost_stats_irq((uint32_t)(micros()-begin));
  if(usb_wait_failed()) hcd_int_disable(0);
 }
 void tuh_mount_cb(uint8_t daddr) {
@@ -82,6 +85,9 @@ static void arm(uint8_t daddr,uint8_t idx) {
  for(unsigned n=0;n<3;n++) if(tuh_hid_receive_report(daddr,idx)) return;
  usbkbd_poll_failed(daddr,idx);
 }
+void tuh_hid_interface_skipped_cb(uint8_t daddr,uint8_t itf,bool capacity) {
+ char line[USBLOG_LINE];usblog_fmt_note(line,daddr,itf,capacity?"HID slots full":"HID skipped: not a boot keyboard");lg(line);
+}
 void tuh_hid_mount_cb(uint8_t daddr,uint8_t idx,const uint8_t *desc,uint16_t len) {
  (void)desc;(void)len;
  /* TinyUSB's default protocol is boot, set before this callback for boot-subclass interfaces. */
@@ -94,6 +100,7 @@ void tuh_hid_mount_cb(uint8_t daddr,uint8_t idx,const uint8_t *desc,uint16_t len
  bool boot_kbd=tuh_hid_interface_protocol(daddr,idx)==HID_ITF_PROTOCOL_KEYBOARD&&tuh_hid_get_protocol(daddr,idx)==HID_PROTOCOL_BOOT;
  if(usbkbd_hid_mounted(daddr,idx,boot_kbd)) arm(daddr,idx);
 }
+void tuh_hid_report_failed_cb(uint8_t daddr,uint8_t idx) {usbkbd_poll_failed(daddr,idx);}
 void tuh_hid_umount_cb(uint8_t daddr,uint8_t idx) {usbkbd_hid_unmounted(daddr,idx);}
 void tuh_hid_report_received_cb(uint8_t daddr,uint8_t idx,const uint8_t *report,uint16_t len) {
  if(usbkbd_report(daddr,idx,report,len)) arm(daddr,idx);
@@ -157,6 +164,8 @@ void usb_task(void) {
  watchdog();
  uint64_t end=clock_us();
  os_usb_work(begin,end);
+ usbhost_stats_pass((uint32_t)(end-begin));
+ usbhost_stats_task();
  /* Once per boot: retain evidence if a controller/callback still takes too long. */
  static bool warned;
  if(end-begin>=2000&&!warned) {

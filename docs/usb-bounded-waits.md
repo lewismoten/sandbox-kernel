@@ -23,7 +23,7 @@ from a bus read that itself never completes or a stopped system timer.
 | `osal_none.h`: semaphore with no token | Immediate refusal | Return false and count it; never wait forever in a cooperative kernel |
 | TinyUSB millisecond delay API | At most 1 ms spin | Requests longer than 1 ms are refused through the terminal fault latch; this port uses asynchronous timers |
 | Host synchronous control APIs | Immediate refusal before retaining any pointers | Return false; the cooperative port requires completion callbacks, so neither synchronous polling loop is reachable |
-| Host/device task event queues | Four events per call, zero queue timeout | Return to the kernel; pending events remain queued |
+| Host/device task event queues | Four events per call, zero queue timeout; host additionally checks a 1000 us cooperative budget (250 us reserve) | Return to the kernel; pending events remain queued |
 | `drivers/usb.c`: OTG ID debounce | 100 ms at boot, sleeps in 1 ms slices | Samples ID then forces device; no OS runs during this boot-only window |
 
 The remaining loops in `drivers/usb_host.c` traverse fixed device tables, at
@@ -46,7 +46,7 @@ re-entering the same wedged wait on every IRQ. Recovery requires reboot.
 Each wait kind has a saturating counter. A terminal fault can replace the log tail if earlier messages filled it. IRQ code only updates counters and
 the fault latch; foreground code formats lines such as
 `DWC2 timeout RX IRQ drain count=1` into the existing USB.TXT log. Both roles
-use the existing persistence policy: save after 1.5 seconds of quiet, at most
+coalesce log updates for 1.5 seconds before saving, at most
 12 times per boot, when storage is ready and no OS is running. While an OS is
 running the evidence stays in RAM until a safe save opportunity. No disk I/O
 or text formatting occurs in the IRQ.
@@ -59,3 +59,12 @@ integration test exercises the real register-wait helper and USB task wrapper
 with the real OS supervisor, then runs 4,000 kernel ticks with health reports.
 No physical-board measurements have been made; successful host tests/builds
 do not establish hardware timing margins or USB interoperability.
+
+Host interrupt NAK retries now use foreground microsecond deadlines with an
+8 ms floor instead of enabling SOF IRQ countdowns. Successful report submissions
+respect the same interval through the host scheduler; the DWC2 layer also guards
+actual wire polls. The shared task budget admits work only before 750 us and
+reserves 250 us within a 1000 us target. A callback already in progress and USB
+IRQ preemption can exceed the target; `max_pass`/`over` explicitly retain that
+evidence. One-second task/IRQ/endpoint counters and five-second status output
+are described with the fake-HCD results in [USB host keyboard](usb-host-keyboard.md#tv-slowdown-polling-and-cpu-counters-2026-11-11).

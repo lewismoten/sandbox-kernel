@@ -6,10 +6,13 @@
 #define assert(x) do {if (!(x)) {fprintf(stderr,"check failed at line %d: %s\n",__LINE__,#x);exit(1);}} while(0)
 #include "usbh.c"
 #include "hub.c"
+
 #ifdef USBHOST_CLOCK_TEST
 #include "host-clock.h"
 #endif
 static uint32_t now;
+uint32_t usb_wait_now(void) {return now*1000u;}
+void log_line(const char *s) {(void)s;}
 bool usb_wait_failed(void) {return false;}
 static unsigned setups, callbacks, retry_logs, enum_success, port_logs, polls;
 static bool submit_ok=true;

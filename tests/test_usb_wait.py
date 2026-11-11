@@ -25,7 +25,7 @@ class USBWait(unittest.TestCase):
                     '-ffunction-sections','-fdata-sections',
                     *(['-Wl,-dead_strip'] if sys.platform=='darwin' else ['-Wl,--gc-sections']),
                     '-DHOST_TEST',*(['-DUSB_ROLE_HOST=1'] if host else []),
-                    '-I'+str(dest),'-Iinclude','tests/usb_wait.c','drivers/usb_wait.c','core/usblog.c',
+                    '-I'+str(dest),'-Iinclude','tests/usb_wait.c','drivers/usb_wait.c','core/usblog.c','core/usbhost_stats.c',
                     str(dest/'common/tusb_fifo.c'),str(dest/'tusb.c'),'-o',str(exe)],cwd=ROOT,check=True)
                 cases=[0,1,2,3,4,7,12,13]+([5,6] if host else [8,9,10,11])
                 for case in cases:

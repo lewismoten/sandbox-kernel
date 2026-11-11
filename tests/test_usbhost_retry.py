@@ -20,5 +20,5 @@ class HostRetry(unittest.TestCase):
             subprocess.run(['cc','-std=c11','-O1','-Wall','-Wextra','-Werror','-Wno-unused-parameter',
                 '-DUSBHOST_CLOCK_TEST=1','-DUSB_ROLE_HOST=1','-Iinclude','-Ithird_party/tinyusb/src','-I'+d,'-Ithird_party/tinyusb/src/host',
                 'tests/usbhost_retry.c','third_party/tinyusb/src/common/tusb_fifo.c',
-                'third_party/tinyusb/src/tusb.c','third_party/tinyusb/src/class/hid/hid_host.c','-o',str(exe)],cwd=ROOT,check=True)
+                'third_party/tinyusb/src/tusb.c',str(Path(d)/'hid_host.c'),'core/usbhost_stats.c','core/usblog.c','-o',str(exe)],cwd=ROOT,check=True)
             subprocess.run([str(exe)],cwd=ROOT,check=True,timeout=10)

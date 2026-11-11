@@ -16,8 +16,8 @@ CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-u
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
 COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
 ifeq ($(USB_ROLE),host)
-USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c build/tinyusb-host/usbh.c build/tinyusb-host/hub.c $(TUSB)/class/hid/hid_host.c $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
-USBDRV := drivers/usb_host.c core/usbkbd.c
+USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c build/tinyusb-host/usbh.c build/tinyusb-host/hub.c build/tinyusb-host/hid_host.c $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
+USBDRV := drivers/usb_host.c core/usbkbd.c core/usbhost_stats.c
 CFLAGS += -DUSB_ROLE_HOST=1 -I$(TUSB)/host
 HOST_OVERLAY := build/tinyusb-host/.stamp
 else ifeq ($(USB_ROLE),device)

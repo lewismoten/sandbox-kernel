@@ -58,6 +58,8 @@ static void tuh_task_ext(uint32_t timeout,bool isr) {
  } else advance(delay);
 }
 static void watchdog(void) {usb_wait_report();}
+static void usbhost_stats_pass(uint32_t us) {(void)us;}
+static void usbhost_stats_task(void) {}
 static void lg(const char *s) {usblog_add(s);}
 ''' + task)
         link = ['-Wl,-Bsymbolic'] if sys.platform.startswith('linux') else []

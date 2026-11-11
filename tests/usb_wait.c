@@ -19,6 +19,7 @@ void usbd_spin_unlock(bool isr) {(void)isr;}
 #endif
 #include "usblog.h"
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"line %d: %s\n",__LINE__,#x);exit(1);}}while(0)
+void log_line(const char *s) {(void)s;}
 static enum usb_wait_kind target;
 static uint32_t now;
 static bool emulate;

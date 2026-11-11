@@ -4,10 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 /* Host role: a short text record of what the USB stack found and what the kernel did with it, kept in
-   RAM (bounded) and saved to /OS/SAVES/KERNEL/USB.TXT once it has been quiet for a moment (core/main.c).
+   RAM (bounded) and saved to /OS/SAVES/KERNEL/USB.TXT after coalescing updates for 1.5 s (core/main.c).
    Pure text logic, host-tested; the driver (drivers/usb_host.c) passes plain numbers. */
 #define USBLOG_MAX 8192 /* bytes kept; later lines are dropped after one "log full" line */
 #define USBLOG_LINE 96
+#define USBLOG_STATS_MAX 2048 /* recent complete one-second windows, reserved from USBLOG_MAX */
+void usblog_set_stats(const char *text);
 void usblog_clear(void);
 void usblog_add_critical(const char *line); /* retain a terminal fault even after log full */
 void usblog_add(const char *line);            /* appends line + '\n' */

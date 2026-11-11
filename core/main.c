@@ -117,8 +117,9 @@ void kernel_main(void) {
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}
   else if(kbd_seen!=kbd_saved&&expired(kbd_since,2000000)) {if(storage_ready&&!os_running()) {kbd_saved=kbd_seen;char t[28]="Keyboards found: ";t[17]=(char)('0'+(kbd_seen>9?9:kbd_seen));t[18]=0;log_line(t);bootrec_keyboards(kbd_seen);}}
 #endif
-  /* USB.TXT: saved once the log has been quiet for 1.5 s (at most 12 times a boot, and not once the OS runs) */
-  if(usblog_version()!=usb_ver) {usb_ver=usblog_version();usb_since=micros();usb_dirty=true;}
+  /* USB.TXT: coalesce changes for 1.5 s (at most 12 saves per boot, only without an OS).
+     Periodic host statistics must not reset this deadline on every update. */
+  if(usblog_version()!=usb_ver) {usb_ver=usblog_version();if(!usb_dirty)usb_since=micros();usb_dirty=true;}
   else if(usb_dirty&&usb_saves<12&&expired(usb_since,1500000)&&storage_ready&&!os_running()) {
    usb_saves++;usb_dirty=false;uint32_t a,r;
 #if USB_ROLE_HOST

@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: MIT; Copyright (c) 2026 Lewis Moten */
 #include "usblog.h"
+static char stats[USBLOG_STATS_MAX];
+static char snapshot[USBLOG_MAX+1];
 static char buf[USBLOG_MAX+1];static uint32_t len,ver;static bool full;
-void usblog_clear(void) {len=0;buf[0]=0;full=false;ver++;}
+void usblog_clear(void) {len=0;buf[0]=0;stats[0]=0;full=false;ver++;}
 void usblog_add(const char *line) {
  if(full) return;
  uint32_t n=0;while(line[n]&&n<USBLOG_LINE-1) n++;
- if(len+n+1>USBLOG_MAX-12) { /* keep room for the closing line */
+ if(len+n+1>USBLOG_MAX-USBLOG_STATS_MAX-12) { /* keep room for the closing line */
   const char *m="log full\n";for(const char *s=m;*s;s++) buf[len++]=*s;buf[len]=0;full=true;ver++;return;
  }
  for(uint32_t i=0;i<n;i++) buf[len++]=line[i]=='\n'||line[i]=='\r'?' ':line[i];
@@ -14,7 +16,7 @@ void usblog_add(const char *line) {
 /* A terminal controller fault must remain visible after enumeration filled the
  * log. Replace at most the last two lines' worth, retaining the earlier record. */
 void usblog_add_critical(const char *line) {
- if(full||len+USBLOG_LINE>USBLOG_MAX-12) {
+ if(full||len+USBLOG_LINE>USBLOG_MAX-USBLOG_STATS_MAX-12) {
   uint32_t keep=len>2*USBLOG_LINE?len-2*USBLOG_LINE:0;
   while(keep&&buf[keep-1]!='\n') keep--;
   len=keep;buf[len]=0;full=false;
@@ -22,7 +24,25 @@ void usblog_add_critical(const char *line) {
  }
  usblog_add(line);
 }
-const char *usblog_text(uint32_t *bytes) {if(bytes)*bytes=len;return buf;}
+void usblog_set_stats(const char *text) {
+ unsigned used=0,n=0;while(stats[used])used++;
+ while(text[n]&&n<sizeof(stats)-1)n++;
+ /* Evict complete oldest windows, retaining recent per-second history without
+  * consuming the descriptor log or hiding a terminal controller fault. */
+ while(used+n>=sizeof(stats)) {
+  unsigned next=1;
+  while(next<used&&!(next+5<=used&&stats[next-1]=='\n'&&stats[next]=='U'&&stats[next+1]=='S'&&stats[next+2]=='B'&&stats[next+3]==' '&&stats[next+4]=='w'))next++;
+  unsigned remain=used-next;
+  for(unsigned i=0;i<remain;i++)stats[i]=stats[next+i];
+  used=remain;
+ }
+ for(unsigned i=0;i<n;i++)stats[used++]=text[i];stats[used]=0;ver++;
+}
+const char *usblog_text(uint32_t *bytes) {
+ unsigned n=0;while(n<len){snapshot[n]=buf[n];n++;}
+ for(unsigned i=0;stats[i]&&n<USBLOG_MAX;i++)snapshot[n++]=stats[i];
+ snapshot[n]=0;if(bytes)*bytes=n;return snapshot;
+}
 uint32_t usblog_version(void) {return ver;}
 static unsigned put(char *o,unsigned at,const char *s) {while(*s&&at<USBLOG_LINE-1)o[at++]=*s++;o[at]=0;return at;}
 static unsigned dec(char *o,unsigned at,uint32_t v) {char t[11];unsigned k=0;do {t[k++]=(char)('0'+v%10);v/=10;} while(v);while(k&&at<USBLOG_LINE-1)o[at++]=t[--k];o[at]=0;return at;}
