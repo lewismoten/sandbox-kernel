@@ -109,7 +109,7 @@ void kernel_main(void) {
  unsigned kbd_seen=0,kbd_saved=0;uint32_t kbd_since=micros();
 #endif
  unsigned usb_saves=0;bool usb_dirty=false;uint32_t usb_ver=0,usb_since=micros();
- if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
+ if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;) {service_io();if(storage_ready)protocol_card_task();} /* GET/LS/USBLOG still answer; the card itself is not what failed */}
  for(;;) {
   clock_us();audio_null_task();usb_task();protocol_task();protocol_card_task();os_task();cec_hw_task();hdmi_audio_poll();
 #if USB_ROLE_HOST
@@ -137,7 +137,7 @@ void kernel_main(void) {
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
   panel_task(usb_state(),seconds);fb_recovery_task();
   if(expired(start,100000)) {
-   if(ticks==old_ticks) {error("Timer progress lost");for(;;)service_io();}
+   if(ticks==old_ticks) {error("Timer progress lost");for(;;) {service_io();if(storage_ready)protocol_card_task();} /* ditto: only the timer failed */}
    old_ticks=ticks;start=micros();watchdog_feed();
   }
   if(trial&&!protocol_busy()&&expired(healthy,1000000)) {
