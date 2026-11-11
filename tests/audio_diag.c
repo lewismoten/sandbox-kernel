@@ -35,7 +35,7 @@ int main(void) {
  assert(!strncmp(l.text, "900 whole line\n", 15));
  assert(l.text[l.len - 1] == '\n');
  /* Maximal fixed fields and caller text still fit their formatting buffers. */
- memset(&o, 0xff, sizeof o); o.mailbox = big;
+ memset(&o, 0xff, sizeof o); o.mailbox = big; o.pixel_src = "mode-table";
  audio_diag_decision(&l, UINT32_MAX, &o, 1, big);
  assert(l.len <= AUDIO_LOG_BYTES && l.text[l.len] == 0);
  return 0;

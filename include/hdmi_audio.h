@@ -80,6 +80,8 @@ int hdmi_audio_clocks(uint32_t rate, uint32_t pixel_hz, uint32_t hsm_hz, struct 
  * (19.2 MHz), 6 PLLD_PER (500 MHz: hardware log 2026-11-09 read CTL 0x2d6, DIV 0x30e0 = 163.68 MHz); other sources
  * unknown (0). Integer divider only plus the 12-bit fraction. */
 uint32_t hdmi_hsm_hz(uint32_t ctl, uint32_t div);
+uint32_t hdmi_mode_pixel_hz(uint32_t w, uint32_t h); /* 0 = unknown size */
+int hdmi_pixel_plausible(uint32_t hz);               /* 25-600 MHz */
 /* Audio InfoFrame for 2-channel LPCM: 4 header bytes (type, version, length,
  * checksum) and 10 payload bytes, 14 in all. PB1 = channel count - 1 with
  * coding type 0 ("refer to stream header"), the rest 0 (front left/right). */

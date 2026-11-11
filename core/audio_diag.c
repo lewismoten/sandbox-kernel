@@ -39,6 +39,11 @@ void audio_diag_decision(struct audio_diag *l, uint32_t ms,
  text(&p, " mailbox=");
  for (unsigned i = 0; o->mailbox[i] && i < 32; i++) *p++ = o->mailbox[i];
  *p = 0; audio_diag_line(l, ms, b);
+ p = b; text(&p, "pixel_source=");
+ text(&p, o->pixel_src && *o->pixel_src ? o->pixel_src : "firmware-clock");
+ field(&p, " pixel_used_hz=", o->pixel_used ? o->pixel_used : o->pixel_hz);
+ field(&p, " mode_w=", o->mode_w); field(&p, " mode_h=", o->mode_h);
+ *p = 0; audio_diag_line(l, ms, b);
  p = b; field(&p, "hsm_ctl=", o->hsm_ctl); field(&p, " hsm_div=", o->hsm_div);
  field(&p, " hd_m_ctl=", o->m_ctl); field(&p, " scheduler=", o->scheduler);
  field(&p, " hotplug=", o->hotplug); text(&p, (o->scheduler & 2) ? " mode=hdmi" : " mode=dvi");

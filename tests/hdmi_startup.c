@@ -99,8 +99,11 @@ static void delay_us(uint32_t duration) {
  if (scenario == 3) dma_regs[0] |= 0x100u;
  now += duration;
 }
+static uint32_t measured_hz, mode_w, mode_h;
 static int property(uint32_t tag, uint32_t *values, unsigned count) {
  if (tag == 0x60001) { assert(count == 1); values[0] = 1u << 2; return 1; }
+ if (tag == 0x30047) { values[0] = 9; values[1] = measured_hz; return measured_hz != 0; }
+ if (tag == 0x40003) { values[0] = mode_w; values[1] = mode_h; return mode_w != 0; }
  assert(tag == 0x30002 && count == 2 && values[0] == 9);
  pixel_queries++; values[0] = pixel_reply_id; values[1] = pixel_hz; return pixel_query_ok;
 }
@@ -113,7 +116,7 @@ static void reset(unsigned mode) {
  log_us = log_ms = log_rem = 0;
  probed = 0; card_writes = pixel_queries = 0; card_busy = false; storage_ready = true; saved[0] = 0;
  audio_dev_init();
- scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000; pixel_reply_id = 9; pixel_query_ok = 1;
+ measured_hz = mode_w = mode_h = 0; scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000; pixel_reply_id = 9; pixel_query_ok = 1;
  misc_regs[0] = 0x2d6; misc_regs[1] = 0x30e0;
  hd_regs[HD_M_CTL / 4] = 1; core_regs[HC_SCHEDULER_CONTROL / 4] = 3;
  core_regs[HC_RAM_PACKET_CONFIG / 4] = 0x02;
@@ -165,6 +168,24 @@ int main(void) {
  assert(hdmi_audio_init() == -1 && strstr(why, "DVI mode") && !write_count);
  reset(0); pixel_hz = 0;
  assert(hdmi_audio_init() == -1 && strstr(why, "pixel clock unavailable") && !write_count);
+ /* Firmware clock reads 0: measured rate, then mode table, else null. */
+ reset(0); pixel_hz = 0; measured_hz = 148500000;
+ assert(hdmi_audio_init() == 0 && hw.active && clk.cts);
+ assert(!strcmp(observed.pixel_src, "firmware-measured") && observed.pixel_used == 148500000);
+ reset(0); pixel_hz = 0; measured_hz = 3000;
+ assert(hdmi_audio_init() == -1 && strstr(why, "pixel clock unavailable"));
+ reset(0); pixel_hz = 0; mode_w = 1920; mode_h = 1080;
+ assert(hdmi_audio_init() == 0 && hw.active && observed.pixel_used == 148500000 && !strcmp(observed.pixel_src, "mode-table"));
+ reset(0); pixel_hz = 0; mode_w = 1280; mode_h = 720;
+ assert(hdmi_audio_init() == 0 && observed.pixel_used == 74250000);
+ reset(0); pixel_hz = 0; mode_w = 960; mode_h = 540; /* scaled framebuffer */
+ assert(hdmi_audio_init() == 0 && observed.pixel_used == 148500000);
+ reset(0); pixel_hz = 0; mode_w = 720; mode_h = 480;
+ assert(hdmi_audio_init() == 0 && observed.pixel_used == 27000000);
+ reset(0); pixel_hz = 0; mode_w = 123; mode_h = 77; /* nothing plausible */
+ assert(hdmi_audio_init() == -1 && !hw.active && strstr(why, "pixel clock unavailable"));
+ reset(0); pixel_hz = 0; measured_hz = 148500000; core_regs[HC_HOTPLUG / 4] = 0; /* hotplug=0 alone does not block */
+ assert(hdmi_audio_init() == 0 && hw.active);
  reset(0); misc_regs[0] &= ~0x80u;
  assert(hdmi_audio_init() == -1 && strstr(why, "HSM clock stopped") && !write_count);
  for (unsigned status = 0; status <= 0x10; status += 0x10) {

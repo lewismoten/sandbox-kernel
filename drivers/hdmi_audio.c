@@ -219,6 +219,7 @@ int hdmi_audio_init(void) {
  observed.hotplug = REG(HDMI_CORE_BASE + HC_HOTPLUG);
  /* Get clock rate, not framebuffer width or the sink's preferred EDID mode.
   * Capture even an unsuccessful reply and its exact transport/tag failure. */
+ const char *pixel_src = "";
  uint32_t pixel[2] = {9, 0};
  observed.pixel_ok = property(0x30002, pixel, 2);
  observed.pixel_id = pixel[0]; observed.pixel_hz = pixel[1];
@@ -232,12 +233,25 @@ int hdmi_audio_init(void) {
  uint32_t hsm = hdmi_hsm_hz(observed.hsm_ctl, observed.hsm_div);
  sayhex("CM_HSMCTL ", observed.hsm_ctl); sayhex("CM_HSMDIV ", observed.hsm_div);
  if (!hsm || !(observed.hsm_ctl & 0x80u)) return fail("HSM clock stopped or unknown");
- if (!observed.pixel_ok || pixel[0] != 9 || !pixel[1]) return fail("firmware pixel clock unavailable");
+ if (!observed.pixel_ok || pixel[0] != 9 || !hdmi_pixel_plausible(pixel[1])) {
+  /* The firmware's GET_CLOCK_RATE may read 0 while HDMI runs: try the
+   * measured rate (tag 0x30047), then the visible mode's standard timing. */
+  pixel_src = "";
+  uint32_t meas[2] = {9, 0};
+  if (property(0x30047, meas, 2) && meas[0] == 9 && hdmi_pixel_plausible(meas[1])) { pixel[1] = meas[1]; pixel_src = "firmware-measured"; }
+  else {
+   uint32_t wh[2] = {0, 0};
+   if (property(0x40003, wh, 2)) { uint32_t hz = hdmi_mode_pixel_hz(wh[0], wh[1]); if (hz) { pixel[1] = hz; pixel_src = "mode-table"; } }
+   observed.mode_w = wh[0]; observed.mode_h = wh[1];
+  }
+  if (!*pixel_src) return fail("firmware pixel clock unavailable");
+  observed.pixel_src = pixel_src; observed.pixel_used = pixel[1];
+ }
  if (hdmi_audio_clocks(RATE, pixel[1], hsm, &clk)) return fail("no N/CTS for this mode");
  if (!(observed.m_ctl & 1u)) return fail("HD block not enabled by firmware (is HDMI on?)");
  sayhex("SCHEDULER_CONTROL ", observed.scheduler);
  if (!(observed.scheduler & SCHEDULER_HDMI_ACTIVE)) return fail("DVI mode: set hdmi_drive=2 on the boot card");
- say("pixel clock ", pixel[1], " Hz (firmware)");
+ say("pixel clock ", pixel[1], *pixel_src ? " Hz (fallback)" : " Hz (firmware)");
  say("HSM ", hsm, " Hz (from CM)");
  say("N ", clk.n, ""); say("CTS ", clk.cts, ""); say("SMP N ", clk.smp_n, ""); say("SMP M ", clk.smp_m, ""); say("sample clock ", clk.mai_hz, " Hz");
  prepare_audio();

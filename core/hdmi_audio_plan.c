@@ -98,3 +98,17 @@ uint32_t dma_cb_index(uint32_t conblk, uint32_t cb_bus, uint32_t nseg) {
     uint32_t i = (conblk - cb_bus) / (uint32_t)sizeof(struct dma_cb);
     return i < nseg ? i : 0;
 }
+
+/* Pixel clock from the visible mode when firmware reports no rate. Standard
+ * CEA 60 Hz timings only (1080p 148.5, 720p 74.25, 576p/480p 27, 640x480
+ * 25.2 MHz); a scaled-down framebuffer (e.g. 960x540) is assumed to be shown
+ * on a 1080p output. Returns 0 when the size is not recognized. */
+uint32_t hdmi_mode_pixel_hz(uint32_t w, uint32_t h) {
+    if (w >= 1900 && h >= 1000) return 148500000u;
+    if (w >= 1200 && h >= 700) return 74250000u;
+    if (w >= 900 && w < 1200 && h >= 500 && h <= 600) return 148500000u;
+    if (w == 640 && h == 480) return 25200000u;
+    if (w >= 700 && w <= 720 && h >= 470 && h <= 580) return 27000000u;
+    return 0;
+}
+int hdmi_pixel_plausible(uint32_t hz) { return hz >= 25000000u && hz <= 600000000u; }
