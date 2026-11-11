@@ -1,8 +1,8 @@
 # sandbox-kernel SDK
 
 Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is the
-**draft 1.0** described in [docs/design.md](../docs/design.md#system-call-abi-draft-version-10);
-it may still change before 1.0 is frozen. New to this? Read the
+**1.11** described in [docs/design.md](../docs/design.md#system-call-abi-current-version-111);
+minor versions add compatible features. New to this? Read the
 [OS author's guide](../docs/os-authors.md) first: boot, the program rules, and a table of
 what each ABI minor added (the headers are now at minor 11).
 
@@ -44,6 +44,11 @@ what each ABI minor added (the headers are now at minor 11).
 - ABI 1.7 save folders and ABI 1.8 `/dev/audio` (`sbx_audio_query`): check startup minor >= 7 before
   writing saves and minor >= 8 before opening `/dev/audio`; an older kernel refuses them, so
   keep a path without them. See [the audio device](../docs/audio-device.md).
+- ABI 1.6 adds `sbx_app_arena` (call 21), using the 48-byte startup extension
+  and its app generation; see [the arena contract](../docs/app-arena-abi.md).
+- ABI 1.9 adds e-ink query/title/clear and page writes through `/dev/eink`;
+  see [the panel contract](../docs/eink.md). ABI 1.10 adds the nonblocking
+  `/dev/serial0` stream and `sbx_serial_query`; see [serial](../docs/serial.md).
 - ABI 1.11 adds `sbx_power_acquire`, `sbx_power_release` (call 22) and
   `sbx_power_timeouts` (call 23). Check startup minor >= 11. Use
   `SBX_POWER_NO_BLANK | SBX_POWER_NO_SLOWDOWN` while playing long movies;
@@ -63,4 +68,5 @@ arm-none-eabi-gcc -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -Os -ffreestanding \
 
 `programs/diag` is the example. Install a program on the card with
 `scripts/usb_kernel.py <port> put PROGRAM.ELF` and start it with `run PROGRAM.ELF`;
-`/OS/DIAG.ELF` starts by itself 10 s after boot. See [docs/m1.md](../docs/m1.md).
+autostart after 10 s chooses `/OS/AUTORUN.TXT`, then `/OS/GMOS.ELF`, then
+`/OS/DIAG.ELF`. Run `stop` before installing while a program is running. See [docs/m1.md](../docs/m1.md).

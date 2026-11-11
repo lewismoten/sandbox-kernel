@@ -2,7 +2,7 @@
 
 **Current status:** Slice B binds lifecycle/cleanup to the supervisor and
 uspace; Slice C exposes allocation through ABI 1.6 call 21. The current ABI is
-1.10. See [app-arena-supervisor.md](app-arena-supervisor.md) and
+1.11. See [app-arena-supervisor.md](app-arena-supervisor.md) and
 [app-arena-abi.md](app-arena-abi.md). Hardware timing/MMU acceptance remains
 hardware-untested.
 The remainder below records the original Slice A boundary, not the current link list.

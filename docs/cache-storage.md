@@ -41,8 +41,8 @@ the two scopes share one writer. Physical writes and power cuts remain hardware-
   may already be new when cleanup reports an error; this isn't full POSIX rename
   error atomicity. Readers must use only the committed destination.
 
-Mutation is rejected while any cache file/directory read handle is open,
-including lowercase read-path aliases. Other asset handles are not remounted or
+Mutation is rejected while any CACHE or SAVES file/directory read handle is
+open, including lowercase read-path aliases and USB GET/LS handles. Other asset handles are not remounted or
 revoked. Kernel and SDK record layouts are independently asserted on host/ARM.
 
 ## Install invalidation and corrupt cache recovery

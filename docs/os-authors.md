@@ -182,7 +182,7 @@ The 250x122 panel (`core/render.c`, `render_status`) shows the chip-with-K mark,
 | Line | Meaning |
 | --- | --- |
 | `UP:` | uptime since the kernel started |
-| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `OTG (KEYBOARD NEXT)` (the OTG ID pin read grounded once at boot, latched, and no computer has enumerated for 500 ms; the kernel does not start host mode, hot-plug is not implemented yet, so replugging an adapter later changes nothing until reboot, and this device build does not support a USB keyboard), or a start-up failure such as `USB POWER MBOX TIMEOUT` |
+| `USB:` | USB state from `usb_state` (`drivers/usb.c`): `disconnected`, `enumerated` (the computer sees the device), `reader` (a program has the serial port open), `suspended`, `NO OTG ADAPTER`, `OTG: INSTALL KBD` (grounded ID with no usable companion), or `KEYBOARD MODE` with a keyboard count in the host role; ID is sampled and latched at boot, the device decision uses 300 ms debounce within 1.5 s, and live role switching is not implemented. Failures include such as `USB POWER MBOX TIMEOUT` |
 | `ERR:` | the kernel's **last error** (`last_error`), `none` if there has been none. It is overwritten by each new error and never cleared. Normal refusals (`not-ready`) do not set it |
 
 Some `ERR:` values you may meet: `Panel BUSY timeout`, `No verified fallback`,
@@ -356,7 +356,12 @@ known size and the same header/alignment rules (`core/abi.c:6`, `core/sys.c:223`
 raw record. A failed operation is not a promise that buffers or device state are untouched.
 
 `SBX_CALL_QUERY=0` is declared but unimplemented. Calls 0, 7, 8, 10, 15 and numbers
-above 21 return `ENOSYS` before record validation (`core/sys.c:394`).
+above 23 return `ENOSYS` before record validation (`core/sys.c:394`).
+
+Implemented numbers are `open=1`, `read=2`, `write=3`, `close=4`, `ioctl=5`,
+`mmap=6`, `seek=9`, `getdents=11`, `fsync=12`, `clock_gettime=13`,
+`sleep_until=14`, `exit=16`, `health=17`, `getdents_meta=18`, `rename=19`,
+`getdents_long_meta=20`, `app_arena=21`, `power_hold=22` and `power_timeouts=23`.
 
 ### The heartbeat
 
@@ -365,7 +370,12 @@ report** and must come **within 10 seconds** of the start; after that, one at le
 **2 seconds** (`OS_READY_US`, `OS_HEARTBEAT_US` in `include/os.h`). Only health calls
 count. Miss either deadline and the program is stopped as a fault. The record carries the
 startup `generation` and a `sequence` that strictly increases from 1. `sbx_sleep_until`
-does not replace the heartbeat: wake up and send one.
+does not replace the heartbeat: wake up and send one. In the host keyboard
+role, measured time inside `usb_task()` is excluded from readiness and heartbeat
+budgets, including nested USB service during a syscall. This does not pause the
+monotonic clock, absolute sleep deadlines or the 60-second fault window; your own
+loading, computation and sleep still need health reports. The device role does
+not apply this USB-time adjustment (`drivers/usb_host.c`, `core/os.c:os_usb_work`).
 
 ### Exit codes
 
@@ -394,10 +404,13 @@ described in `docs/design.md`.)
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 16,384-frame ring (about 341 ms; `include/audio_ring.h:20`) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. Short drains are filled with silence. HDMI drains the ring when its backend starts; otherwise the null backend silently drains it. No ABI minor was added for this backend or its internal mixer. See the audio rules below and `docs/audio-device.md`. |
 | 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
-| 1.11 | 22, 23: keep-awake holds and idle timeout policy |
+| 1.11 | `power_hold` (call 22, 40 bytes): acquire/release keep-awake tokens. `power_timeouts` (call 23, 32 bytes): set slowdown/blank timeouts. See [idle power](#idle-power-abi-111). |
 
 **Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Hardware-untested:** HDMI audio output on physical sinks and the new e-ink/serial
-paths are not established by these code checks. **Not yet:** gamepads, Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
+paths are not established by these code checks. HDMI-CEC is linked in both roles;
+bench transmit results and the timeout claim fix are in [cec.md](cec.md), while
+TV receive and standby/wake remain hardware-untested. **Not yet:** gamepads,
+Wi-Fi and Bluetooth (no wireless driver runs), and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
 general SD writing are not supported either.
 
@@ -432,12 +445,17 @@ existing instances with `ENODEV`; close and reopen after re-add (`include/input.
 still reports SYNTHETIC even in the host build (`core/sys.c:316`).
 
 The default `USB_ROLE=device` build supplies `KEY`/`AXIS` input and the CDC recovery
-console. `make USB_ROLE=host` instead links TinyUSB HID host and supports one boot
-keyboard through the same queue, with no CDC protocol or log console
-(`Makefile:12`, `drivers/usb_host.c:1`, `core/usbkbd.c:36`). This hardware-untested host
-path runs only as a trial and deliberately never confirms; power cycling returns to
-the confirmed device kernel. Factory image assembly refuses host builds
-(`core/main.c:23`, `core/main.c:85`, `scripts/assemble_boot.py:8`).
+console. `make USB_ROLE=host all` instead links TinyUSB HID host with one hub,
+up to four downstream devices and up to four boot-keyboard interfaces sharing
+the queue. Each keeps its own held keys; the OS sees their union. There is no
+CDC protocol or log console (`include/tusb_config.h`, `core/usbkbd.c`).
+Install it with `install-host` as a persistent idle-slot companion: a confirmed
+device kernel selects it at boot when the latched OTG ID is grounded and no
+computer enumerates for 300 ms, within a 1.5-second decision window. Without the
+adapter, the next boot stays in the device kernel. A separate consumed host trial
+is also supported; neither host entry ever confirms. Factory image assembly
+refuses host builds. See [keyboard setup](usb-host-keyboard.md) for installation,
+fallback, and the remaining hardware checks.
 
 ### Arena and clock rules
 
@@ -453,6 +471,21 @@ Clock selector must be 0; returned nanoseconds have microsecond resolution.
 `sleep_until` uses an absolute deadline, rounds up to microseconds, and returns
 immediately for a past deadline (`core/sys.c:379`).
 
+### What changed in 1.11
+
+- Keep-awake holds and timeout overrides are new app calls 22 and 23; check
+  startup major 1/minor >=11 before using them. Existing layouts/numbers stay compatible.
+- Idle kernel passes use CP15 WFI, with default ARM slowdown after 60 s and
+  HDMI blank/CEC standby after 600 s. Use both hold bits during video and keep
+  sending health reports; holds do not extend heartbeat deadlines.
+- USB `EINKSHOT`/`FBSHOT`, `GET`/`LS`, and the host `fault`/`logs` tools are
+  protocol 2 extensions, independent of the app ABI. They work through the
+  device-role CDC link while the OS runs.
+- Host USB service time no longer consumes OS readiness/heartbeat budgets.
+  Both roles use [bounded DWC2 waits](usb-bounded-waits.md); a terminal USB
+  timeout requires reboot. CEC claim polls now claim on NACK or timeout, try
+  the next address on ACK, and bound transport-error retries ([cec.md](cec.md)).
+
 ### Idle power (ABI 1.11)
 
 Call 22 (`POWER_HOLD`, 40-byte record: header, u64 operation, flags, token)
@@ -460,7 +493,8 @@ acquires (operation 1, token initially zero) or releases (operation 0, flags zer
 a keep-awake token. Flags are `NO_BLANK=1` (also no dim) and `NO_SLOWDOWN=2`;
 combine them for video. Up to 16 independent holds are ORed together. Acquire
 returns a nonzero token; release needs that exact token. Unknown flags, zero
-acquire flags or bad operations return EINVAL; stale tokens return EBADF; a full
+acquire flags, nonzero acquire token, nonzero release flags or bad operations
+return EINVAL; zero/stale tokens return EBADF; a full
 table returns EMFILE, exhausted token IDs EOVERFLOW. All holds are released on
 exit, fault, restart and USB stop. Tokens cannot be reused across OS launches.
 
@@ -469,6 +503,7 @@ blank_seconds) sets the foreground OS's policy and restarts the inactivity timer
 Zero disables that timeout; values above 86400 return EINVAL. Defaults are 60 and
 600 seconds and return on OS cleanup. No device handle or additional capability
 is required. Common ABI header, pointer, size and zero-tail checks apply.
+Call 22 requires a writable outer record even on release; call 23 is input-only.
 
 ```c
 // Require startup->minor >= 11 (major 1).
@@ -481,8 +516,9 @@ sbx_power_timeouts(120, 900); // seconds; (0, 0) disables both
 ```
 
 Accepted key changes/repeats and axis changes reset inactivity even without an
-input reader. CEC button presses (including unmapped buttons), Image View On and
-Active Source also wake the policy. A hold requests restoration of its protected resource on
+input reader. Once a CEC address is claimed, directed button presses (including
+unmapped buttons), directed Image View On with no operands and broadcast Active
+Source with two operands also wake the policy (initiator 15 is ignored). A hold requests restoration of its protected resource on
 the next kernel pass; completion depends on the asynchronous firmware reply. Releasing a hold uses time since the last input, so an
 already expired timeout can take effect immediately. Holds inhibit clock/screen
 policy, not interrupt waits; runnable programs continue to run normally.
@@ -557,14 +593,18 @@ loader rejection strings are separate from numeric app errno (`core/protocol.c:8
 
 ## 5. Files on the card
 
-The card is an MBR disk with one FAT32 partition. The kernel mounts it as `/sd`; paths in
-calls start with `/sd/`.
+The card is an MBR disk with one FAT32 partition. The kernel mounts it as `/sd`;
+app filesystem calls start with `/sd/`. The table below uses card-root paths,
+as do USB GET/LS and the kernel loader.
 
 | Path | What it holds |
 | --- | --- |
 | root | firmware files, `config.txt`, `kernel.img`, `KERNA.BIN`, `KERNB.BIN`, `BOOTCT0.BIN`, `BOOTCT1.BIN`, license texts. Leave these alone |
 | `/OS/*.ELF` | OS programs: `GMOS.ELF`, `DIAG.ELF`, `JS.ELF`, yours |
 | `/OS/AUTORUN.TXT` | which program autostarts (section 2) |
+| `/OS/NAME.TXT` | Pi name, 1–8 of `A-Z 0-9 -`, loaded at boot |
+| `/OS/SAVES/KERNEL/BOOT.TXT` | boot counter, USB role decision and keyboard count |
+| `/OS/SAVES/KERNEL/USB.TXT`, `CEC.TXT`, `FAULT.TXT` | bus, CEC session and latest OS fault records |
 | `/OS/APPS/<DIR>/` | an app folder for a program such as `JS.ELF` |
 | `/GAMES/<DIR>/`, `/GAMES/<NAME>.GMP` | games, loose or packed (`LIBRARY.JSL` is the library index) |
 | `/POCKET/<NAME>.GMP` | packed games for the Pocket Player |
@@ -606,12 +646,15 @@ no user unlink or mkdir calls (`core/sys.c:126`, `core/sys.c:205`, `core/sys.c:4
 
 Plug the Pi's USB data port into your computer. It appears as a serial device
 (`/dev/cu.usbmodem*` on macOS). `scripts/usb_kernel.py <port> <command>` (Python 3
-standard library only) talks to it. Each command runs an `INFO` handshake first.
+standard library only) talks to it. The tool performs an `INFO` handshake
+before its operation; `tail` then prints
+wire lines without decoding OS escapes. These commands need the device role
+and one serial reader at a time.
 
 | Command | What it does |
 | --- | --- |
 | `info` | print the device's `INFO` line: slots, generations, `updates=ready\|locked\|busy`, `os=running\|stopped\|none`, features |
-| `tail` | print the kernel log (`LOG ...` lines) until you stop it |
+| `tail` | print incoming wire lines, including `LOG`, `OS` and `OS~`, until you stop it |
 | `put FILE [--name NAME]` | install FILE as `/OS/<NAME>` (upper-case 8.3, 1 byte to 1 MiB, CRC and SHA-256 checked) |
 | `putgame FOLDER DIR` | install every file as `/GAMES/<DIR>/<NAME>` |
 | `putapp FOLDER DIR` | install every file as `/OS/APPS/<DIR>/<NAME>` |
@@ -620,13 +663,21 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `key NAME...` | press keys on the synthetic input device: `up down left right enter esc q space`, a Linux code, or `NAME:down` / `NAME:up` / `NAME:repeat` |
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
-| `get /OS/SAVES/KERNEL/FAULT.TXT [OUT]`, `ls /OS/SAVES` | read crash records/logs or list card directories while the OS runs; read-only, CRC-checked GET up to 4 MiB; [wire format](serial.md#reading-card-files-protocol-2-extension) |
+| `get PATH [OUT]` | read a card-root file while the OS runs: CRC-checked chunks up to 4 MiB; without OUT, printable UTF-8 text up to 64 KiB |
+| `ls PATH` | list a card-root directory using short aliases; [wire format and path limits](serial.md#reading-card-files-protocol-2-extension) |
+| `fault [--elf PROGRAM.ELF]` | explain `/OS/SAVES/KERNEL/FAULT.TXT`, decode ARM1176 FSR and optionally resolve PC/LR with a matching ELF; current records omit LR |
+| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
+| `ceclog [--seconds N]` | show CEC session lines for 8 s by default, including the replayed log tail |
+| `usblog` | print the saved USB bus log with newlines restored |
+| `lastboot` | print Pi name and previous/current boot decisions |
+| `name TEXT` | uppercase and install a 1–8 character Pi name (`A-Z 0-9 -`) as `/OS/NAME.TXT`; takes effect next boot, requires the OS stopped |
 | `einkshot OUT.png` | save the last e-ink plane sent by the kernel, including status/name/build lines |
 | `fbshot OUT.png [--scale N]` | read the last presented HDMI framebuffer while your OS runs; integer decimation 1..16 |
 | `console` | two-way OS serial session; Ctrl-] exits |
 | `audio` | USB `AUDIO` backend and mixer diagnostics |
 | `tone HZ MS` | USB `TONE` diagnostic tone; see section 4 |
-| `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot) |
+| `send KERNEL.SKI` | update the kernel itself (A/B slot, trial boot); revokes any idle-slot companion |
+| `install-host KERNEL.SKI` | install a role-1 host companion in the idle slot, without reboot; requires update admission, role-0 verified fallback and no pending trial |
 
 **The `INFO` fields:** `updates=ready` means this kernel accepts update requests (a capability);
 `updates=locked` means it does not; `updates=busy` means a new kernel is already pending, so wait
@@ -639,10 +690,12 @@ otherwise, so older `usb_kernel.py` clients keep working. New clients read `upda
 the app ABI: startup reports the current major/minor (1.11 on this branch). Gate app
 features on startup, never that INFO field (`core/protocol.c:135`, `core/os.c:111`,
 `include/abi.h:8`). INFO also reports `profile=zero-w-armv6`, `capacity=2097152`,
+`active` (slot), `active_generation`, `confirmed`, `pending` (generation, 0 if none),
+`host_companion` (generation, 0 if absent), `name`, `boot`, `lastboot`,
 `install_timeout=120`, and `serial=usb|none` (`core/protocol.c:143`).
 
 `run --seconds` defaults to 15; `key --gap` defaults to 0.3 seconds and `--seconds` to 2.
-The command table and options are implemented in `scripts/usb_kernel.py:228`.
+The command table and options are implemented in `scripts/usb_kernel.py:main`.
 `put --name GAMES/NAME.GMP` or `POCKET/NAME.GMP` installs packed games, with `.G01`–`.G99`
 continuations; `GAMES/LIBRARY.JSL`, `GAMES/DIR/NAME` and `APPS/DIR/NAME` are also accepted.
 Folder installs are shallow, sorted, skip dotfiles and uppercase filenames
@@ -756,7 +809,9 @@ as left out in `docs/js.md`).
   guards it). Large static arrays count even when they are `.bss`, because whole pages
   are charged.
 - **Heartbeat:** the first `sbx_health` within 10 s, then every 2 s. A long load or sleep
-  without one is a fault. Load in pieces and heartbeat between them.
+  without one is a fault. Load in pieces and heartbeat between them. The host
+  role excludes measured kernel USB task time, as explained above; holds do not
+  pause either deadline.
 - **Nonzero exit is a fault.** Exit 0 only when you mean to stop cleanly.
 - **Two faults in 60 s ends your program.** An autostarted one is replaced by `DIAG.ELF`;
   a `RUN` one is not.
@@ -767,7 +822,7 @@ as left out in `docs/js.md`).
   one input reader, one audio writer, one e-ink handle and one serial owner
   (`include/assets.h:6`, `core/sys.c:94`, `core/input.c:54`, `core/serial.c:7`).
 - **Check your minor version.** Gate features on the startup ABI version: with major 1,
-  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink and >= 10 for serial and >= 11 for power policy
+  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink, >= 10 for serial, and >= 11 for power policy
   (`include/abi.h:8`). Fall back to silence or no saves when the version is lower.
   Unsupported operations do not all return `ENOSYS`: unknown syscall numbers return
   `ENOSYS` (-38), unknown device ioctls return `ENOTTY` (-25), and absent device

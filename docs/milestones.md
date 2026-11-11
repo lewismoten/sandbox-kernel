@@ -147,9 +147,10 @@ Implementation status: ABI 1.8 provides stereo S16_LE/48 kHz `/dev/audio` with a
 run shows drain counters only. Listening, sustained load and fault/unplug tests
 remain hardware-untested. The kernel-internal mixer serves the USB `TONE` hook.
 PWM and gamepad drivers are absent. `make USB_ROLE=host all` links a boot-keyboard
-role (hardware-untested, no CDC/hubs, consumed trial only, never confirms); the
-default is `USB_ROLE=device`, and `make boot` refuses host runtimes. CEC remains
-unlinked host-only code. The acceptance targets below are still gates, not claims
+role (hardware-untested, no CDC, one hub, up to four boot keyboards, installed
+companion or consumed trial, never confirms); the default is `USB_ROLE=device`,
+and `make boot` refuses host runtimes. CEC is linked in both roles, with bench
+transmit evidence; TV receive and standby/wake remain hardware-untested. The acceptance targets below are still gates, not claims
 that the original PWM-first plan shipped.
 
 Deliver kernel-managed buffered PCM through PWM first, then investigate HDMI

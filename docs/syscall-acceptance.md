@@ -96,7 +96,7 @@ Explicit gaps:
 - **Older-minor ARM execution remains hardware-untested.** This historical baseline is
   ABI 1.0 (`K_ABI_MINOR == 0`), with no older minor. Zero-extended records exercise
   the documented forward-extension rule, not an older-minor application running
-  under 1.1. That run could not qualify a versioned older app. ABI 1.10 now exists;
+  under 1.1. That run could not qualify a versioned older app. ABI 1.11 now exists;
   current native supervisor/arena tests cover old ELF loading and SDK startup
   gating, which does not execute ARM instructions.
 - No ARM User-mode execution, timer/preemption guarantee, board protection,

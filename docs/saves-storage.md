@@ -1,7 +1,7 @@
 # ABI 1.7: per-game save folders, `/sd/OS/SAVES/<GAME>/`
 
 ABI 1.7 introduced the `/OS/SAVES/<GAME>/` write scope. The current independent
-kernel/SDK headers and startup record report **1.10**. This scope added no call
+kernel/SDK headers and startup record report **1.11**. This scope added no call
 numbers or records. Older applications are unaffected; physical save writes
 and power cuts remain hardware-untested.
 
@@ -26,7 +26,9 @@ close, `sbx_rename`); only the accepted path grows.
 
 At most **64 game folders** under `/OS/SAVES` and **32 files** in one game's folder. Creating a
 new folder or file past a cap fails at `sbx_fsync` with `-122` (quota) and writes nothing;
-existing games and files keep saving. The caps keep a runaway app from filling the card.
+existing games and files keep saving. The kernel's `KERNEL` log folder shares
+these caps and uses one of the 64 folders. These count caps bound entries, not
+total disk use; each staged file is limited to 1 MiB, and ENOSPC is still possible.
 
 ## Power-cut behavior
 

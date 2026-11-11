@@ -40,29 +40,40 @@ announcement, received keys and replies, a stuck send, and the log bound.
    without ACK means free under this driver's claim policy, so it is claimed (written
    to the register's address field, so the block acknowledges frames sent to it). Then, in
    order: Report Physical Address (broadcast), Set OSD Name "Game Maker" (broadcast), Image View On to
-   the TV, Active Source. These happen once per boot, at claim time, which is a few seconds
-   before the OS autostarts; the TV switches its input to us.
+   the TV, Active Source. The initial sequence happens at claim time, usually
+   before OS autostart. Wake can queue Image View On and Active Source again;
+   standby queues a directed Standby to TV address 0 ([power-saving.md](power-saving.md)).
 5. Replies: Give OSD Name, Give Physical Address, Give Device Power Status (on), Get CEC Version
    (1.4), Menu Request (Menu Status: deactivated, since there is no TV-driven menu), Request
    Active Source and Set Stream Path once active. Give Device Vendor ID and anything else directed
-   at us gets Feature Abort "unrecognized opcode"; no vendor ID is claimed.
+   at us gets Feature Abort "unrecognized opcode" (Feature Abort itself is ignored);
+   no vendor ID is claimed. These messages request TV input selection; they do
+   not guarantee that a TV changes input.
 6. Keys: User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
    keyboard and the synthetic device use): Select and Enter are Enter, arrows are arrows, Exit is
    Esc, 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
    is Menu. If the USB keyboard left, `input_add()` brings the device back (host role).
 7. Broadcast frames are acknowledged by silence, so the chip's "good" flag says nothing about
-   them: the driver never retries a broadcast. (Linux's handling is the same shape; whether this
-   chip reports the inversion is for the TV session to show: the log prints `ack` or `nack` for every frame.)
+   them: the driver never retries a completed broadcast even if GOOD is clear.
+   A software timeout or transport
+   error still permits the state machine's one retry. The log records the raw
+   `ack`/`nack` result for completed frames; see the bench evidence below.
+
+Once claimed, valid directed User Control Pressed (including unmapped UI
+codes) and operand-free Image View On, plus broadcast Active Source with two
+operands, reset idle power activity. Initiator 15 is ignored. A pending standby
+or wake intent waits for a claimed address and queue room, with the newest intent
+replacing the older one. No raw CEC syscall or device is exposed.
 
 ## The log
 
 `cec_log` keeps the session in RAM and `cec_hw` writes it to `/OS/SAVES/KERNEL/CEC.TXT` (the saves
-area, so GMOS and the card tools see a normal file): first write 8 s after boot, then at most one
+area, so GMOS and the card tools see a normal file): first write 8 s after CEC initialization, then at most one
 every 30 s and 20 per boot, and never while a USB install is running. It records the init values
 (physical address, HSM clock, divider), every poll and frame sent with `ack` or `nack`, every
 received frame that is not a held key, each new key press (`UI 01 key 103`, or `UI 66 UNMAPPED`
 for a code the map ignores), send timeouts and the claim result. Each line starts with
-milliseconds since boot.
+milliseconds since the first CEC clock call during initialization.
 
 Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lines (the kernel
 replays them to a new reader about a second after it connects), so a session can be read afterward
@@ -117,7 +128,9 @@ us unregistered. Non-poll frames retain their single retry on NACK, timeout or e
 On timeout the hardware driver clears START_XMIT, pulses TX reset, clears the stale
 event and waits 250 ms before sending queued reports. It services a pending event
 before checking the deadline, so an ACK latched during a long main-loop pass wins.
-Each poll logs exactly one outcome: `poll 4 ack`, `poll 4 nack`, or `poll 4 timeout`.
+Each completed or timed-out poll logs one outcome: `poll 4 ack`, `poll 4 nack`,
+or `poll 4 timeout`. A register overwrite is logged as a transport error through
+the register-change/reprogram messages instead.
 
 Before `cec_sm_init` is called again on the same instance, the transport must cancel
 or drain all earlier transfers and callbacks. Calls into an instance must be serialized.
@@ -184,7 +197,8 @@ F1-F4 blue/red/green/yellow 0x71-0x74.
 - The 550 ms release timeout (design-note figure; a real TV's longest repeat gap is untested).
 - Replying Feature Abort (reason 0) to Give Device Vendor ID rather than a vendor id; and
   Report Power Status/CEC Version being worth answering (kept because many TVs ask).
-- Broadcast ACK inversion, one-shot polling and 1-byte frames on the VC4 block (hardware slice).
+- Broadcast ACK behavior and claim/receive interoperability on a TV; the empty-bus
+  PI-1 bench did exercise one-byte polls and completed broadcasts.
 - The one retry of non-poll frames, two retries of transport errors, the 1 s send
   timeout and the 14-character OSD limit (local policies, untested on hardware).
 - Where the key mapping puts Root menu (KEY_HOME), Setup menu (KEY_MENU), channel keys and

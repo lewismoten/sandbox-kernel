@@ -31,7 +31,9 @@ For each driver or dependency, record:
 - Board/revision, firmware version, configuration, test steps, measured results,
   and remaining limitations. A successful build does not establish hardware support.
 
-TinyUSB, FatFs, lwIP, and Waveshare are planned sources, not bundled dependencies.
+TinyUSB 0.21.0 is a pinned build dependency, with local bounded-wait and host
+overlays. FatFs and lwIP remain planned; the current FAT reader/writers and
+Waveshare panel driver are original implementations.
 Audit file-level terms before importing anything. Keep boot/radio firmware and
 its matching redistribution notices separate from MIT source. Do not silently
 substitute GPL, noncommercial, or unverified code when a driver is difficult.

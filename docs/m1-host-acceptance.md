@@ -3,8 +3,8 @@
 Validated on November 7, 2026, based on `origin/main`
 `aac205c699c26a98641894dadd4ba97e6964115b`. Host-only; no board qualification
 is implied. The stall rule, input implementation and `core/os.c` were unchanged
-by that integration. Current discovery (2026-11-10) finds 440 test cases; the
-119-test result below is historical, and optional-tool skips depend on the host.
+by that integration. The 119-test result below is historical; the runner reports the current count
+and optional-tool skips for the host.
 
 ## Added coverage
 

@@ -140,8 +140,8 @@ every microsecond.
 
 ## Timing (review R2)
 `usbrole_step` takes the raw 32-bit `micros()` and compares unsigned microsecond deltas
-(500,000 us). `micros()` wraps at 2^32 us (71.6 min); dividing it by 1000 first broke the
-debounce at the wrap. Tests cover the wrap and exactly 500 ms across it. (TinyUSB's own
+(`USBROLE_HOST_STABLE_US`, 300,000 us). `micros()` wraps at 2^32 us (71.6 min); dividing it by 1000 first broke the
+debounce at the wrap. Tests cover the wrap and the exact 300 ms boundary across it. (TinyUSB's own
 `tusb_time_millis_api` in the device role still does `micros()/1000`; the host adapter
 now accumulates unsigned microsecond deltas so its retry deadlines survive this wrap.)
 - Hot-plug is not implemented: the ID level is sampled once at boot and latched; only the
@@ -181,7 +181,7 @@ There is no CDC link in a host image. It has one hub (`CFG_TUH_HUB 1`, up to fou
 
 ## Boot record, name and the e-ink
 
-Every boot writes one line to `/OS/SAVES/KERNEL/BOOT.TXT`: `n<boot counter>,<decision>,k<keyboards found>`
+Each boot decision attempts to write one line to `/OS/SAVES/KERNEL/BOOT.TXT`: `n<boot counter>,<decision>,k<keyboards found>`
 (decisions: `link`, `no-adapter`, `install-kbd`, `keyboard`). The e-ink USB line says `KEYBOARD MODE` (plus the
 number of keyboards once found, host role), `NO OTG ADAPTER`, or `OTG: INSTALL KBD`. The host kernel rewrites
 the line once the keyboard count has held for 2 s. `INFO` adds `name= boot= lastboot=` (the previous boot's
@@ -192,21 +192,30 @@ bottom-right corner and shown in INFO.
 What is in it: TinyUSB host (`usbh.c`, `hid_host.c`, `hcd_dwc2.c`), slave (PIO) mode, one
 hub and up to four downstream devices, HID keyboards. `drivers/usb_host.c` replaces `drivers/usb.c`; `core/usbkbd.c` is the
 host-testable glue. TinyUSB sets boot protocol on a boot-subclass HID interface before its
-mount callback; the glue arms the interrupt endpoint (a refused submit is retried three times, then the keyboard is removed: keys released, status `HOST: device, no keyboard`), `hidboot_feed` turns reports into
-`input_frame` changes, and an unmount calls `hidboot_release_all` then `input_remove`.
+mount callback; the glue arms the interrupt endpoint (at most three immediate submissions total
+on each arm; persistent refusal removes that keyboard and releases its keys).
+`hidboot_diff` decodes each report; `usbkbd.c` publishes the union of all held keys
+through `input_frame`. Unmount releases that keyboard's keys, preserving keys held
+on others; `input_remove` runs only after the last keyboard is gone.
 `include/tusb_config.h` carries the host settings and a one-line `dwc2_int_set` shim,
 because TinyUSB 0.21's `dwc2_bcm.h` has only the device interrupt switch.
 
-What the HDMI console shows, in order (the e-ink status line shows `HOST: no device`,
-`HOST: device, no keyboard` or `HOST: keyboard`):
+The stage messages go to the kernel log (visible in the HDMI recovery console
+when no OS owns it, and on UART); the e-ink USB line shows `KEYBOARD MODE`
+with the keyboard count when nonzero. `usbkbd_status()` separately reports
+`HOST: no device`, `HOST: device, no keyboard` or `HOST: keyboard`. Messages include:
+
 1. `USB host up`: the stack started (it did not hang before this).
-2. `device attached VID:PID`: the port reset and enumeration reached the device descriptor.
+2. `device attached VID:PID`: configuration and every class driver completed; the device descriptor is
+   recorded earlier in USB.TXT.
 3. `keyboard ready`: a boot keyboard interface mounted and polling started. If the device has
    no boot keyboard interface the line is `HID interface skipped (not a boot keyboard)`.
 4. `key NAME` for each press (`key Up`, `key Space`, `key LShift`); releases are not shown.
 5. `keyboard removed` / `device removed` when it is unplugged.
-Stopping at 1 with a device plugged in means the port never saw it (power or reset); stopping at
-2 means set-up or HID mounting failed.
+`keyboard ready` can precede the final device-mounted message. `USB host up`
+alone does not distinguish port power/reset from failed enumeration: inspect
+USB.TXT descriptor, CTRL/retry and NOT MOUNTED lines. A mounted device without
+`keyboard ready` may have no accepted boot keyboard.
 
 Tests: `tests/usbkbd.c` (`make test`) drives the glue with fakes: stage lines, skipped
 non-keyboard interfaces, press names, no stuck key on unplug, replug, rollover and short reports.
@@ -216,10 +225,12 @@ the FIFO split, VBUS being powered, and the keyboard dongle being full speed.
 
 ## Composite dongles and start-up (review R2, R3)
 
-`CFG_TUH_HID` counts interfaces, so it is 4: a mouse or consumer-control interface before or after
-the keyboard no longer uses up the slot. The first boot-protocol keyboard interface is the one
-polled; its (device, interface) pair is remembered, so reports from, and the unmount of, any other
-interface are ignored. A keyboard that offers no boot protocol is skipped. `input_init()` now runs
+`CFG_TUH_HID=8` counts HID interfaces, including mouse and consumer-control
+interfaces skipped by the keyboard glue. Each accepted boot-keyboard (device, HID index) gets its own
+slot, up to four total; reports/unmounts affect only the matching slot. The OS
+sees the union of their keys. A first report of nine bytes selects leading
+report-ID stripping for that keyboard; reports shorter than eight bytes are
+ignored. A keyboard that offers no boot protocol is skipped. `input_init()` now runs
 before USB or the SD card can deliver a report, so a key held at mount is kept.
 
 ## Hardware acceptance for automatic keyboard mode
@@ -250,8 +261,10 @@ USB registers or physical power cuts.
 ## The USB log (USB.TXT)
 
 In the host role the kernel keeps a short text record of the bus and saves it to
-`/OS/SAVES/KERNEL/USB.TXT` (replaced each boot, at most 8192 bytes plus an events line, written
-once the log has been quiet for 1.5 s, at most 12 times a boot). Per device: address, hub and port
+`/OS/SAVES/KERNEL/USB.TXT` (an 8192-byte log buffer plus an events line, written
+once the log has been quiet for 1.5 s, at most 12 times a boot, only when storage
+is ready and no OS is running). A successful save replaces the prior record;
+if saving is deferred or fails, the previous boot's file can remain. Per device: address, hub and port
 (`otg-port` when it is on the OTG port itself), speed (LS/FS/HS), `split` when the DWC2 driver runs
 it through split transactions, VID:PID, device class, EP0 size; per interface: class/subclass/protocol
 and endpoints (address, type, max packet, interval); then what the kernel did (`keyboard ACCEPTED`,
@@ -262,7 +275,11 @@ tracked explicitly: TinyUSB does not invoke its normal device mount callback for
 
 The host-only overlay (`patches/tinyusb-0.21-host.patch`, applied to generated copies
 under `build/tinyusb-host` by `scripts/usb_host_overlay.py`) keeps the fetched,
-hash-pinned upstream sources intact. Device-role builds use upstream sources directly.
+hash-pinned upstream sources intact. Both roles also compile the separate
+[bounded DWC2 overlay](usb-bounded-waits.md) under `build/tinyusb-bounded`;
+the host overlay separately verifies and copies upstream `usbh.c`/`hub.c`
+and carries its own task fault guards. The Makefile uses those host files with
+the bounded common, OS_NONE, HID and DWC2 sources.
 The stack retries failed control transfers three times, after 20/40/80 ms, including
 refused controller submissions. A STALL is reported immediately: HID SET_IDLE and
 SET_PROTOCOL may legitimately stall, and TinyUSB's HID driver still handles those.
@@ -290,7 +307,9 @@ The four-second incomplete-enumeration watchdog also records
 `USB stall absorbed: enumeration pending; kernel loop continues` once per device.
 These lines use the existing USB.TXT buffering and save policy (disk writes are
 deferred while an OS is running). This protects against false heartbeat faults;
-it does not establish a hard latency bound for the DWC2 register/IRQ paths.
+the separate [bounded-wait port](usb-bounded-waits.md) now limits DWC2 polls
+and IRQ FIFO drains and disables USB after a terminal timeout. Host tests
+do not establish physical latency or interoperability.
 
 `tests/test_usbhost_heartbeat.py` exercises the actual task wrapper and supervisor
 with a simulated four-second host call, continued ticks/health reports, readiness
@@ -365,11 +384,18 @@ mouse and other interfaces; report IDs on another interface do not matter.
 ## The fault record (FAULT.TXT)
 
 When the OS program faults (abort, undefined instruction, missed heartbeat, or a nonzero exit), the kernel
-saves `/OS/SAVES/KERNEL/FAULT.TXT` before it restarts the program or falls back to DIAG.ELF. Line 1 has the
+attempts to save `/OS/SAVES/KERNEL/FAULT.TXT` before it restarts the program or falls back to DIAG.ELF.
+A storage failure logs `Fault record not saved` and recovery continues; an older
+record can remain. Line 1 has the
 program, the kind, the PC, the fault status and address registers, how long the program ran, its system calls
 and presents, and how many times it was started. Each following `>` line is one of the program's last four
 log lines (those OS log lines are otherwise only on the serial port). A new fault replaces the file,
-so read it after the first crash at the TV.
+so read it after the first crash at the TV. The stored run time truncates elapsed
+microseconds to 32 bits before converting to ms, wrapping about every 71.6 min.
+`calls` and `starts` are boot-cumulative 32-bit counters; `presents` resets on OS
+cleanup. The four recent OS log lines are also kept across launches, so they may
+include a previous run. The CLI displays the saved values without correcting
+these limits.
 
 With the normal device kernel running and the Mac USB cable attached, use:
 

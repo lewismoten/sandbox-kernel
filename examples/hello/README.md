@@ -23,6 +23,7 @@ make test                       # also builds them and checks the ELF rules and 
 Over USB (the kernel's recovery console):
 
 ```
+scripts/usb_kernel.py <port> stop                         # cancel autostart/stop a running OS
 scripts/usb_kernel.py <port> put examples/hello/HELLO.ELF    # installs /OS/HELLO.ELF
 scripts/usb_kernel.py <port> run HELLO.ELF                   # starts it and shows the log
 scripts/usb_kernel.py <port> key right right down esc        # fake key presses
@@ -39,8 +40,9 @@ On a kernel older than ABI 1.2 it exits with status 2 and no picture.
 
 ## E-ink (not enabled yet)
 
-The e-ink API (`/dev/eink`, a title ioctl and a page write) is in review on the
-`feature/eink-api` branch, so this example does not call it. `main.c` has a marked
-`#if SBX_ABI_HAS_EINK` block and a TODO showing where it goes: set the title "HELLO OS" with a
-40x40 mark, then write a page with a smiley. It is switched on when the API merges into
-`develop` and the SDK defines `SBX_ABI_HAS_EINK`.
+The e-ink API is implemented in ABI 1.9: `/dev/eink`, title/query/clear ioctls
+and a 3,904-byte page write ([docs/eink.md](../../docs/eink.md)). HELLO does not
+call it: `main.c` still has an empty `#if SBX_ABI_HAS_EINK` placeholder and a stale
+TODO; the SDK does not define that macro. Defining it alone adds no behavior.
+To extend the example, check startup major 1/minor >=9 and follow the
+[health-servicing title/page example](../../docs/os-authors.md#show-your-os-on-the-e-ink-abi-19).

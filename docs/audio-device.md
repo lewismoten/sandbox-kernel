@@ -1,7 +1,7 @@
 # ABI 1.8 `/dev/audio` (slice 1: ring and null backend)
 
 ABI 1.8 introduced this device and `SBX_IOC_AUDIO_QUERY`; the current kernel
-and SDK report 1.10. The HDMI backend below is linked and replaces the null
+and SDK report 1.11. The HDMI backend below is linked and replaces the null
 drain when initialization succeeds. PWM is not implemented. Listening, load
 and recovery qualification remain hardware-untested. See [design.md](design.md).
 

@@ -32,19 +32,22 @@ Goals:
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
 The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
-The current SDK is **ABI 1.10**: [audio](docs/audio-device.md) arrived in 1.8,
+The current SDK is **ABI 1.11**: [audio](docs/audio-device.md) arrived in 1.8,
 [OS e-ink titles/pages](docs/eink.md) in 1.9, and [two-way USB serial](docs/serial.md)
-in 1.10. HDMI audio is linked with a null fallback; recorded board evidence is
+in 1.10; [idle power saving](docs/power-saving.md) adds keep-awake holds and
+timeouts in 1.11. [USB tools](docs/serial.md) can capture both screens, read/list
+card files and explain saved faults while the OS runs. HDMI audio is linked with a null fallback; recorded board evidence is
 limited to DMA drain counters, with listening and sustained-load qualification
 still hardware-untested. The separate [PCM host core](docs/audio-host-core.md)
-remains unlinked. [CEC](docs/cec.md) remains host-only and hardware-untested.
+remains unlinked. [CEC](docs/cec.md) is linked in both roles, with bench transmit evidence;
+TV receive and standby/wake behavior remain hardware-untested.
 Build the default `USB_ROLE=device` Mac CDC link with `make`;
 `make USB_ROLE=host all` builds the [USB boot-keyboard role](docs/usb-host-keyboard.md)
-(hardware-untested, no CDC, trial-only and never confirmed). `make boot` refuses
+(hardware-untested, no CDC, installed companion or consumed trial, never confirmed). `make boot` refuses
 a host runtime. Run host checks with `make test`, and assemble a boot folder
-and card image with `make boot`. On 2026-11-10, test discovery finds 440 cases;
-optional-tool skips are reported by the runner. The default compiler is the requested Arm GNU
-15.3.rel2 installation. Dependencies are pinned and fetched without git.
+and card image with `make boot`. The runner reports the current test count and optional-tool skips. The default compiler is the requested Arm GNU
+15.3.rel2 installation. Dependencies are pinned and fetched without git. Both USB roles use the
+[bounded DWC2 port](docs/usb-bounded-waits.md).
 See [M0 build, wire formats and board handoff](docs/m0.md) for commands, layout,
 recovery policy and remaining physical tests. [M1 slice 1](docs/m1.md) adds the HDMI
 framebuffer, read-only FAT32 assets and the first [SDK](sdk/README.md) headers. Claude handles flashing and commits.

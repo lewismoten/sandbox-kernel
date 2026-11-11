@@ -26,7 +26,7 @@ panel operations advance as state machines. No device wait may disable interrupt
 for its full duration. Drivers have deadlines, cancellation, and reset policies.
 Audio and USB servicing take priority over display refresh and bulk storage.
 
-`spawn` requests an OS replacement through the supervisor; only one OS executes
+The proposed `spawn` (currently unimplemented) requests an OS replacement through the supervisor; only one OS executes
 at a time. The kernel validates and stages the successor before destroying the
 current address space. A failed validation leaves the caller running. A successful
 handoff destroys its handles and mappings and does not return. Initially the OS
@@ -169,13 +169,15 @@ error except where a later explicit extension says otherwise.
 
 The SDK wrappers in `sdk/include/sandbox/syscall.h` describe the exact records.
 ABI 1.2 adds framebuffer mode/palette ioctls, 1.7 save scope, 1.8 audio, 1.9
-e-ink and 1.10 serial. No implemented `replace` call occupies number 18.
+e-ink, 1.10 serial and 1.11 power holds/timeouts. No implemented `replace` call occupies number 18.
 `query` and feature/inventory enumeration remain proposed; inspect startup
 major/minor and handle device errors instead. AArch64 above is a proposed profile.
 
 A syscall ABI major mismatch returns `EPROTONOSUPPORT`. The current raw ELF
 loader has no ABI manifest to reject an incompatible program at load time. Minors add fields/calls/features; existing field meanings and numbers never
-change. Old records are accepted; missing trailing fields default to zero.
+change. Records must include the full known size for their call; longer records
+are accepted only with zero unknown tails. The 40-byte legacy startup prefix
+remains usable when the runtime supplies its 48-byte extension.
 Unknown trailing nonzero fields/flags are rejected. Unknown calls return `ENOSYS`;
 unsupported device requests return `ENOTTY`. A newer OS must check startup major/minor before using optional features.
 Manifest-limited rights and capability enumeration remain proposed; the current
@@ -185,7 +187,7 @@ Base errors use these fixed POSIX-style values: `EPERM=1`, `ENOENT=2`, `EIO=5`,
 `EBADF=9`, `EAGAIN=11`, `ENOMEM=12`, `EACCES=13`, `EFAULT=14`, `EBUSY=16`,
 `EEXIST=17`, `ENODEV=19`, `ENOTDIR=20`, `EINVAL=22`, `EMFILE=24`, `ENOTTY=25`,
 `ENOSPC=28`, `ESPIPE=29`, `EROFS=30`, `EPIPE=32`, `ENAMETOOLONG=36`,
-`ENOSYS=38`, `EPROTONOSUPPORT=93`, `ETIMEDOUT=110`. No signals initially.
+`ENOSYS=38`, `EOVERFLOW=75`, `EPROTONOSUPPORT=93`, `ETIMEDOUT=110`, `EDQUOT=122`. No signals initially.
 Transfers larger than 1 MiB are rejected; paths are at most 255 bytes. Poll
 array limits remain a proposal because `poll` is unimplemented. An I/O error after some bytes transferred returns a
 successful short count; a later call reports the remaining error.
@@ -207,7 +209,7 @@ Missing hardware means an absent node or `ENODEV`, never fabricated support.
 | --- | --- |
 | `/dev/fb0` | One handle; query, mode/palette, mapped RAM drawing surface and rectangle present. Kernel reclaims display on faults. |
 | `/dev/audio` | ABI 1.8: one write-only owner, fixed stereo S16_LE at 48 kHz, 16384-frame ring, nonblocking short writes and counters. Linked HDMI DMA backend with silent null fallback; full qualification is hardware-untested. See [audio-device.md](audio-device.md). |
-| `/dev/input/event0` | One nonblocking reader, 16-byte events and state query; synthetic USB source in device role, boot-keyboard glue in host role (hardware-untested). CEC cores remain unlinked. |
+| `/dev/input/event0` | One nonblocking reader, 16-byte events and state query; synthetic USB source in device role, boot-keyboard glue in host role (hardware-untested). Linked CEC remote keys share the queue in both roles; TV receive is hardware-untested. |
 | `/dev/eink` | ABI 1.9: one write-only handle, title/mark/build line or whole 3904-byte page; kernel refresh limits and fault override. OS API is hardware-untested. See [eink.md](eink.md). |
 | `/dev/serial0` | ABI 1.10: one nonblocking owner, USB CDC OS byte stream using OS/OS~ and TX framing; bounded dropped-byte counters. Hardware-untested. See [serial.md](serial.md). |
 | `/dev/log` | Write-only bounded sanitized OS log lines. |
@@ -260,7 +262,7 @@ qualification; the prototype's five-second cadence is not a production promise.
 
 ## OS image and loader
 
-A release bundle contains a bounded manifest and a native ELF payload. The
+The proposed release bundle contains a bounded manifest and a native ELF payload. The
 manifest records format version, architecture profile, board capability
 requirements, ABI major/minimum minor, payload byte count, SHA-256, image/build
 ID, memory/handle/time quotas, allowed paths/devices, and recovery policy.
@@ -273,6 +275,10 @@ The initial ELF profile is little-endian ELF32 `ET_EXEC`, `EM_ARM`, ARMv6 ARM
 state with EABI5 soft-float calling conventions. AArch64 later uses ELF64
 `EM_AARCH64` and a separate artifact. Follow the
 [Arm ELF specification](https://github.com/ARM-software/abi-aa/blob/main/aaelf32/aaelf32.rst).
+The current loader accepts raw ELF32 with at most four nonempty `PT_LOAD`
+segments, a 1 MiB file limit and an 8 MiB image quota. It does not parse ARM
+attributes or an OS manifest. Full rules are in [os-authors.md](os-authors.md#the-elf-rules-coreelfc-includeuspaceh).
+The remaining bundle/profile requirements in this section are proposed.
 Only bounded `PT_LOAD` segments and the agreed entry point are accepted.
 No interpreter, shared libraries, unresolved imports, runtime relocations, TLS,
 or executable stack. Reject unsupported program headers and incompatible ARM
@@ -300,14 +306,23 @@ mode, exception syndrome/status, fault address and resource usage in a bounded
 kernel log. Revoke handles and mappings, stop audio, cancel I/O, reclaim buffers,
 and reset device queues before loading another OS.
 
-Default policy: permit one restart of a confirmed OS; a second fault within
+Current policy permits one restart per 60 seconds; another fault in that
+window falls back to `/OS/DIAG.ELF` only for an autostarted program other than
+DIAG itself. A USB RUN starts a fresh budget and has no DIAG fallback. Clean
+exit preserves the last frame; faults restore the kernel home screen.
+See [the restart rules](os-authors.md#the-fault-and-restart-budget).
+
+Proposed OS-pair policy: permit one restart of a confirmed OS; a second fault within
 60 seconds selects the previous confirmed compatible OS. Any trial OS fault
 fails that trial immediately. Without a valid fallback, remain in the kernel
 recovery UI with USB updates available. An intentional `exit(0)` returns to
 recovery unless a replacement was requested; nonzero exit counts as a fault.
 
 Require an OS readiness report within 10 seconds and a progressing heartbeat
-at least every two seconds, including while idle. Timer preemption catches a
+at least every two seconds, including while idle. The host USB task's measured
+runtime is excluded from these two budgets, including nested syscall service;
+the device role does not apply this adjustment. Monotonic clock/sleep deadlines
+and fault windows remain wall-clock based. Timer preemption catches a
 runaway user loop regardless of its cooperation. The hardware watchdog is armed
 before launching a trial kernel; initial target timeout is eight seconds, subject
 to board measurement. Only a health monitor feeds it after observing timer,
@@ -375,6 +390,15 @@ The new protocol is version 2, deliberately distinct from the prototype's raw
 filename replacement. Preserve its simple size+CRC, stop-and-wait, and VERIFY
 interaction while implementing a fresh parser and installer:
 
+Current code accepts `PUT2 kernel` (a consumed trial) and `PUT2 host-companion`
+(an idle-slot install without reboot), only for `zero-w-armv6`. `INFO 2` still
+prints the legacy literal `ABI=1.0`; app startup reports 1.11. Current commands,
+GET/LS and screen capture framing are in [os-authors.md](os-authors.md#6-developing-over-usb)
+and [serial.md](serial.md). The OS/bundle and confirmed-pair behavior below
+is a **proposal**: current OS files are installed with PUTF, and kernel trial
+confirmation does not depend on OS health. The current record layout is in
+[m0.md](m0.md#serialized-image-and-control-formats).
+
 1. `INFO` returns protocol version, board/architecture, ABI, slot capacities,
    active/confirmed/pending generations and update feature bits.
 2. Host sends `PUT2 <kernel|os|bundle> <profile> <decimal-size> <crc32>\n`.
@@ -385,7 +409,7 @@ interaction while implementing a fresh parser and installer:
    at most 1,024 bytes, waiting for `ACK <cumulative-bytes>` after each nonfinal
    block. The final block receives `VERIFY`. No status text is interleaved with
    binary reception. Length determines framing, including an exact-multiple
-   final block. Bound the ASCII command to 256 bytes.
+   final block. Bound the ASCII command to 255 bytes plus newline.
 4. Stage the complete transfer in RAM; initial maximum is 2 MiB and minimum
    64 bytes, further limited by advertised capacity and RAM reservation. Validate
    CRC, manifest SHA-256, image format, ABI/profile and compatibility. Reject

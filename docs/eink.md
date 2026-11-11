@@ -6,7 +6,7 @@ the panel and the kernel's own screens safe. Source: `core/eink.c` (rules, no ha
 `core/render.c` (drawing), `drivers/panel.c` (SPI), `core/sys.c` (the device).
 
 Introduced in **ABI 1.9**, after saves (1.7) and audio (1.8); the current
-kernel and SDK report **1.10**. The OS API and refresh-care rules are
+kernel and SDK report **1.11**. The OS API and refresh-care rules are
 hardware-untested; M0 board qualification covers the kernel boot/status screens.
 
 ## The screen
@@ -93,8 +93,10 @@ The rule is simple on purpose:
    title screen needs no mark: it already shows `ERR:`.
 
 "New" means the error text changed since the panel last drew it. Note that the kernel's last
-error is also set by a refused USB command (`not-ready`), so a host command sent while a page
-is up can drop the page once. That is on purpose.
+error is set by real USB failures, including storage-not-ready on PUTF/RUN/PUT2.
+Flow-control refusals (for example PUTF while an OS is running, or no INFO session)
+do not set it. Screen/file-read refusals also leave the sticky error unchanged; see
+[the error table](os-authors.md#reading-the-e-ink-panel).
 
 ## Review pictures
 

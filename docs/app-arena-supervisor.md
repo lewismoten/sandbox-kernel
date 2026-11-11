@@ -102,5 +102,6 @@ ARM compilation, exact native/ARM budgets, stack evidence, actual old-app loader
 checks and fixed-ID fresh-build reproducibility are separate recorded gates in
 the private signed handoff. None proves physical acceptance. Real RAM/MMU/cache/
 TLB, STOP/panel/watchdog responsiveness and <=2ms cleanup quanta remain Mac-owned
-physical gates. First arena acquisition and its <=50ms target remain unimplemented
-Slice C/future qualification; C is closed. No installation or emulator retry.
+physical gates. Slice C now implements first arena acquisition; its <=50ms
+physical service-gap target remains unmeasured. No installation or emulator retry
+is implied by this historical report.

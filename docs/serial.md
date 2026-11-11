@@ -19,8 +19,10 @@ the Pi Zero W here has its header covered by the e-ink HAT, so none exists.)
 - `read` returns up to 256 buffered bytes from the host, or `EAGAIN` when there are none.
 - `sbx_serial_query` (ioctl class 6, op 0) fills `sbx_serial_info`: `transport`
   (`SBX_SERIAL_NONE` 0 or `SBX_SERIAL_USB` 1), `tx_bytes`, `tx_dropped`, `rx_bytes`, `rx_dropped`,
-  `tx_pending`, `rx_pending`. The counters count since boot (32-bit internal
-  counters wrap); byte totals count accepted bytes, with drops counted separately.
+  `tx_pending`, `rx_pending`. The byte counters count since boot and saturate at UINT64_MAX;
+  queue positions use wrapping 32-bit indices. Byte totals count accepted bytes,
+  with drops counted separately (a disconnect also counts previously queued TX
+  bytes as dropped).
   The current dispatcher does not enforce per-handle read/write direction after open.
 
 The OS channel is hardware-untested. A `USB_ROLE=host` build has no CDC link;
@@ -55,16 +57,42 @@ newlines and any byte without escaping.
 
 `INFO` ends with `serial=usb` while a host has the port open and `serial=none` otherwise.
 
-## Host tool
+## Commands and host tool
+
+The full CLI inventory is in [the OS author's command table](os-authors.md#6-developing-over-usb).
+`fault` and `logs` use GET; `ceclog` filters replayed/live CEC log lines;
+`name` uploads `NAME.TXT` with PUTF. They are host subcommands, not new wire
+commands. All CLI operations handshake with INFO. The wire command set is:
+
+| Command | Arguments / purpose |
+| --- | --- |
+| `INFO` | establish a session and query protocol/update/OS/boot/serial fields; legacy `ABI=1.0` is not the app ABI |
+| `PUT2` | `<kernel|host-companion> zero-w-armv6 <bytes> <crc32-hex>`; kernel trial or persistent companion install |
+| `PUTF` | `<path> <bytes> <crc32-hex> <sha256-hex>`; allowlisted 1-byte..1-MiB install with the OS stopped |
+| `RUN`, `STOP` | `RUN <NAME>` loads `/OS/<NAME>`; `STOP` acknowledges at the safe supervisor boundary |
+| `KEY`, `AXIS`, `INPUT` | `KEY <code> <down|up|repeat>`, `AXIS <code> <signed-value>`, `INPUT <add|remove>` |
+| `TX` | `<1..64>` then raw bytes, as below |
+| `EINKSHOT`, `FBSHOT` | chunked screen reads, as below |
+| `GET`, `LS` | card-root file/directory reads, as below |
+| `USBLOG` | `<part>` (zero-based); reply `USBLOG <part>/<parts> <text>`, saved USB log with newlines as `|`; `ERR usblog-unreadable` on read failure |
+| `LASTBOOT` | reply `LASTBOOT name=... previous=... this=...` |
+| `AUDIO`, `TONE` | backend diagnostics and `TONE <hz> <ms>` (50..4000 Hz, 1..1000 ms); [audio-device.md](audio-device.md) |
+
+Commands are at most 255 printable ASCII bytes plus newline. PUTF/PUT2 use
+`READY 1024`, cumulative ACKs and VERIFY; full admission, path allowlists,
+timeouts and update recovery are in [os-authors.md](os-authors.md#transfer-framing-and-errors)
+and [m0.md](m0.md#serialized-image-and-control-formats). There is no
+`FAULT`, `LOGS`, `CECLOG` or `NAME` wire command.
 
 `python3 scripts/usb_kernel.py /dev/cu.usbmodem* console`: arrows, Enter, Space, Q and Esc are
 pressed on `/dev/input/event0` (as `key` does); every printable key, Enter and Space is also sent
 to the OS as text; OS output shows live; kernel `LOG` lines are dimmed (or start with `# ` when the
 output is not a terminal). Ctrl-] quits.
 
-## The Pi remote page (`web/src/piRemote/`, not changed here)
+## The Pi remote page (separate gamemaker-os repository)
 
-It already opens the same Web Serial port and sorts each line with `classify()` in `protocol.ts`
+The separate `web/src/piRemote/` client is outside this repository and was not
+checked here. Its recorded integration uses Web Serial and `classify()` in `protocol.ts`
 (`LOG`, `INFO`, `OK`, `ERR`; anything else is `other`). To show OS messages it needs one more case:
 a line starting `OS ` or `OS~ ` becomes a new reply kind `os`, shown in the log list
 (joining `OS~` continuations), and the text box can send `TX <len>` plus bytes through the same
@@ -103,7 +131,9 @@ Logs and OS output cannot interrupt a response. Other complete text lines may
 precede it; readers must skip LOG, OS, OS~ and delayed INFO lines.
 The kernel accepts at most one capture chunk per 2 ms (128,000 payload bytes/s);
 `ERR shot busy` means retry after 2 ms. No transfer-wide lock or framebuffer copy
-is held while waiting for the host. A disconnect releases protocol state.
+is held while waiting for the host. A disconnect releases protocol session/drain state; it does not erase the
+saved panel snapshot or framebuffer generation. After reconnect, handshake
+and restart at id=0.
 
 EINK is the 122x250 native controller plane, stride 16, depth 1, MSB first,
 0=black, 1=white, total 4000. Order is PANEL_ROTATE_180 (0 or 1); the host
@@ -134,7 +164,8 @@ storage operation, screen write, full-frame scan or OS stop is performed.
 Refusals are `ERR shot command`, `range`, `unavailable`, `stale`, `palette`,
 `busy`, or `ERR not-ready` before INFO. They do not set the panel's sticky error.
 The host validates dimensions, format, lengths, offsets, ids and every chunk CRC
-before writing a PNG, using only Python's standard library and zlib. A truncated
+before writing a PNG, using only Python's standard library and zlib. It allows
+5 seconds per reply/body and 180 seconds for the capture. A truncated
 response times out; reconnect after a timeout/CRC error to discard residual bytes.
 
 ## Reading card files (protocol 2 extension)
@@ -189,7 +220,8 @@ GET/LS share the screenshot 2 ms rate limiter; retry `ERR get busy` after 2 ms.
 Use a single reader and one outstanding request at a time.
 
 GET/LS share one read handle, replaced by a new id=0 request and closed at EOF,
-disconnect/reset, or 2 seconds without an accepted chunk request. A handle under
+disconnect/reset, an admitted PUTF/PUT2, or 2 seconds without a parsed request
+matching the live handle (even a range refusal refreshes that timer). A handle under
 SAVES/CACHE temporarily blocks app publication through the existing FAT reader
 rules. Files are read live, not copied into a snapshot; CRC checks transport,
 not whole-file consistency. Card access is deferred from USB's nested SD service
@@ -206,13 +238,16 @@ LS <id> <index> END\n
 
 Start id=0,index=0, then use the returned id and next index. Only the next index
 is accepted; EOF closes the handle. Directories report size 0. At most 65,535
-entries plus END are accepted. Nonprintable/non-ASCII alias bytes display as `?`.
+entries plus END fit the host tool's index window (0..65,535); an entry at
+index 65,535 leaves no room for END and the tool reports the directory limit.
+Nonprintable/non-ASCII alias bytes display as `?`.
 LS replies are bounded text lines; no binary body or CRC is needed.
 
 Refusals: `ERR not-ready`, `ERR get command`, `busy`, `range`, `open`,
 `size-or-type`, `stale`, or `read`. They do not set a sticky panel error.
 After timeout, bad framing or CRC, reconnect and restart at id=0 to discard any
 residual bytes. The host validates ids, totals, offsets, counts and CRCs before
-writing an output file. Without an out-file it accepts only UTF-8 text up to
+writing an output file. The tool allows 5 seconds per reply/body and 300 seconds
+per GET transfer. Without an out-file it accepts only UTF-8 text up to
 64 KiB (no controls except CR/LF/tab), printing only content to stdout and
 handshake/status to stderr. Binary or larger files require an out-file.

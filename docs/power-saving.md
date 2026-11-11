@@ -35,11 +35,23 @@ have been made for this change.
 `core/power.c` owns the host-testable policy. Defaults are 60 seconds before
 slowdown and 600 seconds before blanking. Input changes and held-key repeats
 count even with no open input reader. CEC recognizes unmapped button presses as
-activity, plus directed Image View On and broadcast Active Source. Acquiring a
+activity once an address is claimed, plus operand-free Image View On directed
+to that address and broadcast Active Source with two operands; initiator 15 is ignored. Acquiring a
 hold inhibits the selected transition and requests restoration if already idle.
 Releasing the last hold permits an already expired timeout immediately. An OS
 cleanup clears all holds and timeout overrides and restarts the default policy.
 Token IDs never repeat across launches, and exhaustion fails closed.
+
+The app interface is `power_hold` (call 22, 40-byte record) and `power_timeouts`
+(call 23, 32 bytes), gated on startup major 1/minor >=11. Up to 16 holds combine
+`SBX_POWER_NO_BLANK=1` (`NO_DIM` is an alias) and `SBX_POWER_NO_SLOWDOWN=2`.
+Acquire uses operation 1 with token zero; release uses operation 0 with flags
+zero and the acquired token. Invalid flags/operations return EINVAL, stale or
+zero release tokens EBADF, a full table EMFILE, and exhausted token IDs EOVERFLOW.
+Timeouts accept 0..86400 seconds independently; zero disables that transition,
+values above 86400 return EINVAL, and a successful change resets inactivity.
+Holds do not pause health deadlines or absolute sleeps. Host USB task time is
+excluded from readiness/heartbeat budgets separately ([usb-host-keyboard.md](usb-host-keyboard.md#the-usb-log-usbtxt)).
 
 `drivers/power.c` reads the running ARM rate after `cpu_speed()` and the firmware
 minimum (falling back to 700 MHz, capped at the running rate). Only the ARM clock

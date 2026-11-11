@@ -8,7 +8,9 @@ The short answer is yes for shells, menus and app logic, if the drawing stays
 native. The runtime, `JS.ELF`, is in
 [gamemaker-os](https://github.com/lewismoten/gamemaker-os) (`src/js/`,
 `docs/js.md`) because it hosts the Game-Maker play core. This page has the
-engine choice, the measurements, what the kernel gained, and a plan.
+engine choice, the measurements, what the kernel gained, and a plan. The external
+JS implementation and figures below are dated spike evidence, not a current SDK
+contract; [os-authors.md](os-authors.md) describes ABI 1.11 and current limits.
 
 ## 1. Engine
 
@@ -75,8 +77,9 @@ were measured here; the other figures are as those pages state them.
   bpp. The firmware allocates the buffer and the GPU scales it to the HDMI mode
   at no CPU cost. Ioctl `0x10003` sets palette entries for 8 bpp. Present copies
   16 and 8 bpp bytes as they are. A mode must fit in the program's 1.2 MB
-  surface. Every program still starts at 640x480x32, and the kernel goes back to
-  it when the program ends.
+  surface (1,228,800 bytes). Every program starts at 640x480x32. On fault or
+  USB STOP the kernel returns to its 960x540 home screen; clean exit preserves
+  the program's last presented frame and mode.
 - **Speed:** the ARM clock goes to its maximum at boot. The firmware left it at
   700 MHz and nothing raised it; it now runs at 1000 MHz. Branch prediction is
   on, and user pages are write-back (they were write-through). Together these
