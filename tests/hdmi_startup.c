@@ -30,7 +30,9 @@ bool storage_ready = true;
 static bool card_busy;
 static char saved[AUDIO_LOG_BYTES + 80];
 static unsigned card_writes, pixel_queries;
+static bool os_on;
 static bool protocol_busy(void) { return card_busy; }
+bool os_running(void) { return os_on; }
 static void log_line(const char *line) { (void)line; }
 static void boot_note(const char *line) { (void)line; }
 static void number(char *out, uint32_t value) { snprintf(out, 12, "%u", value); }
@@ -230,6 +232,10 @@ int main(void) {
  card_busy = true; now += 1000000; hdmi_audio_poll();
  assert(pixel_queries == 1 && card_writes == 1);
  card_busy = false; pixel_hz = 148500000; now += 200000; hdmi_audio_poll(); assert(hw.active);
+ /* K8: no kernel SD save while the OS runs (a slow write would miss the OS heartbeat). */
+ reset(0); pixel_hz = 0; os_on = true; assert(hdmi_audio_init() == -1);
+ now += 3000000; hdmi_audio_poll(); now += 3000000; hdmi_audio_poll(); assert(card_writes == 0);
+ os_on = false; now += 3000000; hdmi_audio_poll(); assert(card_writes == 1);
  /* CEC's EDID reads are included in the same persisted session. */
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
  hdmi_audio_edid(1, edid); now += 1000000; hdmi_audio_poll();

@@ -13,6 +13,7 @@
 #include "hdmi_audio.h"
 #include "input.h"
 #include "fatput.h"
+#include "os.h"
 
 #define CM_HSMCTL (PERIPH + 0x101000u + 0x088u) /* same clock manager words hdmi_audio.c reads */
 #define CM_HSMDIV (PERIPH + 0x101000u + 0x08cu)
@@ -84,7 +85,7 @@ void cec_hw_init(void) {
 }
 
 static void save_log(uint32_t now) {
-    if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || saves >= SAVE_MAX) return;
+    if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || os_running() || saves >= SAVE_MAX) return;
     if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < SAVE_EVERY_MS)) return;
     drv.log.dirty = 0; last_save_ms = now; saves++;
     if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");

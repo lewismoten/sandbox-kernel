@@ -11,6 +11,7 @@
 #include "mixer.h"
 #include "audio_diag.h"
 #include "fatput.h"
+#include "os.h"
 
 #define DMA_BASE (PERIPH + 0x7000u)
 #define DMA_ENABLE (DMA_BASE + 0xff0u)
@@ -67,7 +68,7 @@ static void record_decision(void) {
  audio_diag_decision(&diagnostics, timestamp(), &observed, hw.active, why);
 }
 static void save_diagnostics(void) {
- if (!diagnostics.dirty || !storage_ready || protocol_busy() || saves >= AUDIO_SAVE_MAX) return;
+ if (!diagnostics.dirty || !storage_ready || protocol_busy() || os_running() || saves >= AUDIO_SAVE_MAX) return;
  if (saves && !expired(save_since, 1000000u)) return;
  save_since = micros(); saves++;
  /* A header makes the format/version and any whole-line eviction explicit. */
