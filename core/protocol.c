@@ -195,6 +195,9 @@ static void get_command(const char *p,bool directory) {
 }
 static void command_line(void) {
  line[used]=0;
+ /* A GET/LS holds one of the OS's few asset handles between chunks: any other
+    command ends the transfer and returns it. */
+ if(!(used>4&&!memcmp(line,"GET ",4))&&!(used>3&&!memcmp(line,"LS ",3))) get_close();
  if(used>4&&!memcmp(line,"GET ",4)) {memcpy(get_request,line+4,used-3);get_request_directory=false;get_pending=true;return;}
  if(used>3&&!memcmp(line,"LS ",3)) {memcpy(get_request,line+3,used-2);get_request_directory=true;get_pending=true;return;}
  if(used>9&&!memcmp(line,"EINKSHOT ",9)) {shot_command(line+9,true);return;}

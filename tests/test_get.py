@@ -38,6 +38,13 @@ class Wire(u.ProtocolBase):
         self.command('GET /OS/TEST.TXT 0 0');self.c.protocol_reset()
         self.assertEqual(self.c.asset_cache_readers(),0)
         self.assertEqual(self.c.write_count(),writes)
+    def test_other_command_releases_asset_handle(self):
+        self.start()
+        meta,_=self.chunk(self.command('GET /OS/TEST.TXT 0 0'),0)
+        self.command('INFO')
+        self.assertEqual(self.command(f'GET /OS/TEST.TXT {meta[0]} 256'),b'ERR get stale\n')
+        # a new GET replaces the old one, so a transfer never holds two handles
+        for _ in range(10):self.chunk(self.command('GET /OS/TEST.TXT 0 0'),0)
     def test_paths_ranges_and_types(self):
         self.start()
         for path in ('relative','/../OS/TEST.TXT','/OS/./TEST.TXT','//OS/TEST.TXT','/OS//TEST.TXT','/OS/TEST.TXT/','/dev/../OS/TEST.TXT','/OS\\TEST.TXT','/'+('a'*192),'/'+'/'.join(['a']*17)):
