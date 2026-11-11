@@ -1,7 +1,9 @@
 # HDMI-CEC
 
 Current status: linked into the runtime image (device and host roles), host-tested against a fake
-register file, and run on a bench board (PI-1) with no TV (see "Bench result" below); **not yet run on a TV**. The first live session is
+register file, and run on a bench board (PI-1) with no TV (see "Bench result" below).
+PI-2 subsequently reached EDID physical address 2.0.0.0 but timed out on every claim poll.
+The TV test procedure is
 `.for-lewis/research/pi/2026-11-10-cec-tv-test.md` (the maintainer's notes, outside this repository).
 
 ## Layers
@@ -34,7 +36,8 @@ announcement, received keys and replies, a stuck send, and the log bound.
    divided by the 25 us tick, the address is 15 (unregistered).
 3. The physical address comes from the EDID (mailbox tag 0x00030020, CEA extension, HDMI vendor
    block). If the EDID cannot be read the kernel assumes 1.0.0.0 and says so in the log.
-4. A poll to address 4 (then 8, then 11): an explicit NACK means free, so it is claimed (written
+4. A poll to address 4 (then 8, then 11): ACK means occupied; NACK or a 1 s timeout
+   without ACK means free under this driver's claim policy, so it is claimed (written
    to the register's address field, so the block acknowledges frames sent to it). Then, in
    order: Report Physical Address (broadcast), Set OSD Name "Game Maker" (broadcast), Image View On to
    the TV, Active Source. These happen once per boot, at claim time, which is a few seconds
@@ -100,31 +103,61 @@ Each successful `cec_sm_next_tx` returns a frame and a nonzero 64-bit transfer I
 The transport must retain that ID with the original transfer and pass it to
 `cec_sm_tx_done`; it must not fetch the current ID when a delayed callback arrives.
 Each handoff, including a retry of identical bytes, gets a new ID. Only a completion
-matching the current in-flight transfer can change state. A timeout retires that ID
-as a transport error, so a delayed success or failure cannot clear a subsequent report or retry,
+matching the current in-flight transfer can change state. A timeout retires that ID,
+so a delayed success or failure cannot clear a subsequent report or retry,
 change the queue, or allow another handoff. Duplicate completions are also ignored.
 IDs never wrap: after UINT64_MAX, new handoffs stop until reinitialization.
 
-The transport reports `CEC_SM_TX_ACK`, `CEC_SM_TX_NACK` (an explicit negative
-acknowledgement), or `CEC_SM_TX_ERROR` (an uncertain outcome). Only an explicit
-poll NACK claims a logical address. A poll timeout or transport error retries the
-same candidate up to `CEC_SM_POLL_RETRIES` (two retries, three attempts total).
-Exhausting that budget leaves the device unregistered and silent until
-reinitialization. An ACK moves to the next candidate with a fresh retry budget.
-Non-poll frames retain their single retry on NACK, timeout or transport error.
+The transport reports `CEC_SM_TX_ACK`, `CEC_SM_TX_NACK`, `CEC_SM_TX_TIMEOUT`, or
+`CEC_SM_TX_ERROR`. A poll ACK advances to the next candidate; NACK or timeout
+claims the current candidate. ERROR (for example, registers overwritten during a
+send) retries that candidate up to `CEC_SM_POLL_RETRIES` (two retries), then leaves
+us unregistered. Non-poll frames retain their single retry on NACK, timeout or error.
+
+On timeout the hardware driver clears START_XMIT, pulses TX reset, clears the stale
+event and waits 250 ms before sending queued reports. It services a pending event
+before checking the deadline, so an ACK latched during a long main-loop pass wins.
+Each poll logs exactly one outcome: `poll 4 ack`, `poll 4 nack`, or `poll 4 timeout`.
 
 Before `cec_sm_init` is called again on the same instance, the transport must cancel
 or drain all earlier transfers and callbacks. Calls into an instance must be serialized.
 This is a software completion guarantee; the transport still owns physical cancellation
 or serialization of timed-out hardware sends before starting another hardware send.
-The CEC core remains unlinked; these internal C interfaces do not change the kernel/SDK
+These internal C interfaces do not change the kernel/SDK
 ABI, its version, syscall records or wire-frame bytes.
 
-The regressions in `tests/cec_core.c` cover a poll at 0 ms, timeout at 1000 ms,
-retry handoff, then delayed original poll ACK/NACK. They check that the entire state
-is unchanged, no address is claimed, and another send is blocked until the retry's
-matching completion. They also cover explicit NACK claims, bounded timeout/error
-retries, duplicate completion, and retries with identical bytes and fresh IDs.
+The host regressions cover ACK/NACK/timeout at all three playback addresses,
+bounded transport-error retries, stale and duplicate completions, non-poll timeout
+retries, reset before sending reports, and an ACK/NACK pending at the deadline.
+Divider tests include the measured 163682864 Hz and both ends of the 12-bit range.
+
+## PI-2 claim failure and public register comparison (2026-11-10)
+
+The supplied PI-2 log had `c1 0010FFFC`, `c5 004CBCB4`, `st 00000002`,
+followed by three 1 s timeouts of the same candidate. The old state machine treated
+all three as transport errors and went silent; it never tried addresses 8 or 11.
+The timeout claim policy above fixes that decision. It does not establish why
+this board failed to signal completion; a new board session is still needed to
+verify announcements and received remote keys.
+
+The [public VC4 register definitions](https://gem5.googlesource.com/arm/linux/+/93cc1228b4a60584f3dadbd84f19f365bb945acb/drivers/gpu/drm/vc4/vc4_regs.h)
+document CNTRL_1 at 0xE8, TX_EOM at bit 31, TX_STATUS_GOOD at bit 30,
+START_XMIT at bit 20, and the divider at bits 11:0. CPU_STATUS bit 6 signals
+CEC; the logged bit 1 is not a CEC completion. CNTRL_5 bit 23 selects RX.
+A cleared GOOD flag is a NACK only at TX completion, not while waiting.
+The offsets, timing field positions, and 400–4700 us thresholds agree with our driver.
+
+[Linux vc4 HDMI](https://github.com/raspberrypi/linux/blob/rpi-6.6.y/drivers/gpu/drm/vc4/vc4_hdmi.c)
+uses integer `HSM / 40000`, without subtracting one. Thus 163682864 Hz gives
+4092 (0xFFC), approximately 40000.7 Hz, and a nominal 25 us tick. The divider
+was already correct. Linux reads GOOD at the CEC TX event and maps clear to NACK
+(the block makes two attempts). Claiming on a software timeout is our local policy
+for this board, not behavior inferred from Linux or proof that the wire is healthy.
+
+[Raspberry Pi firmware documentation](https://www.raspberrypi.com/documentation/computers/legacy_config_txt.html#hdmi_ignore_cec)
+says `hdmi_ignore_cec=1` makes firmware ignore CEC and `hdmi_ignore_cec_init=1`
+suppresses the initial Active Source message. Both remain in the boot config;
+these firmware options do not replace programming the kernel's CEC registers.
 
 ## Where the values come from
 
@@ -152,7 +185,7 @@ F1-F4 blue/red/green/yellow 0x71-0x74.
 - Replying Feature Abort (reason 0) to Give Device Vendor ID rather than a vendor id; and
   Report Power Status/CEC Version being worth answering (kept because many TVs ask).
 - Broadcast ACK inversion, one-shot polling and 1-byte frames on the VC4 block (hardware slice).
-- The one retry of non-poll frames, two retries of uncertain polls, the 1 s send
+- The one retry of non-poll frames, two retries of transport errors, the 1 s send
   timeout and the 14-character OSD limit (local policies, untested on hardware).
 - Where the key mapping puts Root menu (KEY_HOME), Setup menu (KEY_MENU), channel keys and
   colors (policy, not spec).

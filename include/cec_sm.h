@@ -13,7 +13,7 @@
 
 enum cec_sm_state { CEC_SM_POLL, CEC_SM_CLAIMED, CEC_SM_NO_ADDRESS };
 enum cec_sm_event { CEC_SM_EV_NONE, CEC_SM_EV_KEY_PRESSED, CEC_SM_EV_KEY_RELEASED };
-enum cec_sm_tx_result { CEC_SM_TX_ERROR = -1, CEC_SM_TX_NACK = 0, CEC_SM_TX_ACK = 1 };
+enum cec_sm_tx_result { CEC_SM_TX_ERROR = -1, CEC_SM_TX_NACK = 0, CEC_SM_TX_ACK = 1, CEC_SM_TX_TIMEOUT = 2 };
 
 struct cec_sm {
     enum cec_sm_state state;
@@ -36,7 +36,7 @@ struct cec_sm {
 /* phys 0xFFFF = unknown: no address is claimed. Starts polling at once.
  * Before reinitializing, drain/cancel all callbacks from the previous lifetime. */
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms);
-/* Time passes; retire a stuck send as a transport error, never as a NACK. */
+/* Time passes; retire a stuck send as TIMEOUT (a poll with no ACK claims the address). */
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms);
 /* A received frame. Returns a key event for User Control frames. */
 enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m);
@@ -44,8 +44,8 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m);
  * Save this ID with the transfer, including retries; never read it at callback
  * time from s. IDs are nonzero and never wrap: exhaustion stops new transfers. */
 int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id);
-/* Report explicit ACK/NACK or ERROR for an uncertain transport outcome.
- * Only an explicit poll NACK claims an address. Poll errors retry the same
+/* Report ACK/NACK, TIMEOUT for no completion by the deadline, or ERROR for
+ * an uncertain transport failure. Poll NACK and TIMEOUT claim an address. Errors retry the same
  * candidate up to CEC_SM_POLL_RETRIES times, then leave us unregistered.
  * For a broadcast, ACK means nobody NACKed. Only the current transfer ID is accepted;
  * timed-out, duplicate and other mismatched completions have no effect. */

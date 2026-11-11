@@ -51,7 +51,7 @@ static struct chip chip; static struct cec_drv drv;
 static void start(uint16_t phys) {
     memset(&chip, 0, sizeof chip); memset(&drv, 0, sizeof drv); keys.n = 0;
     drv.rd = crd; drv.wr = cwr; drv.key = ksink; drv.ctx = &chip;
-    cec_drv_init(&drv, phys, 163680000u, 0);
+    cec_drv_init(&drv, phys, 163682864u, 0);
 }
 static void expect(struct chip *h, unsigned i, const uint8_t *e, unsigned n) {
     if (!(h->sent_n > i && h->sent_len[i] == n && !memcmp(h->sent[i], e, n))) { fprintf(stderr, "frame %u: have %u frames", i, h->sent_n); if (h->sent_n > i) { fprintf(stderr, " len %u:", h->sent_len[i]); for (unsigned k = 0; k < h->sent_len[i]; k++) fprintf(stderr, " %02X", h->sent[i][k]); } fprintf(stderr, "\n"); }
@@ -104,11 +104,23 @@ static void test_timeout(void) {
     start(0x1000);
     cec_drv_task(&drv, 1); assert(chip.tx_started && drv.tx_busy);
     cec_drv_task(&drv, 500); assert(drv.tx_busy);
-    cec_drv_task(&drv, 1001);                                                       /* transport error after 1 s */
-    cec_drv_task(&drv, 1300);                                                       /* after the hold-off the retry goes out */
-    assert(chip.c5_resets == 2 && strstr(drv.log.text, "timed out"));
-    assert(!(chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_START_XMIT) || drv.tx_busy);        /* retry of the same poll started */
-    assert(chip.sent_n == 2 && drv.sm.state == CEC_SM_POLL);
+    cec_drv_task(&drv, 1001);                    /* no ACK: claim, cancel the chip before announcements */
+    assert(chip.c5_resets == 2 && strstr(drv.log.text, "poll 4 timeout"));
+    assert(drv.sm.state == CEC_SM_CLAIMED && drv.sm.laddr == 4 && !drv.tx_busy);
+    assert(!(chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_START_XMIT));
+    assert(chip.sent_n == 1 && !strstr(drv.log.text, "poll 4 nack"));
+    cec_drv_task(&drv, 1300);
+    expect(&chip, 1, (uint8_t[]){0x4f, 0x84, 0x10, 0, 4}, 5);
+    /* A latched completion wins over the deadline, even with unrelated status bit 1. */
+    for (int good = 0; good <= 1; good++) {
+        start(0x1000); cec_drv_task(&drv, 1);
+        chip.r[CEC_R_CPU_STATUS / 4] |= 2u;
+        finish_tx(&chip, good); cec_drv_task(&drv, 1001);
+        assert(!strstr(drv.log.text, "timeout"));
+        assert(strstr(drv.log.text, good ? "poll 4 ack" : "poll 4 nack"));
+        assert(drv.sm.state == (good ? CEC_SM_POLL : CEC_SM_CLAIMED));
+        assert(chip.c5_resets == 1);
+    }
 }
 
 static void claim4(void) {
@@ -172,7 +184,16 @@ static void test_edid_log_timing(void) {
     assert(cec_edid_phys(b) < 0);                           /* not the HDMI OUI */
     b[9] = 0x03; b[12] = 0xff; b[13] = 0xff; sum = 0; for (unsigned i = 0; i < 127; i++) sum += b[i]; b[127] = (uint8_t)(0x100u - (sum & 0xffu));
     assert(cec_edid_phys(b) < 0);                           /* 0xFFFF means none */
-    struct cec_timing t; assert(cec_regs_timing(0, &t) < 0 && cec_regs_timing(40000u * 4096u, &t) < 0 && cec_regs_timing(40000, &t) == 0 && t.div == 1);
+    struct cec_timing t;
+    static const struct { uint32_t hz, div; } clocks[] = {
+        {40000u, 1u}, {120000000u, 3000u}, {163682864u, 4092u},
+        {4095u * 40000u + 39999u, 4095u}
+    };
+    for (unsigned i = 0; i < sizeof clocks / sizeof clocks[0]; i++) {
+        assert(cec_regs_timing(clocks[i].hz, &t) == 0 && t.div == clocks[i].div);
+    }
+    assert(cec_regs_timing(39999u, &t) < 0);
+    assert(cec_regs_timing(0, &t) < 0 && cec_regs_timing(40000u * 4096u, &t) < 0 && cec_regs_timing(40000, &t) == 0 && t.div == 1);
 
     static struct cec_log l; char out[512];
     cec_log_init(&l);

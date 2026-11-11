@@ -172,24 +172,42 @@ static void test_poll_errors(void) {
     struct cec_sm s = {0}, before;
     struct cec_msg m;
     uint64_t id, retired;
-    /* Both timeout and transport error consume the same bounded retry budget. */
-    for (unsigned errors = 0; errors < 3; errors++) {
+    /* Transport errors remain uncertain and have a bounded retry budget. */
+    cec_sm_init(&s, 0x1000, 0);
+    for (unsigned attempt = 0; attempt <= CEC_SM_POLL_RETRIES; attempt++) {
+        assert(cec_sm_next_tx(&s, &m, &id) && m.b[0] == 0x44);
+        cec_sm_tx_done(&s, id, CEC_SM_TX_ERROR);
+        assert(!s.inflight && s.laddr == CEC_ADDR_BROADCAST);
+        assert(s.state == (attempt < CEC_SM_POLL_RETRIES ? CEC_SM_POLL : CEC_SM_NO_ADDRESS));
+        memcpy(&before, &s, sizeof(s));
+        cec_sm_tx_done(&s, id, CEC_SM_TX_ACK);
+        cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
+        assert(memcmp(&before, &s, sizeof(s)) == 0);
+    }
+    assert(!cec_sm_next_tx(&s, &m, &id));
+    /* Claim decision table, exercised at every playback candidate. */
+    const enum cec_sm_tx_result results[] = { CEC_SM_TX_ACK, CEC_SM_TX_NACK, CEC_SM_TX_TIMEOUT };
+    const unsigned addrs[] = {4, 8, 11};
+    for (unsigned cand = 0; cand < 3; cand++) for (unsigned r = 0; r < 3; r++) {
         cec_sm_init(&s, 0x1000, 0);
-        for (unsigned attempt = 0; attempt <= CEC_SM_POLL_RETRIES; attempt++) {
-            assert(cec_sm_next_tx(&s, &m, &id) && m.len == 1 && m.b[0] == 0x44);
-            if (errors == 0 || (errors == 2 && attempt % 2 == 0))
-                cec_sm_tick(&s, s.now_ms + CEC_SM_TX_TIMEOUT_MS);
-            else cec_sm_tx_done(&s, id, CEC_SM_TX_ERROR);
-            assert(!s.inflight && s.laddr == CEC_ADDR_BROADCAST);
-            assert(s.state == (attempt < CEC_SM_POLL_RETRIES ? CEC_SM_POLL : CEC_SM_NO_ADDRESS));
-            memcpy(&before, &s, sizeof(s));
+        for (unsigned i = 0; i < cand; i++) {
+            assert(cec_sm_next_tx(&s, &m, &id));
             cec_sm_tx_done(&s, id, CEC_SM_TX_ACK);
-            cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
-            assert(memcmp(&before, &s, sizeof(s)) == 0);
         }
-        cec_sm_announce(&s);
-        cec_sm_tick(&s, s.now_ms + CEC_SM_TX_TIMEOUT_MS);
-        assert(!cec_sm_next_tx(&s, &m, &id));
+        assert(cec_sm_next_tx(&s, &m, &id) && cec_dest(&m) == addrs[cand]);
+        if (results[r] == CEC_SM_TX_TIMEOUT) {
+            cec_sm_tick(&s, CEC_SM_TX_TIMEOUT_MS - 1);
+            assert(s.inflight && s.state == CEC_SM_POLL);
+            cec_sm_tick(&s, CEC_SM_TX_TIMEOUT_MS);
+        } else cec_sm_tx_done(&s, id, results[r]);
+        if (results[r] == CEC_SM_TX_ACK) {
+            assert(s.state == (cand == 2 ? CEC_SM_NO_ADDRESS : CEC_SM_POLL));
+            assert(s.laddr == CEC_ADDR_BROADCAST);
+        } else assert(s.state == CEC_SM_CLAIMED && s.laddr == addrs[cand] && s.qn == 2);
+        memcpy(&before, &s, sizeof(s));
+        cec_sm_tx_done(&s, id, CEC_SM_TX_ACK);
+        cec_sm_tx_done(&s, id, CEC_SM_TX_NACK);
+        assert(memcmp(&before, &s, sizeof(s)) == 0);
     }
     /* An explicit NACK after a transport error is sufficient to claim. */
     cec_sm_init(&s, 0x1000, 0);
@@ -223,13 +241,13 @@ static void test_stale_completion(void) {
     assert(poll_id != 0);
     cec_sm_tick(&s, 999);
     assert(!cec_sm_next_tx(&s, &next, &next_id));
-    cec_sm_tick(&s, 1000);
+    cec_sm_tx_done(&s, poll_id, CEC_SM_TX_ERROR);
     assert(s.state == CEC_SM_POLL && s.laddr == CEC_ADDR_BROADCAST && !s.inflight);
     assert(cec_sm_next_tx(&s, &report, &report_id));
     eq(&report, poll.b, poll.len);
     assert(report_id != poll_id && s.inflight);
 
-    /* Original poll completes after its timeout and retry handoff.
+    /* Original poll completes after a transport error and retry handoff.
      * No field (queue, retry, address or current transfer) may change. */
     memcpy(&before, &s, sizeof(s));
     cec_sm_tx_done(&s, poll_id, 0);
@@ -271,6 +289,21 @@ static void test_stale_completion(void) {
     assert(cec_opcode(&next) == CEC_OP_ACTIVE_SOURCE);
     cec_sm_tx_done(&s, next_id, 1);
     assert(!cec_sm_next_tx(&s, &next, &next_id));
+
+    /* A poll timeout claims, and late ACK/NACK cannot complete its report. */
+    cec_sm_init(&s, 0x1000, 0);
+    assert(cec_sm_next_tx(&s, &poll, &poll_id));
+    cec_sm_tick(&s, CEC_SM_TX_TIMEOUT_MS);
+    assert(s.state == CEC_SM_CLAIMED && s.laddr == 4);
+    assert(cec_sm_next_tx(&s, &report, &report_id) && report_id != poll_id);
+    assert(cec_opcode(&report) == CEC_OP_REPORT_PHYSICAL_ADDR);
+    memcpy(&before, &s, sizeof(s));
+    cec_sm_tx_done(&s, poll_id, CEC_SM_TX_ACK);
+    cec_sm_tx_done(&s, poll_id, CEC_SM_TX_NACK);
+    assert(memcmp(&before, &s, sizeof(s)) == 0);
+    assert(!cec_sm_next_tx(&s, &next, &next_id));
+    cec_sm_tx_done(&s, report_id, CEC_SM_TX_ACK);
+    while (cec_sm_next_tx(&s, &next, &next_id)) cec_sm_tx_done(&s, next_id, CEC_SM_TX_ACK);
 
     /* Exhaustion cannot reuse an ID held by an arbitrarily late callback. */
     s.tx_id = UINT64_MAX - 1;
