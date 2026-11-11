@@ -34,3 +34,12 @@ class USBWait(unittest.TestCase):
                         for start in (0,0xfffffff0):
                             with self.subTest(host=host,case=case,start=start,variant=variant):
                                 subprocess.run([str(exe),str(case),str(start),str(variant)],cwd=ROOT,check=True,timeout=5)
+
+
+class StatusLineFit(unittest.TestCase):
+    def test_usb_host_errors_fit_the_eink_err_line(self):
+        # render.c draws the ERR: text at x=54 with a 16 character budget.
+        import re
+        src=(Path(__file__).resolve().parents[1]/'drivers/usb_host.c').read_text()
+        for text in re.findall(r'error\("([^"]*)"\)',src):
+            self.assertLessEqual(len(text),16,text)
