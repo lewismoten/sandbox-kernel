@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: MIT; production HDMI startup with bounded fake MMIO. */
 #include <assert.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include "audio_null.h"
 #include "hdmi_audio.h"
 #include "iec958.h"
 #include "mixer.h"
+#include "audio_diag.h"
 
 #define PERIPH 0x20000000u
 #define REG(address) (*mock_register(address))
@@ -23,15 +25,28 @@ static uint32_t micros(void);
 static int expired(uint32_t start, uint32_t duration);
 static void delay_us(uint32_t duration);
 static int property(uint32_t tag, uint32_t *values, unsigned count);
+const char *property_fail = "MBOX TAG";
+bool storage_ready = true;
+static bool card_busy;
+static char saved[AUDIO_LOG_BYTES + 80];
+static unsigned card_writes, pixel_queries;
+static bool protocol_busy(void) { return card_busy; }
+static void log_line(const char *line) { (void)line; }
 static void boot_note(const char *line) { (void)line; }
 static void number(char *out, uint32_t value) { snprintf(out, 12, "%u", value); }
 
 #include "hdmi-driver.h"
 
+int fatsave_put(const char *game, const char *name, const uint8_t *data, uint32_t bytes) {
+ assert(!strcmp(game, "KERNEL") && !strcmp(name, "AUDIO.TXT"));
+ assert(bytes < sizeof saved); memcpy(saved, data, bytes); saved[bytes] = 0;
+ card_writes++; return 0;
+}
 static uint32_t hd_regs[64], core_regs[384], misc_regs[5], dma_regs[9];
 static struct { uint32_t address, value; } writes[128];
 static unsigned write_count, scenario, packet_stuck;
-static uint32_t now, pixel_hz;
+static uint32_t now, pixel_hz, pixel_reply_id;
+static int pixel_query_ok;
 uint64_t clock_us(void) { return now; }
 
 static uint32_t *mock_register(uint32_t address) {
@@ -85,13 +100,18 @@ static void delay_us(uint32_t duration) {
 static int property(uint32_t tag, uint32_t *values, unsigned count) {
  if (tag == 0x60001) { assert(count == 1); values[0] = 1u << 2; return 1; }
  assert(tag == 0x30002 && count == 2 && values[0] == 9);
- values[1] = pixel_hz; return pixel_hz != 0;
+ pixel_queries++; values[0] = pixel_reply_id; values[1] = pixel_hz; return pixel_query_ok;
 }
 static void reset(unsigned mode) {
  memset(hd_regs, 0, sizeof hd_regs); memset(core_regs, 0, sizeof core_regs);
  memset(misc_regs, 0, sizeof misc_regs); memset(dma_regs, 0, sizeof dma_regs);
  memset(&hw, 0, sizeof hw); memset(&audio_hw, 0, sizeof audio_hw);
- scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000;
+ memset(&diagnostics, 0, sizeof diagnostics); memset(&observed, 0, sizeof observed);
+ attempts = window_attempts = retry_since = retry_delay = poll_since = last_link = save_since = saves = 0;
+ log_us = log_ms = log_rem = 0;
+ probed = 0; card_writes = pixel_queries = 0; card_busy = false; storage_ready = true; saved[0] = 0;
+ audio_dev_init();
+ scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000; pixel_reply_id = 9; pixel_query_ok = 1;
  misc_regs[0] = 0x2d6; misc_regs[1] = 0x30e0;
  hd_regs[HD_M_CTL / 4] = 1; core_regs[HC_SCHEDULER_CONTROL / 4] = 3;
  core_regs[HC_RAM_PACKET_CONFIG / 4] = 0x02;
@@ -149,8 +169,71 @@ int main(void) {
   reset(0); packet_stuck = 1; core_regs[HC_RAM_PACKET_STATUS / 4] = status;
   assert(hdmi_audio_init() == -1 && strstr(why, "infoframe did not start/stop"));
   assert(!hw.active && !audio_hw.task && !(hd_regs[HD_MAI_CTL / 4] & 8u));
-  assert(now <= 102000);
+  assert(now <= 110000); /* 100 ms packet wait plus diagnostic timestamps */
  }
+ /* Pixel-clock query initially fails, then succeeds after frames have run.
+  * Do not install a task hook until success: null PCM consumption continues. */
+ reset(0); pixel_hz = 0; pixel_query_ok = 0;
+ assert(hdmi_audio_init() == -1 && pixel_queries == 1 && card_writes == 1);
+ assert(strstr(saved, "AUDIO v1 dropped_lines=0\n"));
+ assert(strstr(saved, "backend=null reason=firmware pixel clock unavailable attempt=1\n"));
+ assert(strstr(saved, "pixel_tag=0x00030002 clock_id=9 ok=0 reply_id=9 pixel_hz=0 mailbox=MBOX TAG\n"));
+ assert(strstr(saved, "scheduler=3 hotplug=0 mode=hdmi\n"));
+ assert(strstr(saved, "requested_rate=48000 sample_hz=0 channels=2 channel_status_source=kernel-iec958\n"));
+ assert(strstr(saved, "channel_status_left="));
+ assert(!audio_dev_open());
+ uint32_t samples[48] = {0}; assert(audio_dev_write(samples, sizeof samples) == 48);
+ audio_null_task(); now += 1000; audio_null_task();
+ assert(audio0.ring.played == 48 && !audio_hw.task);
+ pixel_hz = 148500000; pixel_query_ok = 1;
+ now = retry_since + RETRY_FIRST_US - 10000; hdmi_audio_poll(); assert(pixel_queries == 1);
+ now = retry_since + RETRY_FIRST_US + 100000; hdmi_audio_poll();
+ assert(hw.active && pixel_queries == 2 && audio_hw.task == hdmi_audio_task);
+ now += 1000000; hdmi_audio_poll();
+ assert(strstr(saved, "backend=hdmi reason=ok attempt=2\n"));
+ assert(strstr(saved, "pixel_hz=148500000 mailbox=ok\n"));
+ assert(strstr(saved, "requested_rate=48000 sample_hz=48000"));
+ /* An HPD edge causes a fresh bounded window after an exhausted boot probe. */
+ reset(0); pixel_hz = 0; assert(hdmi_audio_init() == -1);
+ for (unsigned i = 0; i < 100; i++) { now += 600000; hdmi_audio_poll(); }
+ assert(!hw.active && pixel_queries == RETRY_WINDOW && !audio_hw.task);
+ assert(strstr(saved, "retry limit reached; null drain continues"));
+ assert(strstr(saved, "ok=1 reply_id=9 pixel_hz=0 mailbox=ok\n"));
+ unsigned previous_queries = pixel_queries;
+ now += 1000000; hdmi_audio_poll(); assert(pixel_queries == previous_queries);
+ core_regs[HC_HOTPLUG / 4] = HOTPLUG_CONNECTED; now += 200000; hdmi_audio_poll();
+ assert(pixel_queries == previous_queries); /* settle the new connection first */
+ pixel_hz = 148500000; now += 400000; hdmi_audio_poll();
+ assert(hw.active && pixel_queries == previous_queries + 1);
+ /* Disconnect disables the old DMA/IRQ/hooks before any new clock query. */
+ core_regs[HC_HOTPLUG / 4] = 0; now += 200000; hdmi_audio_poll();
+ assert(!hw.active && !audio_hw.task && !audio_hw.tone);
+ assert(!(hd_regs[HD_MAI_CTL / 4] & MAI_CTL_ENABLE));
+ assert(!(core_regs[HC_RAM_PACKET_CONFIG / 4] & (1u << PKT_ID_AUDIO_INFO)));
+ assert(strstr(diagnostics.text, "backend=null reason=HDMI hotplug/mode changed"));
+ /* Reject a response for the wrong clock even if its rate looks usable. */
+ reset(0); pixel_reply_id = 3;
+ assert(hdmi_audio_init() == -1 && !hw.active && !write_count);
+ assert(strstr(saved, "ok=1 reply_id=3 pixel_hz=148500000 mailbox=ok\n"));
+ /* Firmware never supplies a clock, even through repeated cable edges.
+  * Both mailbox work and writes stop at their independent lifetime caps. */
+ reset(0); pixel_hz = 0; assert(hdmi_audio_init() == -1);
+ for (unsigned i = 0; i < 200; i++) {
+  if (i % 15 == 0) core_regs[HC_HOTPLUG / 4] ^= HOTPLUG_CONNECTED;
+  now += 600000; hdmi_audio_poll();
+ }
+ assert(pixel_queries == RETRY_TOTAL && !hw.active && !audio_hw.task);
+ assert(card_writes <= AUDIO_SAVE_MAX);
+ /* Busy file transfers defer discovery/writes, not the null task. */
+ reset(0); pixel_hz = 0; assert(hdmi_audio_init() == -1);
+ card_busy = true; now += 1000000; hdmi_audio_poll();
+ assert(pixel_queries == 1 && card_writes == 1);
+ card_busy = false; pixel_hz = 148500000; now += 200000; hdmi_audio_poll(); assert(hw.active);
+ /* CEC's EDID reads are included in the same persisted session. */
+ uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
+ hdmi_audio_edid(1, edid); now += 1000000; hdmi_audio_poll();
+ assert(strstr(saved, "edid_block=1 cta_basic_audio=1\n"));
+ assert(strstr(saved, "edid_block=1 audio_data_block=090707\n"));
  puts("hdmi startup ok");
  return 0;
 }

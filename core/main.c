@@ -111,7 +111,7 @@ void kernel_main(void) {
  unsigned usb_saves=0;bool usb_dirty=false;uint32_t usb_ver=0,usb_since=micros();
  if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  clock_us();audio_null_task();usb_task();protocol_task();protocol_card_task();os_task();cec_hw_task();
+  clock_us();audio_null_task();usb_task();protocol_task();protocol_card_task();os_task();cec_hw_task();hdmi_audio_poll();
 #if USB_ROLE_HOST
   /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}

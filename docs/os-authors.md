@@ -536,10 +536,63 @@ drain calls after the first nonempty write, rather than elapsed gaps or missing 
 (`core/sys.c:187`, `core/sys.c:306`, `core/audio_null.c:13`, `include/audio_ring.h:9`).
 
 The HDMI backend targets 1080p60 with 48 kHz stereo PCM. Its eight 384-frame DMA
-segments (8 ms each) are internal, not an application write quantum
-(`include/hdmi_audio.h:69`, `include/hdmi_audio.h:104`). Startup failure logs a reason
-and leaves the null drain active (`core/main.c:54`, `core/audio_null.c:44`,
-`drivers/hdmi_audio.c:137`). Physical audio output remains hardware-untested here.
+segments (8 ms each) are internal, not an application write quantum. Discovery starts
+after `fb_start()`. Failure keeps the null drain active; it no longer makes a permanent
+choice at boot. `hdmi_audio_poll()` runs independently of the selected drain backend.
+It retries after 250 ms (about 15 frames at 60 Hz), then at 500 ms intervals, for at
+most 12 attempts per window including the initial query. Actual intervals can be
+longer while the foreground or a USB file transfer is busy. Read-only connector HPD,
+HDMI scheduler mode and HD-block-enable changes reopen a window after 250 ms of
+settling. There are at most 48 initialization attempts per boot, including windows
+opened by cable changes. A link change stops existing audio DMA/IRQ/packet output
+and restores the null drain before rediscovery. This retries audio discovery; it does
+not program a new video mode or guarantee firmware will configure a late display.
+Physical output and HPD behavior still need a TV check.
+
+Every initialization decision and backend change is recorded in the bounded
+`/OS/SAVES/KERNEL/AUDIO.TXT`, including failures before the HDMI-mode check. The file
+starts with `AUDIO v1 dropped_lines=N`, followed by `<uptime_ms> <record>` lines.
+It contains backend, reason, attempt number, pixel-clock query tag `0x00030002`
+(Get clock rate) / clock ID 9 (pixel), query success, returned ID/rate and mailbox
+failure reason; raw HSM clock-control/divider, HD control, scheduler and hotplug
+registers; HDMI/DVI mode; requested rate, computed MAI sample rate and both 24-byte
+IEC 958 channel-status arrays. Registers/rates are decimal; channel status and EDID
+audio bytes are hex. Sample rate and channel status describe the kernel's requested
+and calculated output, not a firmware audio-status query or proof the TV played it.
+The initial EDID marker is `not-read`; CEC forwards its validated EDID blocks into
+this log, including CTA basic-audio flags and raw Audio Data Blocks if encountered.
+EDID is diagnostic here and does not gate backend selection. CEC stops looking for
+extensions after finding its physical address, so this is not a complete EDID dump.
+
+The log retains at most 8192 bytes of complete lines in RAM (oldest lines evicted,
+counted in the header), plus a short file header. It saves the boot decision as soon
+as storage is ready and no protocol transfer is busy; later dirty snapshots are
+coalesced to at most one write per second, with at most 20 write attempts per boot.
+Once that budget is exhausted the in-memory log continues but the file stops
+updating. SD failures are nonfatal and consume the same budget. No per-frame writes
+occur. `usb_kernel.py <port> logs [--out DIR]` includes `AUDIO.TXT` and tolerates a
+missing file on older kernels. This is a current-session log like `CEC.TXT`: after a
+TV test, wait at least a second for the last change to save and copy it with a card
+reader **before another boot**, which can replace the TV session with a headless one.
+
+Interpreting a missing pixel clock:
+
+- A missing tag response, timeout, or a successful response containing zero is a
+  firmware observation, not proof no TV is attached. The old immediate query could
+  run before link/clock setup settled. Compare successive records and the independent
+  HDMI-mode/HPD values. If all retries fail, firmware support or link configuration
+  still needs investigation; the kernel deliberately does not guess a clock.
+- A 4K-capable TV can accept the card's configured `hdmi_group=1`, `hdmi_mode=16`
+  (1080p60, nominally 148.5 MHz). Its native/preferred EDID resolution and the scaled
+  framebuffer dimensions do not determine the active link clock. An unsupported
+  actual clock remains on null with `no N/CTS for this mode`.
+- `hdmi_drive=2` selects HDMI audio signaling; DVI mode cannot carry these audio
+  packets. `hdmi_force_hotplug=1` requests output without a detected display, so
+  scheduler activity and physical HPD need separate interpretation.
+- An ARC-labeled TV input still accepts ordinary source-to-TV HDMI PCM. ARC is the
+  return path from TV to receiver; this kernel does not need ARC to send audio to
+  the TV. The ARC label alone does not explain a failed firmware pixel-clock query.
+  TV speaker/output routing and mute still require checking at the TV.
 
 The internal mixer synthesizes diagnostic tones and pumps them into the same audio
 ring; it does not provide another app device, ioctl, volume or tune API. It can compete
@@ -604,7 +657,7 @@ as do USB GET/LS and the kernel loader.
 | `/OS/AUTORUN.TXT` | which program autostarts (section 2) |
 | `/OS/NAME.TXT` | Pi name, 1–8 of `A-Z 0-9 -`, loaded at boot |
 | `/OS/SAVES/KERNEL/BOOT.TXT` | boot counter, USB role decision and keyboard count |
-| `/OS/SAVES/KERNEL/USB.TXT`, `CEC.TXT`, `FAULT.TXT` | bus, CEC session and latest OS fault records |
+| `/OS/SAVES/KERNEL/USB.TXT`, `CEC.TXT`, `AUDIO.TXT`, `FAULT.TXT` | bus, CEC, audio decisions and latest OS fault records |
 | `/OS/APPS/<DIR>/` | an app folder for a program such as `JS.ELF` |
 | `/GAMES/<DIR>/`, `/GAMES/<NAME>.GMP` | games, loose or packed (`LIBRARY.JSL` is the library index) |
 | `/POCKET/<NAME>.GMP` | packed games for the Pocket Player |
@@ -666,7 +719,7 @@ and one serial reader at a time.
 | `get PATH [OUT]` | read a card-root file while the OS runs: CRC-checked chunks up to 4 MiB; without OUT, printable UTF-8 text up to 64 KiB |
 | `ls PATH` | list a card-root directory using short aliases; [wire format and path limits](serial.md#reading-card-files-protocol-2-extension) |
 | `fault [--elf PROGRAM.ELF]` | explain `/OS/SAVES/KERNEL/FAULT.TXT`, decode ARM1176 FSR and optionally resolve PC/LR with a matching ELF; current records omit LR |
-| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
+| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT`, `AUDIO.TXT` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
 | `ceclog [--seconds N]` | show CEC session lines for 8 s by default, including the replayed log tail |
 | `usblog` | print the saved USB bus log with newlines restored |
 | `lastboot` | print Pi name and previous/current boot decisions |

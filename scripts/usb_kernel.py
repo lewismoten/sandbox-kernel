@@ -482,7 +482,7 @@ def collect_logs(port,out=None):
     print(handshake(port),file=sys.stderr)
     folder=pathlib.Path(out) if out is not None else pathlib.Path(time.strftime('kernel-logs-%Y%m%d-%H%M%S'))
     folder.mkdir(parents=True,exist_ok=True)
-    for name in ('BOOT.TXT','USB.TXT','CEC.TXT','FAULT.TXT'):
+    for name in ('BOOT.TXT','USB.TXT','CEC.TXT','AUDIO.TXT','FAULT.TXT'):
         try: data=read_card_file(port,KERNEL_LOG_DIR+name)
         except FileNotFoundError:
             print(f'{name}: unavailable (GET open refused)',file=sys.stderr);continue

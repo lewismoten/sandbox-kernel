@@ -25,6 +25,10 @@
 #define HD_MAI_FMT     0x01c
 #define HD_MAI_DATA    0x020
 #define HD_MAI_SMP     0x02c
+/* BCM2835 HDMI_HOTPLUG: connected bit 0 (VERIFY on the TV). Read only;
+ * unlike config.txt's force_hotplug, this observes the connector. */
+#define HC_HOTPLUG 0x00c
+#define HOTPLUG_CONNECTED 1u
 #define HC_MAI_CHANNEL_MAP 0x090
 #define HC_MAI_CONFIG  0x094
 #define HC_AUDIO_PACKET_CONFIG 0x09c
@@ -120,6 +124,8 @@ uint32_t dma_cb_index(uint32_t conblk, uint32_t cb_bus, uint32_t nseg);
 int hdmi_audio_init(void);      /* 0 = the HDMI backend replaces the null backend; else -1 and logs why */
 int hdmi_audio_active(void);
 void hdmi_audio_irq(void);
+void hdmi_audio_poll(void);    /* foreground: bounded delayed retries, hotplug, AUDIO.TXT */
+void hdmi_audio_edid(unsigned block, const uint8_t *data); /* validated CEC EDID reads */
 void hdmi_audio_task(void);     /* main-loop hook: refill DMA segments from the ring */
 int hdmi_audio_tone(uint32_t hz, uint32_t ms); /* quiet test tone through the mixer; 0 or -1 */
 void hdmi_audio_report(char *out, size_t cap);  /* status text for the USB AUDIO command */

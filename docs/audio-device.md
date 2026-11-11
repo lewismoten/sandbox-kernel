@@ -86,8 +86,12 @@ write PCM to `/dev/audio`, with no public mixer syscall.
 # Slice 4: HDMI backend (hardware)
 
 `drivers/hdmi_audio.c` replaces the null backend when `hdmi_audio_init` succeeds
-(after `fb_start`, so the firmware's HDMI is up). Otherwise the null backend stays
+(after `fb_start`; this does not guarantee the link clock has settled). Otherwise the null backend stays
 and the reason is logged (`AUDIO hdmi: unavailable ...`, also in the `AUDIO` command).
+Decisions and firmware observations are saved to `/OS/SAVES/KERNEL/AUDIO.TXT`
+and included by `usb_kernel.py logs`. Delayed and hotplug-triggered retries are
+bounded; see [audio rules and diagnostics](os-authors.md#audio-rules-and-diagnostics)
+for retry/write limits, file format and collection before another boot.
 The pure part, `core/hdmi_audio_plan.c` (`include/hdmi_audio.h`), is host-tested by
 `tests/test_hdmi_audio.py`.
 

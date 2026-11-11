@@ -50,9 +50,11 @@ static uint32_t now_ms(void) {
 static int edid_block(unsigned blk, uint8_t *out) {
     uint32_t m[40] = { 160u, 0, 0x00030020u, 136u, 0, blk, 0 };
     if (!property_message(m, 40, 200000)) return -1;
-    if (!(m[4] & 0x80000000u)) return -1;
+    if (!(m[4] & 0x80000000u) || (m[4] & 0x7fffffffu) < 136u || m[6]) return -1;
     for (unsigned i = 0; i < CEC_EDID_BLOCK; i++) out[i] = (uint8_t)(m[7 + i / 4] >> (8 * (i % 4)));
-    return cec_edid_checksum_ok(out) ? 0 : -1;
+    if (!cec_edid_checksum_ok(out)) return -1;
+    hdmi_audio_edid(blk, out);
+    return 0;
 }
 static int find_phys(void) {
     static uint8_t b[CEC_EDID_BLOCK];

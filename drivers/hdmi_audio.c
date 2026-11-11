@@ -9,6 +9,8 @@
 #include "hdmi_audio.h"
 #include "iec958.h"
 #include "mixer.h"
+#include "audio_diag.h"
+#include "fatput.h"
 
 #define DMA_BASE (PERIPH + 0x7000u)
 #define DMA_ENABLE (DMA_BASE + 0xff0u)
@@ -36,6 +38,57 @@ static uint32_t last_progress_us;
 static int stalled;
 static struct hdmi_audio_clocks clk;
 static const char *why = "not tried";
+/* Never busy-wait for a TV to wake. Initial retry is after ~15 60-Hz frames,
+ * then every 500 ms. Connector/mode edges start a new, bounded window.
+ * The lifetime cap also bounds mailbox work on a bouncing cable. */
+#define RETRY_FIRST_US 250000u
+#define RETRY_EVERY_US 500000u
+#define RETRY_WINDOW 12u
+#define RETRY_TOTAL 48u
+#define AUDIO_SAVE_MAX 20u
+static struct audio_diag diagnostics;
+static struct audio_observation observed;
+static uint32_t attempts, window_attempts, retry_since, retry_delay;
+static uint32_t poll_since, last_link, save_since, saves;
+static int probed;
+static uint32_t log_us, log_ms, log_rem;
+/* Accumulate across the 32-bit hardware timer's 71-minute wrap. Poll calls
+ * this every foreground pass, even when discovery and logging are idle. */
+static uint32_t timestamp(void) {
+ uint32_t now = micros(), delta = now - log_us; log_us = now;
+ log_ms += delta / 1000u; log_rem += delta % 1000u;
+ log_ms += log_rem / 1000u; log_rem %= 1000u;
+ return log_ms;
+}
+extern bool storage_ready;
+
+static void record_decision(void) {
+ observed.attempt = attempts;
+ observed.sample_hz = clk.mai_hz;
+ audio_diag_decision(&diagnostics, timestamp(), &observed, hw.active, why);
+}
+static void save_diagnostics(void) {
+ if (!diagnostics.dirty || !storage_ready || protocol_busy() || saves >= AUDIO_SAVE_MAX) return;
+ if (saves && !expired(save_since, 1000000u)) return;
+ save_since = micros(); saves++;
+ /* A header makes the format/version and any whole-line eviction explicit. */
+ static uint8_t out[AUDIO_LOG_BYTES + 80];
+ char t[12]; const char *s = "AUDIO v1 dropped_lines="; uint32_t n = 0;
+ while (*s) out[n++] = (uint8_t)*s++;
+ number(t, diagnostics.dropped); for (char *q = t; *q;) out[n++] = (uint8_t)*q++;
+ out[n++] = '\n';
+ memcpy(out + n, diagnostics.text, diagnostics.len); n += diagnostics.len;
+ if (fatsave_put("KERNEL", "AUDIO.TXT", out, n)) log_line("AUDIO.TXT write failed");
+ else diagnostics.dirty = 0;
+}
+void hdmi_audio_edid(unsigned block, const uint8_t *data) {
+ audio_diag_edid(&diagnostics, timestamp(), block, data);
+}
+static uint32_t link_state(void) {
+ return (REG(HDMI_CORE_BASE + HC_HOTPLUG) & HOTPLUG_CONNECTED) |
+        ((REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL) & SCHEDULER_HDMI_ACTIVE) << 1) |
+        ((REG(HDMI_HD_BASE + HD_M_CTL) & 1u) << 3);
+}
 
 static uint32_t bus(const void *p) { return DMA_BUS_RAM | (uint32_t)(uintptr_t)p; }
 static void drain(void) { uint32_t z = 0; __asm__ volatile("mcr p15,0,%0,c7,c10,4" :: "r"(z) : "memory"); } /* write buffer: the DMA reads RAM (write-through) */
@@ -54,7 +107,10 @@ static void say(const char *a, uint32_t n, const char *b) {
 }
 static void hex(char *o, uint32_t v) { for (int i = 7; i >= 0; i--) *o++ = "0123456789abcdef"[(v >> (4 * i)) & 15]; *o = 0; }
 static void sayhex(const char *a, uint32_t v) { char l[80], h[9], *p = l; const char *s; hex(h, v); for (s = "AUDIO hdmi: "; *s;) *p++ = *s++; for (s = a; *s;) *p++ = *s++; for (char *q = h; *q;) *p++ = *q++; *p = 0; boot_note(l); }
-static int fail(const char *w) { why = w; boot_note("AUDIO hdmi: unavailable, null backend stays:"); boot_note(w); return -1; }
+static int fail(const char *w) {
+ why = w; boot_note("AUDIO hdmi: unavailable, null backend stays:"); boot_note(w);
+ record_decision(); save_diagnostics(); return -1;
+}
 
 static void read_pcm(void) {
  uint32_t q = audio_ring_queued(&audio0.ring), n = (audio0.open && audio0.wrote) ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
@@ -149,20 +205,38 @@ void hdmi_audio_irq(void) {
 int hdmi_audio_init(void) {
  if (hw.active) return 0;
  audio_hw.report = hdmi_audio_report;
+ if (!probed) {
+  probed = 1; last_link = link_state();
+  audio_diag_line(&diagnostics, timestamp(), "edid_audio=not-read (CEC forwards validated blocks)");
+ }
+ attempts++; window_attempts++; retry_since = micros();
+ retry_delay = window_attempts == 1 ? RETRY_FIRST_US : RETRY_EVERY_US;
+ memset(&observed, 0, sizeof observed); memset(&clk, 0, sizeof clk);
+ observed.rate = RATE;
+ observed.hsm_ctl = REG(CM_HSMCTL); observed.hsm_div = REG(CM_HSMDIV);
+ observed.m_ctl = REG(HDMI_HD_BASE + HD_M_CTL);
+ observed.scheduler = REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL);
+ observed.hotplug = REG(HDMI_CORE_BASE + HC_HOTPLUG);
+ /* Get clock rate, not framebuffer width or the sink's preferred EDID mode.
+  * Capture even an unsuccessful reply and its exact transport/tag failure. */
+ uint32_t pixel[2] = {9, 0};
+ observed.pixel_ok = property(0x30002, pixel, 2);
+ observed.pixel_id = pixel[0]; observed.pixel_hz = pixel[1];
+ observed.mailbox = observed.pixel_ok ? "ok" : property_fail;
+ if (iec958_status(RATE, 0, stL) || iec958_status(RATE, 1, stR)) return fail("channel status");
+ memcpy(observed.left, stL, sizeof stL); memcpy(observed.right, stR, sizeof stR);
  uint32_t m[1] = {0};
  if (!property(0x60001, m, 1)) return fail("DMA channel mask unavailable");
  hw.ch = -1; for (int c = 1; c <= 6; c++) if (m[0] & (1u << c)) { hw.ch = c; break; }
  if (hw.ch < 0) return fail("no free DMA channel 1-6");
- uint32_t hsm = hdmi_hsm_hz(REG(CM_HSMCTL), REG(CM_HSMDIV));
- sayhex("CM_HSMCTL ", REG(CM_HSMCTL)); sayhex("CM_HSMDIV ", REG(CM_HSMDIV));
- if (!hsm || !(REG(CM_HSMCTL) & 0x80u)) return fail("HSM clock stopped or unknown");
- uint32_t pixel[2] = {9, 0};
- if (!property(0x30002, pixel, 2) || !pixel[1]) return fail("firmware pixel clock unavailable");
+ uint32_t hsm = hdmi_hsm_hz(observed.hsm_ctl, observed.hsm_div);
+ sayhex("CM_HSMCTL ", observed.hsm_ctl); sayhex("CM_HSMDIV ", observed.hsm_div);
+ if (!hsm || !(observed.hsm_ctl & 0x80u)) return fail("HSM clock stopped or unknown");
+ if (!observed.pixel_ok || pixel[0] != 9 || !pixel[1]) return fail("firmware pixel clock unavailable");
  if (hdmi_audio_clocks(RATE, pixel[1], hsm, &clk)) return fail("no N/CTS for this mode");
- if (iec958_status(RATE, 0, stL) || iec958_status(RATE, 1, stR)) return fail("channel status");
- if (!(REG(HDMI_HD_BASE + HD_M_CTL) & 1u)) return fail("HD block not enabled by firmware (is HDMI on?)");
- sayhex("SCHEDULER_CONTROL ", REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL));
- if (!(REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL) & SCHEDULER_HDMI_ACTIVE)) return fail("DVI mode: set hdmi_drive=2 on the boot card");
+ if (!(observed.m_ctl & 1u)) return fail("HD block not enabled by firmware (is HDMI on?)");
+ sayhex("SCHEDULER_CONTROL ", observed.scheduler);
+ if (!(observed.scheduler & SCHEDULER_HDMI_ACTIVE)) return fail("DVI mode: set hdmi_drive=2 on the boot card");
  say("pixel clock ", pixel[1], " Hz (firmware)");
  say("HSM ", hsm, " Hz (from CM)");
  say("N ", clk.n, ""); say("CTS ", clk.cts, ""); say("SMP N ", clk.smp_n, ""); say("SMP M ", clk.smp_m, ""); say("sample clock ", clk.mai_hz, " Hz");
@@ -215,11 +289,47 @@ int hdmi_audio_init(void) {
   return fail(conblk != bus(cbs) || (cs & 4u) ? "DMA advanced but no completion IRQ (check IRQ routing)" : "DMA is not draining (DREQ or MAI not running)");
  }
  hw.active = 1; why = "ok";
+ audio0.clocked = 0; /* discard the null backend's elapsed-time anchor */
  audio_hw.task = hdmi_audio_task; audio_hw.tone = hdmi_audio_tone;
  boot_note("AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)");
+ record_decision(); save_diagnostics();
  return 0;
 }
 int hdmi_audio_active(void) { return hw.active; }
+
+/* Runs independently of audio_hw.task: the null sink must keep draining while
+ * discovery is deferred. Called only at a main-loop boundary, never from IRQ
+ * or service_io (delay_us during startup services I/O). */
+void hdmi_audio_poll(void) {
+ if (!probed) return;
+ (void)timestamp();
+ save_diagnostics();
+ if (!expired(poll_since, 100000u)) return;
+ poll_since = micros();
+ uint32_t link = link_state();
+ if (link != last_link) {
+  last_link = link;
+  if (hw.active) {
+   REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
+   dmaw(DMA_CS, 0x80000000u);
+   hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
+   hc(HC_RAM_PACKET_CONFIG, REG(HDMI_CORE_BASE + HC_RAM_PACKET_CONFIG) & ~(1u << PKT_ID_AUDIO_INFO));
+   hw.active = 0; audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
+   why = "HDMI hotplug/mode changed";
+   observed.hotplug = REG(HDMI_CORE_BASE + HC_HOTPLUG);
+   observed.scheduler = REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL);
+   observed.m_ctl = REG(HDMI_HD_BASE + HD_M_CTL);
+   record_decision();
+  }
+  audio_diag_line(&diagnostics, timestamp(), "HDMI link changed: retry after settling");
+  window_attempts = 0; retry_since = micros(); retry_delay = RETRY_FIRST_US;
+ }
+ if (hw.active || window_attempts >= RETRY_WINDOW || attempts >= RETRY_TOTAL || protocol_busy()) return;
+ if (!expired(retry_since, retry_delay)) return;
+ (void)hdmi_audio_init();
+ if (!hw.active && (window_attempts >= RETRY_WINDOW || attempts >= RETRY_TOTAL))
+  audio_diag_line(&diagnostics, timestamp(), "retry limit reached; null drain continues (new link edge can reopen window within lifetime cap)");
+}
 
 void hdmi_audio_task(void) {
  if (!hw.active) return;
