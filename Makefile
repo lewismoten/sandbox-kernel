@@ -14,7 +14,7 @@ PANEL_ROTATE_180 ?= 1
 USB_ROLE ?= device
 CFLAGS := -DPANEL_ROTATE_180=$(PANEL_ROTATE_180) -mcpu=arm1176jzf-s -marm -mno-unaligned-access -mfloat-abi=soft -std=c11 -Os -g -ffreestanding -fno-builtin -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -Iinclude -I$(TUSB) -DRASPPI=1 -include build/build_id.h
 LDFLAGS := -nostdlib -Wl,--gc-sections -Tarch/armv6/link.ld
-COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/sd.c core/util.c core/divide.c core/store.c
+COMMON := arch/armv6/start.S drivers/bcm2835.c drivers/mbox_async.c drivers/sd.c core/util.c core/divide.c core/store.c
 ifeq ($(USB_ROLE),host)
 USB := $(TUSB)/tusb.c $(TUSB)/common/tusb_fifo.c build/tinyusb-host/usbh.c build/tinyusb-host/hub.c build/tinyusb-host/hid_host.c $(TUSB)/portable/synopsys/dwc2/hcd_dwc2.c $(TUSB)/portable/synopsys/dwc2/dwc2_common.c
 USBDRV := drivers/usb_host.c core/usbkbd.c core/usbhost_stats.c
