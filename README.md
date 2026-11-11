@@ -43,7 +43,9 @@ remains unlinked. [CEC](docs/cec.md) is linked in both roles, with bench transmi
 TV receive and standby/wake behavior remain hardware-untested.
 Build the default `USB_ROLE=device` Mac CDC link with `make`;
 `make USB_ROLE=host all` builds the [USB boot-keyboard role](docs/usb-host-keyboard.md)
-(hardware-untested, no CDC, installed companion or consumed trial, never confirmed). `make boot` refuses
+(hardware-untested, no CDC, installed companion or consumed trial, never confirmed).
+See the [keyboard, receiver and hub compatibility inventory](docs/tested-keyboards.md)
+for known identities, fixture coverage, limitations and how to report a new device. `make boot` refuses
 a host runtime. Run host checks with `make test`, and assemble a boot folder
 and card image with `make boot`. The runner reports the current test count and optional-tool skips. The default compiler is the requested Arm GNU
 15.3.rel2 installation. Dependencies are pinned and fetched without git. Both USB roles use the

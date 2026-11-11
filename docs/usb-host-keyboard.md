@@ -15,6 +15,18 @@ kernel does not select keyboard mode: ID is sampled only at boot. Unplugging a
 keyboard releases its keys, but returning to the Mac link requires powering off,
 removing the OTG adapter, and powering on with the normal Mac data cable.
 
+## Reported hardware
+
+See the [keyboard, receiver and hub compatibility inventory](tested-keyboards.md)
+for enumeration details, evidence limits, missing/media keys and how to submit
+USB.TXT logs for a new device. The following names came from the compatibility
+inventory request; no matching descriptor capture or research note is checked in.
+
+| Device | VID:PID | Evidence status |
+| --- | --- | --- |
+| Rii mini X2 RT-MWK01 receiver | Unknown | Model named; capture needed to establish identity and boot reports. |
+| Hub from the hardware request | `1A40:0101` | Identity supplied; physical enumeration and downstream behavior unqualified. |
+
 ## Install once from a Mac
 
 1. Connect the Pi to the Mac with its normal USB data cable, without the OTG
