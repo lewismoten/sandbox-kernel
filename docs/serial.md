@@ -113,6 +113,41 @@ Both commands require INFO and are compiled in both USB roles; the current host
 role has no CDC link, so capture is usable there only if a link is provided.
 Use one reader, with one outstanding request at a time.
 
+### Watching for changes
+
+```sh
+python3 scripts/usb_kernel.py /dev/cu.usbmodem0001 watch --out captures
+python3 scripts/usb_kernel.py /dev/cu.usbmodem0001 watch --out captures --every 5 --count 12 --eink --hdmi --scale 4
+```
+
+`watch --out DIR [--every SECONDS] [--count N] [--eink] [--hdmi --scale N]`
+repeats the same validated screen reads. With no display flags it captures e-ink;
+`--hdmi` alone captures HDMI, and both flags capture both screens sequentially.
+`--scale` applies only to HDMI (1..16, default 1). No new wire commands are used.
+
+The default interval is 1 second and the default duration is unlimited. The
+interval must be finite and positive; it measures time between round starts,
+with no extra wait when transfers take longer. `--count` must be a positive
+integer and counts polling rounds, including unchanged frames, rather than saved
+images. Each screen's PNG bytes are SHA-256 hashed against its previous frame:
+consecutive duplicates are skipped independently for each display. A frame that
+returns after a different frame is saved again. Hash history starts fresh for
+each invocation.
+
+The tool creates DIR and saves changed frames as, for example,
+`2026-11-11T06:30:00.123456Z-eink.png` or
+`2026-11-11T06:30:00.123456Z-hdmi.png` (UTC ISO timestamps with microseconds).
+Existing images are preserved; a numeric suffix avoids filename collisions.
+`DIR/index.html` is a local contact sheet with thumbnails and links to full PNGs,
+rebuilt after each saved image and including earlier PNGs in DIR. Open or reload
+it in a browser to see the latest collection. Ctrl-C stops successfully and closes
+the serial port without a traceback; already saved frames remain available.
+Transfer errors stop the command rather than retrying a potentially desynchronized
+stream. The e-ink and live HDMI limitations described below still apply.
+Host coverage is in `tests/test_watch.py`, using a fake serial port.
+
+### Capture wire format
+
 Requests are `EINKSHOT <id> <offset>\n` or
 `FBSHOT <scale> <id> <offset>\n`. All numbers are unsigned decimal.
 Start with id=0, offset=0; use the returned id for subsequent offsets.

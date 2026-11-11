@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Mac/POSIX stdlib CDC sender and log tail. Use /dev/cu.usbmodem* on macOS."""
 import argparse, errno, hashlib, os, pathlib, re, select, struct, sys, termios, time, tty, zlib
-import shutil, subprocess
+import datetime, html, math, shutil, subprocess
+from urllib.parse import quote
 from image import validate
 
 class Serial:
@@ -325,7 +326,8 @@ def rgb_png(w,h,rgb):
     rows=b''.join(b'\0'+rgb[y*w*3:(y+1)*w*3] for y in range(h))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>2I5B',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(rows))+chunk(b'IEND',b'')
 
-def screen_capture(port,path,eink=False,scale=1):
+def capture_png(port,eink=False,scale=1):
+    """Read and validate one screen, returning its encoded pixels without saving."""
     if not 1<=scale<=16: raise ValueError('scale must be 1..16')
     print(handshake(port));kind='EINK' if eink else 'FB';meta=None;data=bytearray();offset=0
     deadline=time.monotonic()+180
@@ -345,9 +347,77 @@ def screen_capture(port,path,eink=False,scale=1):
         if zlib.crc32(block)!=crc: raise ValueError('capture CRC mismatch; reconnect and retry')
         data.extend(block);offset+=n
         time.sleep(0.002)
-    w,h,rgb=shot_rgb(meta,data);path.write_bytes(rgb_png(w,h,rgb))
+    w,h,rgb=shot_rgb(meta,data)
+    return rgb_png(w,h,rgb),w,h
+
+def screen_capture(port,path,eink=False,scale=1):
+    png,w,h=capture_png(port,eink,scale);path.write_bytes(png)
     print(f'Wrote {path} ({w}x{h})')
     print('E-ink: last sent plane; refresh, ghosting or panel failure may differ.' if eink else 'HDMI: live read; frames/palette may change during transfer; blanking is not shown.',file=sys.stderr)
+    return 0
+
+
+def watch_index(folder):
+    """Keep earlier PNGs when resuming a directory; use only local image links."""
+    cards=[]
+    for path in sorted(folder.glob('*.png')):
+        name=html.escape(path.name);url=html.escape(quote(path.name),quote=True)
+        cards.append(f'<figure><a href="{url}"><img src="{url}" loading="lazy" alt="{name}"></a>'
+                     f'<figcaption>{name}</figcaption></figure>')
+    page=('<!doctype html>\n<html lang="en"><meta charset="utf-8">'
+          '<meta name="viewport" content="width=device-width, initial-scale=1">'
+          '<title>Screen watch</title><style>'
+          'body{font-family:system-ui;margin:2rem;background:#eee;color:#222}'
+          'main{display:flex;flex-wrap:wrap;gap:1rem}figure{margin:0;padding:1rem;background:white}'
+          'img{max-width:100%;max-height:320px;object-fit:contain;image-rendering:pixelated}'
+          'figcaption{overflow-wrap:anywhere;max-width:32rem}</style>'
+          '<h1>Screen watch</h1><main>'+''.join(cards)+'</main></html>\n')
+    temporary=folder/'.index.html.tmp'
+    try:
+        temporary.write_text(page,encoding='utf-8');temporary.replace(folder/'index.html')
+    finally:
+        temporary.unlink(missing_ok=True)
+
+def watch_screens(port,out,every=1.0,count=None,eink=False,hdmi=False,scale=1):
+    """Count polling rounds, comparing each display only with its previous frame."""
+    if not math.isfinite(every) or every<=0: raise ValueError('every must be finite and greater than zero')
+    if count is not None and count<1: raise ValueError('count must be at least 1')
+    if not 1<=scale<=16: raise ValueError('scale must be 1..16')
+    folder=pathlib.Path(out);folder.mkdir(parents=True,exist_ok=True)
+    kinds=(['eink'] if eink or not hdmi else [])+(['hdmi'] if hdmi else [])
+    previous={};rounds=0
+    try:
+        watch_index(folder)
+        while count is None or rounds<count:
+            started=time.monotonic()
+            for kind in kinds:
+                png,_,_=capture_png(port,kind=='eink',scale)
+                digest=hashlib.sha256(png).digest()
+                if previous.get(kind)==digest: continue
+                stamp=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='microseconds').replace('+00:00','Z')
+                path=folder/f'{stamp}-{kind}.png'
+                # Exclusive creation also preserves frames from an earlier session if the clock repeats.
+                suffix=0
+                while True:
+                    created=False
+                    try:
+                        with path.open('xb') as stream:
+                            created=True;stream.write(png)
+                        break
+                    except FileExistsError:
+                        suffix+=1;path=folder/f'{stamp}-{kind}-{suffix}.png'
+                    except BaseException:
+                        if created: path.unlink(missing_ok=True)
+                        raise
+                previous[kind]=digest
+                watch_index(folder)
+                print(f'Wrote {path}',flush=True)
+            rounds+=1
+            if count is None or rounds<count:
+                time.sleep(max(0,every-(time.monotonic()-started)))
+    except KeyboardInterrupt:
+        watch_index(folder)
+        print('Watch stopped.',file=sys.stderr)
     return 0
 
 GET_MAX=4*1024*1024
@@ -513,6 +583,10 @@ def main():
     p=sub.add_parser('logs',help='collect BOOT, USB, CEC and FAULT records');p.add_argument('--out',type=pathlib.Path)
     p=sub.add_parser('einkshot',help='save the last sent e-ink image as PNG');p.add_argument('out',type=pathlib.Path)
     p=sub.add_parser('fbshot',help='save the live HDMI framebuffer as RGB PNG');p.add_argument('out',type=pathlib.Path);p.add_argument('--scale',type=int,default=1)
+    p=sub.add_parser('watch',help='save changed screens and an HTML contact sheet until Ctrl-C')
+    p.add_argument('--out',required=True,type=pathlib.Path);p.add_argument('--every',type=float,default=1.0)
+    p.add_argument('--count',type=int);p.add_argument('--eink',action='store_true');p.add_argument('--hdmi',action='store_true')
+    p.add_argument('--scale',type=int,choices=range(1,17),default=1)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
@@ -531,8 +605,14 @@ def main():
     sub.add_parser('console',help='two-way session: typed keys and arrows go to the OS as input, OS serial output shows live, LOG lines dimmed')
     p=sub.add_parser('tone',help='TONE <hz> <ms>: quiet test tone through the mixer (HDMI audio)');p.add_argument('hz',type=int);p.add_argument('ms',type=int)
     sub.add_parser('audio',help='AUDIO: backend state, drain rate, underruns')
-    a=ap.parse_args();port=Serial(a.port)
+    a=ap.parse_args()
+    if a.action=='watch':
+        if not math.isfinite(a.every) or a.every<=0: ap.error('--every must be finite and greater than zero')
+        if a.count is not None and a.count<1: ap.error('--count must be at least 1')
+        if a.scale!=1 and not a.hdmi: ap.error('--scale requires --hdmi')
+    port=Serial(a.port)
     try:
+        if a.action=='watch': return watch_screens(port,a.out,a.every,a.count,a.eink,a.hdmi,a.scale)
         if a.action=='get': return get_file(port,a.path,a.out)
         if a.action=='ls': return list_card(port,a.path)
         if a.action=='fault': return read_fault(port,a.elf)
