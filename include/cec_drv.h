@@ -36,7 +36,7 @@ struct cec_drv {
  * start claiming a logical address for physical address phys (0xFFFF: none, stays silent).
  * Set rd, wr, key and ctx first. */
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms);
-/* One pass: expire a stuck send, read the event flag, handle a received frame or a finished
- * send, release held keys, and start the next queued frame. */
+/* One pass: service a pending event before expiring a stuck send, release held
+ * keys, and start the next queued frame after any cancellation hold-off. */
 void cec_drv_task(struct cec_drv *d, uint32_t now_ms);
 #endif

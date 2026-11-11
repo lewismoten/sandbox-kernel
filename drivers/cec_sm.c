@@ -35,7 +35,7 @@ void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
 
 void cec_sm_tick(struct cec_sm *s, uint32_t now_ms) {
     s->now_ms = now_ms;
-    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, s->tx_id, CEC_SM_TX_ERROR);
+    if (s->inflight && (uint32_t)(now_ms - s->tx_start_ms) >= CEC_SM_TX_TIMEOUT_MS) cec_sm_tx_done(s, s->tx_id, CEC_SM_TX_TIMEOUT);
 }
 
 int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id) {
@@ -58,7 +58,7 @@ void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result resu
             s->poll_retries = 0;
             if (++s->cand >= 3u) { s->state = CEC_SM_NO_ADDRESS; s->laddr = CEC_ADDR_BROADCAST; }
             else poll_next(s);
-        } else if (result == CEC_SM_TX_NACK) {       /* explicit NACK: free, claim it */
+        } else if (result == CEC_SM_TX_NACK || result == CEC_SM_TX_TIMEOUT) { /* no ACK: free */
             struct cec_msg m;
             s->laddr = cands[s->cand]; s->state = CEC_SM_CLAIMED;
             report(s);

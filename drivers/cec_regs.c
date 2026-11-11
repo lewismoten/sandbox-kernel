@@ -5,6 +5,8 @@
 #define N(us) ((us) / CEC_TICK_US)
 
 int cec_regs_timing(uint32_t hsm_hz, struct cec_timing *t) {
+    /* Match vc4: integer HSM / 40000, with no minus-one encoding.
+     * 163682864 Hz gives 4092 (about 40000.7 Hz after division). */
     uint32_t div = hsm_hz / CEC_CLOCK_HZ;
     if (!hsm_hz || div == 0 || div > CEC_C1_DIV_MASK) return -1;
     t->div = div;

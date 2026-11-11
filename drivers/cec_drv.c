@@ -118,7 +118,7 @@ static void claimed_check(struct cec_drv *d, uint32_t now) {
         n = put_str(l, 0, "claimed logical address "); n = put_dec(l, n, d->sm.laddr); l[n] = 0; say(d, now, l);
         if (!d->announced) { d->announced = 1; cec_sm_announce(&d->sm); say(d, now, "announcing: Image View On, Active Source"); }
     } else if (d->sm.state == CEC_SM_NO_ADDRESS) {
-        say(d, now, "no logical address claimed (all polls answered or unclear); silent");
+        say(d, now, "no logical address claimed (all polls acked or transport error); silent");
     }
 }
 
@@ -139,7 +139,8 @@ static void tx_done(struct cec_drv *d, uint32_t now) {
     d->tx_busy = 0; d->tx_frames++;
     if (good) d->tx_good++; else d->tx_bad++;
     char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, poll ? "poll " : "TX ");
-    n = put_dec(l, n, cec_initiator(&d->tx)); l[n++] = '>'; n = put_dec(l, n, cec_dest(&d->tx));
+    if (!poll) { n = put_dec(l, n, cec_initiator(&d->tx)); l[n++] = '>'; }
+    n = put_dec(l, n, cec_dest(&d->tx));
     if (d->tx.len > 1) { l[n++] = ' '; n = put_hex(l, n, d->tx.b + 1, (unsigned)d->tx.len - 1u); }
     n = put_str(l, n, good ? " ack" : " nack"); l[n] = 0; say(d, now, l);
     /* A broadcast is acknowledged by silence, so the hardware's flag says little: never retry one. */
@@ -191,12 +192,27 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
     if (d->sm.state == CEC_SM_NO_ADDRESS && d->last_state == CEC_SM_NO_ADDRESS && !d->sm.inflight && !d->tx_busy) {
         emit(d, ev, cec_keys_tick(&d->keys, now, ev)); return;       /* nothing to run */
     }
+    /* Consume a latched ACK/NACK before expiring the transfer: main-loop work can
+     * delay servicing an event past the software deadline. */
+    if (d->rd(d->ctx, CEC_R_CPU_STATUS) & CEC_CPU_CEC) {
+        uint32_t c5 = d->rd(d->ctx, CEC_R_CNTRL_5);
+        if (c5 & CEC_C5_RX_CEC_INT) rx_frame(d, now);
+        else if (d->tx_busy) tx_done(d, now);
+        else { d->spurious++; say_regs(d, now, "idle event;"); }
+        d->wr(d->ctx, CEC_R_CPU_CLEAR, CEC_CPU_CEC);
+    }
     cec_sm_tick(&d->sm, now);
     if (d->tx_busy && !d->sm.inflight) {                            /* the core gave up on it: cancel the hardware */
         d->wr(d->ctx, CEC_R_CNTRL_1, d->rd(d->ctx, CEC_R_CNTRL_1) & ~CEC_C1_START_XMIT);
         uint32_t c5 = d->rd(d->ctx, CEC_R_CNTRL_5);
         d->wr(d->ctx, CEC_R_CNTRL_5, c5 | CEC_C5_TX_SW_RESET); d->wr(d->ctx, CEC_R_CNTRL_5, c5 & ~CEC_C5_TX_SW_RESET);
-        say_regs(d, now, "send timed out;"); d->tx_busy = 0; d->hold = 1; d->hold_until_ms = now + CEC_DRV_HOLD_MS; say(d, now, "transmitter reset");
+        d->wr(d->ctx, CEC_R_CPU_CLEAR, CEC_CPU_CEC);
+        if (cec_is_poll(&d->tx)) {
+            char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, "poll ");
+            n = put_dec(l, n, cec_dest(&d->tx)); n = put_str(l, n, " timeout"); l[n] = 0; say(d, now, l);
+        } else say_regs(d, now, "send timed out;");
+        d->tx_busy = 0; d->hold = 1; d->hold_until_ms = now + CEC_DRV_HOLD_MS;
+        if (!cec_is_poll(&d->tx)) say(d, now, "transmitter reset");
         claimed_check(d, now);
     }
     check_regs(d, now);
@@ -205,16 +221,9 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         n = put_str(l, n, " rx "); n = put_dec(l, n, d->rx_frames); l[n] = 0; say(d, now, l); d->hb_tx = d->tx_frames; d->hb_rx = d->rx_frames;
     }
     if ((uint32_t)(now - d->alive_ms) >= CEC_DRV_ALIVE_MS) d->alive_ms = now;
-    if (d->rd(d->ctx, CEC_R_CPU_STATUS) & CEC_CPU_CEC) {
-        uint32_t c5 = d->rd(d->ctx, CEC_R_CNTRL_5);
-        if (c5 & CEC_C5_RX_CEC_INT) rx_frame(d, now);
-        else if (d->tx_busy) tx_done(d, now);
-        else { d->spurious++; say_regs(d, now, "idle event;"); }
-        d->wr(d->ctx, CEC_R_CPU_CLEAR, CEC_CPU_CEC);
-    }
     emit(d, ev, cec_keys_tick(&d->keys, now, ev));
     if (d->hold && (int32_t)(now - d->hold_until_ms) >= 0) d->hold = 0;
     if (!d->tx_busy && !d->hold && cec_sm_next_tx(&d->sm, &d->tx, &d->tx_id)) {
-        d->tx_busy = 1; d->diag = 0; send_frame(d, &d->tx); say_regs(d, now, "sent;");
+        d->tx_busy = 1; d->diag = 0; send_frame(d, &d->tx); if (!cec_is_poll(&d->tx)) say_regs(d, now, "sent;");
     }
 }
