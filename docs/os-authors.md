@@ -116,7 +116,7 @@ In order:
 1. The first line of `/OS/AUTORUN.TXT`, if it names a program that exists. The name is
    1 to 8 characters of `A-Z 0-9 _ -` followed by `.ELF`; case is folded, and blanks and
    a trailing CR are ignored. Anything else on line 1 makes it invalid. The kernel ignores later
-   lines; a program may read them (JS.ELF reads line 2, see section 8). If `AUTORUN.TXT` exists but its first line is invalid or names an
+   lines; a program may read them (JS.ELF reads line 2, see section 7). If `AUTORUN.TXT` exists but its first line is invalid or names an
    unavailable program, the choice is logged ("ignored") and skipped. A missing
    `AUTORUN.TXT` is skipped without a log (`core/autostart.c:33`).
 2. `/OS/GMOS.ELF`, if present.
