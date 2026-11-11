@@ -10,7 +10,8 @@ struct uframe {uint32_t r[13],sp,lr,pc,cpsr;}; /* layout used by arch/armv6/star
 enum {OS_SVC=1,OS_IRQ=2,OS_UNDEF=3,OS_PABT=4,OS_DABT=5};
 /* Heartbeat (docs/design.md): the first health call is the readiness report
    and must come within 10 s of the start; after it, health calls at least
-   every 2 s. Missing either is a fault. Other calls do not count. */
+   every 2 s. Measured host USB service time is excluded from both budgets.
+   Missing either is a fault. Other calls do not count. */
 #define OS_READY_US 10000000u
 #define OS_HEARTBEAT_US 2000000u
 #define OS_FAULT_WINDOW_US 60000000ull
@@ -32,6 +33,9 @@ void os_request_stop(void);
 bool os_stop_pending(void);
 int os_stop_result(void);
 void os_handle(unsigned reason,uint32_t fsr,uint32_t far); /* one return from User mode */
+/* Exclude a measured kernel USB interval from readiness/heartbeat deadlines.
+   Does not change the wall clock or sleep_until deadlines. */
+void os_usb_work(uint64_t begin_us,uint64_t end_us);
 void os_task(void); /* board: run one slice, then handle why it ended */
 bool os_asleep(void); /* true while the program waits in sleep_until (checks the heartbeat) */
 /* Restart policy: after a fault (or nonzero exit), true means restart once;

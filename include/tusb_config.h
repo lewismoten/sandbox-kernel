@@ -7,6 +7,8 @@
 #define CFG_TUSB_RHPORT0_MODE (OPT_MODE_HOST | OPT_MODE_HIGH_SPEED)
 #define CFG_TUD_ENABLED 0
 #define CFG_TUH_ENABLED 1
+/* Yield to OS/audio/panel even when USB IRQs keep refilling the event queue. */
+#define CFG_TUH_TASK_EVENTS_PER_RUN 4
 #define CFG_TUH_MAX_SPEED OPT_MODE_HIGH_SPEED
 #define CFG_TUH_DWC2_DMA_ENABLE 0
 #define CFG_TUH_DWC2_SLAVE_ENABLE 1

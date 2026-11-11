@@ -2,6 +2,8 @@
  * drivers/usb.c: the single OTG port is a host, so there is no Mac link, no CDC and no
  * protocol traffic. A HID boot keyboard feeds the input queue through core/usbkbd.c. */
 #include "kernel.h"
+#include "clock.h"
+#include "os.h"
 #include "tusb.h"
 #include "usbkbd.h"
 #include "usblog.h"
@@ -117,7 +119,7 @@ void usb_log(const char *s) {(void)s;}
 /* A device that was read but never mounted within 4 s: say so once (TinyUSB drops a failed enumeration silently). */
 static void watchdog(void) {
  for(unsigned i=0;i<8;i++) if(dv[i].d&&!dv[i].mounted&&!dv[i].warned&&expired(dv[i].t,4000000)) {
-  dv[i].warned=true;char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration incomplete (see CTRL/retry lines)");lg(l);
+  dv[i].warned=true;lg("USB stall absorbed: enumeration pending; kernel loop continues");char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration incomplete (see CTRL/retry lines)");lg(l);
  }
 }
 void tuh_control_retry_cb(uint8_t d,const tusb_control_request_t *r,xfer_result_t result,unsigned retry,unsigned delay_ms) {
@@ -137,7 +139,20 @@ void tuh_hub_retry_cb(uint8_t hub,uint8_t port,unsigned retry,const char *outcom
 void tuh_hub_poll_retry_cb(uint8_t hub,unsigned retry,unsigned delay_ms,const char *outcome) {
  char line[USBLOG_LINE];usblog_fmt_poll_retry(line,hub,retry,delay_ms,outcome);lg(line);
 }
-void usb_task(void) {if(initialized){tuh_task();watchdog();}}
+void usb_task(void) {
+ if(!initialized) return;
+ uint64_t begin=clock_us();
+ /* Never wait for events; the host-only event budget also bounds a busy bus. */
+ tuh_task_ext(0,false);
+ watchdog();
+ uint64_t end=clock_us();
+ os_usb_work(begin,end);
+ /* Once per boot: retain evidence if a controller/callback still takes too long. */
+ static bool warned;
+ if(end-begin>=2000&&!warned) {
+  warned=true;lg("USB stall absorbed: slow host pass excluded from OS heartbeat");
+ }
+}
 /* The counters of attach/remove events, for the closing line of USB.TXT. */
 void usb_host_events(uint32_t *attach,uint32_t *remove) {*attach=ev_attach;*remove=ev_remove;}
 void service_io(void) {usb_task();protocol_task();}

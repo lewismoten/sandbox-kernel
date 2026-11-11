@@ -28,7 +28,7 @@ static int stop_result;
 void os_request_stop(void) {stop_requested=true;}
 bool os_stop_pending(void) {return stop_requested;}
 int os_stop_result(void) {return stop_result;}
-static uint64_t start_us,health_us; static uint32_t healths; static bool ready;
+static uint64_t start_us,ready_us,health_us; static uint32_t healths; static bool ready;
 static uint8_t file[ELF_MAX_FILE] __attribute__((aligned(8)));
 bool os_running(void) {return running;}
 bool os_can_start(void) {return !running && !stop_requested && owner.state==AA_IDLE;}
@@ -117,7 +117,7 @@ int os_start(const char *path) {
  fb_program_mode(); /* every program starts in 640x480x32, whatever the screen showed */
  if(stop_requested) return reject("STOP DURING LAUNCH",-16);
  if((r=aa_run(&owner))) return reject("APP STATE",r);
- start_us=health_us=now();healths=0;ready=false;running=true;os_starts++;
+ start_us=ready_us=health_us=now();healths=0;ready=false;running=true;os_starts++;
  char line[80],*p=line; append(&p,"OS start ");append(&p,os_path);append(&p," entry ");append_hex(&p,plan.entry);append(&p," pages ");append_n(&p,plan.bytes/4096);log_line(line);
  return 0;
 }
@@ -163,13 +163,20 @@ static void fault(const char *kind,uint32_t fsr,uint32_t far) {
  append(&p," fsr ");append_hex(&p,fsr);append(&p," addr ");append_hex(&p,far);log_line(line);
  stop(true,kind,0);
 }
+/* Only the overlap with this OS's current deadlines belongs to kernel USB.
+   A health call or a new launch inside the interval must not gain extra time. */
+void os_usb_work(uint64_t begin,uint64_t end) {
+ if(!running||end<=begin) return;
+ if(end>health_us) health_us+=end-(begin>health_us?begin:health_us);
+ if(end>ready_us) ready_us+=end-(begin>ready_us?begin:ready_us);
+}
 /* The heartbeat rules; true if the program was stopped for missing one. */
 static bool overdue(uint64_t t) {
  if(sys_healths!=healths) {
   healths=sys_healths;health_us=t;
   if(!ready) {ready=true;char line[80],*p=line;append(&p,"OS ready ");append(&p,os_path);append(&p," after ");append_n(&p,(uint32_t)(t-start_us)/1000u);append(&p," ms");log_line(line);}
  }
- if(!ready&&t-start_us>=OS_READY_US) {fault("no readiness report in 10 s",0,os_frame.pc);return true;}
+ if(!ready&&t-ready_us>=OS_READY_US) {fault("no readiness report in 10 s",0,os_frame.pc);return true;}
  if(ready&&t-health_us>=OS_HEARTBEAT_US) {fault("heartbeat missed 2 s",0,os_frame.pc);return true;}
  return false;
 }
@@ -185,7 +192,7 @@ void os_handle(unsigned reason,uint32_t fsr,uint32_t far) {
    int32_t r=sys_call(os_frame.r);
    if(!running) return; /* arena commit quarantine revoked the saved frame */
    if(r==SYS_EXITED) {if(sys_exit_status) stop(true,NULL,sys_exit_status); else stop(false,NULL,0);return;}
-   os_frame.r[0]=(uint32_t)r;overdue(t);return;
+   os_frame.r[0]=(uint32_t)r;overdue(now());return;
   }
   case OS_IRQ:
    overdue(t);return;
@@ -230,7 +237,7 @@ void os_task(void) {
   autostart_cancel();os_policy_state=(struct os_policy){0};
   sys_reset();
   bool present=input_present();input_remove();if(present) input_add();
-  ready=false;healths=0;start_us=health_us=0;
+  ready=false;healths=0;start_us=ready_us=health_us=0;
   fb_home();
  }
  if(owner.state==AA_QUIESCING) {

@@ -148,7 +148,28 @@ int main(void) {
  raw_us=500;assert(host_clock_from_micros()==before_wrap+1);
  raw_us=1500;assert(host_clock_from_micros()==before_wrap+2);
 #endif
- reset();start();assert(setups==1);
+ reset();
+ // A controller can accept SETUP and never complete it for four seconds.
+ // Every main-loop pass still returns so OS ticks/health calls can run.
+ start();unsigned os_ticks=0, stalled_at=now;
+ for(unsigned ms=0;ms<4000;ms++) {
+  now=stalled_at+ms;
+  tuh_task_ext(0,false);
+  assert(now==stalled_at+ms&&callbacks==0&&setups==1);
+  os_ticks++;
+ }
+ assert(os_ticks==4000);
+ now=stalled_at+4000;finish();assert(callbacks==1);
+ callbacks=0;setups=0;
+ // A burst must leave events for later passes, rather than draining forever.
+ for(unsigned i=0;i<8;i++) {
+  hcd_event_t event={.rhport=0,.event_id=HCD_EVENT_XFER_COMPLETE,.dev_addr=1,
+                   .xfer_complete={.ep_addr=0,.result=XFER_RESULT_SUCCESS}};
+  hcd_event_handler(&event,false);
+ }
+ tuh_task_ext(0,false);assert(!osal_queue_empty(_usbh_q));
+ tuh_task_ext(0,false);assert(osal_queue_empty(_usbh_q));
+ start();assert(setups==1);
  for(unsigned n=1;n<=3;n++) {
   assert(usbh_control_xfer_cb(1,0,XFER_RESULT_FAILED,0));
   unsigned before=setups;assert(callbacks==0);

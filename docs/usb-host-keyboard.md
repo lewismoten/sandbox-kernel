@@ -279,6 +279,25 @@ the stack closes its endpoints and releases its address and keys, waits 200 ms (
 A physical reconnect starts a fresh retry budget. Unplugging the hub clears its queued
 changes and recovery state. These delays do not block keyboard polling or USB events.
 
+The host adapter calls `tuh_task_ext(0, false)` and processes at most four USB
+events per pass, so a busy hub cannot drain events indefinitely before the next
+OS slice. Enumeration and retry deadlines remain asynchronous. The supervisor
+excludes measured time inside `usb_task()` from OS readiness and heartbeat
+budgets, including USB serviced during a syscall; wall-clock sleep deadlines
+and fault restart windows are unchanged. A pass taking at least 2 ms adds one
+`USB stall absorbed: slow host pass excluded from OS heartbeat` line per boot.
+The four-second incomplete-enumeration watchdog also records
+`USB stall absorbed: enumeration pending; kernel loop continues` once per device.
+These lines use the existing USB.TXT buffering and save policy (disk writes are
+deferred while an OS is running). This protects against false heartbeat faults;
+it does not establish a hard latency bound for the DWC2 register/IRQ paths.
+
+`tests/test_usbhost_heartbeat.py` exercises the actual task wrapper and supervisor
+with a simulated four-second host call, continued ticks/health reports, readiness
+expiry, the remaining heartbeat budget, and unchanged sleep deadlines. The real
+stack retry test also holds an accepted control request pending for four seconds
+and checks 4,000 returning task passes plus bounded event-burst draining.
+
 A refused hub interrupt-IN submission gets at most three retries after 20/40/80 ms
 (four submissions total). Deadlines use elapsed time, not host-task call counts;
 even a late task schedules the next delay from the actual refusal, without catch-up
