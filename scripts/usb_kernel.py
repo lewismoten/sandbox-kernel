@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 """Mac/POSIX stdlib CDC sender and log tail. Use /dev/cu.usbmodem* on macOS."""
 import argparse, errno, hashlib, os, pathlib, re, select, struct, sys, termios, time, tty, zlib
+import shutil, subprocess
 from image import validate
 
 class Serial:
@@ -382,17 +383,24 @@ def get_header(line,offset,previous=None):
     if previous is not None and meta!=previous: raise ValueError('get transfer changed')
     return meta,n,crc
 
-def get_file(port,path,out=None):
-    path=card_path(path);print(handshake(port),file=sys.stderr)
+def read_card_file(port,path,limit=GET_MAX):
+    """GET bytes after INFO; only an initial open refusal means unavailable."""
+    path=card_path(path)
     meta=None;data=bytearray();offset=0;deadline=time.monotonic()+300
     while meta is None or offset<meta[1]:
         if time.monotonic()>deadline: raise TimeoutError('get transfer')
         line=card_reply(port,f'GET {path} {meta[0] if meta else 0} {offset}')
+        if meta is None and line=='ERR get open': raise FileNotFoundError(path)
         meta,n,crc=get_header(line,offset,meta)
-        if out is None and meta[1]>65536: raise ValueError('stdout limited to 64 KiB; supply an out-file')
+        if meta[1]>limit: raise ValueError('file exceeds size limit; supply an out-file for files over 64 KiB')
         block=port.exact(n)
         if len(block)!=n or zlib.crc32(block)!=crc: raise ValueError('get CRC/length mismatch; reconnect and retry')
         data.extend(block);offset+=n;time.sleep(0.002)
+    return bytes(data)
+
+def get_file(port,path,out=None):
+    print(handshake(port),file=sys.stderr)
+    data=read_card_file(port,path,GET_MAX if out is not None else 65536)
     if out is not None:
         pathlib.Path(out).write_bytes(data);print(f'Wrote {out} ({len(data)} bytes)',file=sys.stderr)
     else:
@@ -400,6 +408,86 @@ def get_file(port,path,out=None):
         if any(ord(c)<32 and c not in '\n\r\t' or 0x7f<=ord(c)<0xa0 for c in text):
             raise ValueError('binary file; supply an out-file')
         sys.stdout.write(text)
+    return 0
+
+KERNEL_LOG_DIR='/OS/SAVES/KERNEL/'
+
+def decode_fsr(fsr):
+    """ARM1176 short-descriptor fault status: FS[4] is register bit 10."""
+    status=(fsr&15)|((fsr>>6)&16)
+    names={0:'no fault status',1:'alignment fault',2:'debug event',
+           3:'access flag fault (section)',4:'instruction cache maintenance fault',
+           5:'translation fault (section)',6:'access flag fault (page)',
+           7:'translation fault (page)',8:'synchronous external abort',
+           9:'domain fault (section)',11:'domain fault (page)',
+           12:'external abort on translation (section)',13:'permission fault (section)',
+           14:'external abort on translation (page)',15:'permission fault (page)',
+           22:'asynchronous external abort'}
+    return names.get(status,f'unknown fault status 0x{status:02x}')
+
+def parse_fault(text):
+    lines=text.splitlines()
+    number=r'(?:0x[0-9a-fA-F]+|[0-9]+)'
+    match=re.fullmatch(r'OS fault (\S+) (.+?) pc ('+number+r')'
+                       r'(?: lr ('+number+r'))? fsr ('+number+r') addr ('+number+r')'
+                       r' up ([0-9]+) ms calls ([0-9]+) presents ([0-9]+) starts ([0-9]+)',
+                       lines[0] if lines else '')
+    if not match: raise ValueError('malformed FAULT.TXT header')
+    program,kind,pc,lr,fsr,address,run,calls,presents,starts=match.groups()
+    def value(s): return int(s,16 if s.lower().startswith('0x') else 10)
+    return dict(program=program,kind=kind,pc=value(pc),lr=value(lr) if lr else None,
+                fsr=value(fsr),address=value(address),run=int(run),calls=int(calls),
+                presents=int(presents),starts=int(starts),
+                logs=[line[2:] if line.startswith('> ') else line[1:] for line in lines[1:] if line.startswith('>')])
+
+def fault_symbols(record,elf):
+    """Run an available symbol tool without a shell, keeping the raw registers visible."""
+    tool=next((path for name in ('arm-none-eabi-addr2line','llvm-addr2line','llvm-symbolizer')
+               if (path:=shutil.which(name))),None)
+    if not tool:
+        print('Symbol resolution unavailable: no arm-none-eabi-addr2line, llvm-addr2line or llvm-symbolizer on PATH')
+        return
+    if not pathlib.Path(elf).is_file(): raise ValueError(f'ELF file not found: {elf}')
+    for name in ('pc','lr'):
+        address=record[name]
+        if address is None: continue
+        args=([tool,'--obj='+str(elf),'--functions=linkage','--demangle','--no-inlines']
+              if pathlib.Path(tool).name=='llvm-symbolizer' else [tool,'-f','-C','-e',str(elf)])
+        try:
+            result=subprocess.run([*args,hex(address)],capture_output=True,text=True,timeout=10,check=True)
+            lines=result.stdout.strip().splitlines()
+            print(f'{name.upper()} symbol: '+(':'.join(lines) if lines else 'unresolved'))
+        except (OSError,subprocess.SubprocessError) as exc:
+            print(f'{name.upper()} symbol resolution failed: {exc}',file=sys.stderr)
+
+def read_fault(port,elf=None):
+    print(handshake(port),file=sys.stderr)
+    try: data=read_card_file(port,KERNEL_LOG_DIR+'FAULT.TXT',65536)
+    except FileNotFoundError:
+        print('no fault recorded');return 0
+    record=parse_fault(data.decode('utf-8'))
+    print(f'Program: {record["program"]}\nKind: {record["kind"]}')
+    print(f'PC: 0x{record["pc"]:08x}')
+    print(f'LR: 0x{record["lr"]:08x}' if record['lr'] is not None else 'LR: unavailable (not saved in this record)')
+    print(f'FSR: 0x{record["fsr"]:08x} ({decode_fsr(record["fsr"])})')
+    print(f'Address: 0x{record["address"]:08x}\nRun: {record["run"]} ms\nCalls: {record["calls"]}'
+          f'\nPresents: {record["presents"]}\nStart count: {record["starts"]}')
+    print('Last OS log lines:')
+    for line in record['logs']: print('  '+line)
+    if not record['logs']: print('  (none)')
+    if elf is not None: fault_symbols(record,elf)
+    return 0
+
+def collect_logs(port,out=None):
+    print(handshake(port),file=sys.stderr)
+    folder=pathlib.Path(out) if out is not None else pathlib.Path(time.strftime('kernel-logs-%Y%m%d-%H%M%S'))
+    folder.mkdir(parents=True,exist_ok=True)
+    for name in ('BOOT.TXT','USB.TXT','CEC.TXT','FAULT.TXT'):
+        try: data=read_card_file(port,KERNEL_LOG_DIR+name)
+        except FileNotFoundError:
+            print(f'{name}: unavailable (GET open refused)',file=sys.stderr);continue
+        path=folder/name;path.write_bytes(data)
+        print(f'Wrote {path} ({len(data)} bytes)')
     return 0
 
 def list_card(port,path):
@@ -421,6 +509,8 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
     p=sub.add_parser('get',help='read an existing card file; small UTF-8 text defaults to stdout');p.add_argument('path');p.add_argument('out',nargs='?',type=pathlib.Path)
     p=sub.add_parser('ls',help='list card directory short aliases');p.add_argument('path')
+    p=sub.add_parser('fault',help='explain the saved fault record');p.add_argument('--elf',type=pathlib.Path)
+    p=sub.add_parser('logs',help='collect BOOT, USB, CEC and FAULT records');p.add_argument('--out',type=pathlib.Path)
     p=sub.add_parser('einkshot',help='save the last sent e-ink image as PNG');p.add_argument('out',type=pathlib.Path)
     p=sub.add_parser('fbshot',help='save the live HDMI framebuffer as RGB PNG');p.add_argument('out',type=pathlib.Path);p.add_argument('--scale',type=int,default=1)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
@@ -445,6 +535,8 @@ def main():
     try:
         if a.action=='get': return get_file(port,a.path,a.out)
         if a.action=='ls': return list_card(port,a.path)
+        if a.action=='fault': return read_fault(port,a.elf)
+        if a.action=='logs': return collect_logs(port,a.out)
         if a.action in ('einkshot','fbshot'): return screen_capture(port,a.out,a.action=='einkshot',getattr(a,'scale',1))
         if a.action=='install-host': return send_kernel(port,a.kernel,companion=True)
         if a.action=='send': return send_kernel(port,a.kernel)
