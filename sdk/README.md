@@ -1,8 +1,8 @@
 # sandbox-kernel SDK
 
-Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is the
-**draft 1.0** described in [docs/design.md](../docs/design.md#system-call-abi-draft-version-10);
-it may still change before 1.0 is frozen. New to this? Read the
+Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is major 1, minor 10 (minors only add calls). The original
+**draft 1.0** is in [docs/design.md](../docs/design.md#system-call-abi-draft-version-10);
+the calls added since are in the guide below. New to this? Read the
 [OS author's guide](../docs/os-authors.md) first: boot, the program rules, and a table of
 what each ABI minor added (the headers are now at minor 10).
 

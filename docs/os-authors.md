@@ -27,9 +27,9 @@ the screen, input, clock and files through those calls, so a bug in it cannot ta
 kernel down. If the program faults, exits with a nonzero status, or stops sending its
 heartbeat, the kernel takes the screen back, cleans up, and restarts it or falls back to a
 diagnostics program (see [the fault budget](#the-fault-and-restart-budget)). The kernel
-keeps its USB command console running in the default device build, so you can replace a
-bad program from a computer. The separate host keyboard build has no USB recovery link
-(see section 4).
+keeps its USB command console running in the default build (`USB_ROLE=device`), so you can
+replace a bad program from a computer. The separate host keyboard build (`USB_ROLE=host`)
+has no USB recovery link (see section 4).
 
 The first OS written for it is Game-Maker OS (`GMOS.ELF`, in the separate
 `gamemaker-os` repository). The kernel is not tied to it: any ELF that follows section 3
@@ -73,10 +73,12 @@ been used, and the SHA-256 of each (`docs/m0.md`, the control record table).
 
 - A new kernel is written to the inactive slot over USB (`PUT2`) and marked pending.
 - On the next boot the selector checks the slot's hash and records that the trial was
-  used *before* entering it. If the trial dies, the next boot picks the previous
-  confirmed slot.
-- The default device runtime confirms itself after **30 seconds** of healthy timer, USB and storage
-  progress (`core/main.c`, "Trial confirmed after 30 seconds").
+  used *before* entering it. If the trial does not confirm (a fault or a power cut before it
+  confirms), the next boot picks the previous confirmed slot.
+- The default device runtime confirms itself after **30 seconds** in which, every second, storage and the
+  update slot are ready, USB and the control records pass their health checks and the timer
+  keeps advancing (`core/main.c`, "Trial confirmed after 30 seconds"). A failed check stops
+  confirmation and shows an error.
 - Each change writes the older of the two control files, so one valid copy always
   survives. The control files are preallocated, so the kernel never allocates clusters
   for them.
@@ -113,8 +115,8 @@ In order:
 
 1. The first line of `/OS/AUTORUN.TXT`, if it names a program that exists. The name is
    1 to 8 characters of `A-Z 0-9 _ -` followed by `.ELF`; case is folded, and blanks and
-   a trailing CR are ignored. Anything else on line 1 makes it invalid. Later lines are
-   free for notes. If `AUTORUN.TXT` exists but its first line is invalid or names an
+   a trailing CR are ignored. Anything else on line 1 makes it invalid. The kernel ignores later
+   lines; a program may read them (JS.ELF reads line 2, see section 8). If `AUTORUN.TXT` exists but its first line is invalid or names an
    unavailable program, the choice is logged ("ignored") and skipped. A missing
    `AUTORUN.TXT` is skipped without a log (`core/autostart.c:33`).
 2. `/OS/GMOS.ELF`, if present.
@@ -132,12 +134,13 @@ missing or bad, the kernel keeps its recovery console.
 
 ### The fault and restart budget
 
-`core/os.c` (`os_policy_restart`) allows **one restart per 60 seconds**. These count as a
+`core/os.c` (`os_policy_restart`) restarts a program on the first fault in a 60 s window and gives up on the second (below). These count as a
 fault: a CPU abort or undefined instruction, no readiness report in 10 s, a missed
 heartbeat (2 s), or an exit with a **nonzero** status. After a fault:
 
 - first fault in a 60 s window: the program is cleaned up and restarted;
-- a second fault inside 60 s: the kernel gives up on it. If it was the autostarted
+- a second fault inside 60 s of the first: the kernel gives up on it (the window starts at
+  the first fault and is fixed, not sliding; the count then starts over). If it was the autostarted
   program, the kernel starts `/OS/DIAG.ELF` and logs
   `OS fell back to DIAG.ELF after repeated faults` (also the e-ink `ERR:` line). If it was
   DIAG itself, or a program you started with USB `RUN`, you get the recovery console.
@@ -254,7 +257,8 @@ it keeps servicing health after the page is accepted. The SDK wrappers are in
 - **The kernel wins:** when your program exits, faults or is stopped, the panel goes back to
   the kernel's status screen. If a kernel error appears while your page is up, the panel shows
   the kernel screen at its next update; your next page returns with a small black square in
-  the top-right corner (8x8) for as long as `ERR:` is not `none`. Leave that corner white.
+  the top-right corner (8x8) for as long as `ERR:` is not `none`. The kernel draws it over
+  your page (`core/render.c`), so you cannot hide it; keep that corner clear so it stays visible.
 
 The device is singleton (`EBUSY` on a second open), write-only (`EACCES` for other
 access), and absent/disabled panels return `ENODEV` (`core/sys.c:109`). Class 4 requests
@@ -360,7 +364,7 @@ above 21 return `ENOSYS` before record validation (`core/sys.c:394`).
 ### The heartbeat
 
 Call `sbx_health` (call 17) to say you are alive. The first call is the **readiness
-report** and must come **within 10 seconds** of the start; after that, one at least every
+report** and must come **within 10 seconds** of the kernel starting your program; after that, one at least every
 **2 seconds** (`OS_READY_US`, `OS_HEARTBEAT_US` in `include/os.h`). Only health calls
 count. Miss either deadline and the program is stopped as a fault. The record carries the
 startup `generation` and a `sequence` that strictly increases from 1. `sbx_sleep_until`
@@ -564,7 +568,8 @@ no user unlink or mkdir calls (`core/sys.c:126`, `core/sys.c:205`, `core/sys.c:4
 ## 6. Developing over USB
 
 Plug the Pi's USB data port into your computer. It appears as a serial device
-(`/dev/cu.usbmodem*` on macOS). `scripts/usb_kernel.py <port> <command>` (Python 3
+(`/dev/cu.usbmodem*` on macOS; on Linux usually `/dev/ttyACM0`, untested). The script uses
+`termios`, so it needs a POSIX system; Windows is not supported. `scripts/usb_kernel.py <port> <command>` (Python 3
 standard library only) talks to it. Each command runs an `INFO` handshake first.
 
 | Command | What it does |
@@ -592,7 +597,7 @@ it still reads `kernel,no-os` when updates are ready (it never meant "no OS") an
 otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
 
 `INFO 2` is protocol version 2. Its literal `ABI=1.0` is stale and does **not** identify
-the app ABI: startup reports the current major/minor (1.10 on this branch). Gate app
+the app ABI: startup reports the current major/minor (1.10 at this writing; `SBX_ABI_MINOR` in `sdk/include/sandbox/abi.h` is the source). Gate app
 features on startup, never that INFO field (`core/protocol.c:135`, `core/os.c:111`,
 `include/abi.h:8`). INFO also reports `profile=zero-w-armv6`, `capacity=2097152`,
 `install_timeout=120`, and `serial=usb|none` (`core/protocol.c:143`).
@@ -643,7 +648,7 @@ Check replies and resolve uncertain update commits with INFO (`core/protocol.c:6
 Your program can send text to the host and receive bytes from it over the same USB link that
 carries the synthetic keyboard, with `/dev/serial0` (ABI 1.10). Open it nonblocking, `write` lines,
 and `read` until you get `EAGAIN`. Output with no listener, or past the 512-byte buffer, is dropped
-and counted, never blocks you. On the Mac, `usb_kernel.py <port> console` shows your output as it
+and counted, never blocks you. `usb_kernel.py <port> console` shows your output as it
 arrives (kernel `LOG` lines dimmed) and sends what you type, with arrows, Enter, Space, Q and Esc
 also pressed as keys. Wire format, counters and limits are in `docs/serial.md`. The core is
 `uint64_t fd; sbx_open("/dev/serial0", 12, 2 | 0x100, &fd);` (read and write, nonblocking), then a write call with `"hello\n"` and its length.
