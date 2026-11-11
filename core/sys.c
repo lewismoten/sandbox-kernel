@@ -3,6 +3,7 @@
  * zero on entry; addresses are u64 with zero upper bits; transfers are at
  * most 1 MiB. Handles carry a generation, so a closed id is EBADF forever. */
 #include "kernel.h"
+#include "power.h"
 #include "serial.h"
 #include "clock.h"
 #include "eink.h"
@@ -78,6 +79,7 @@ static void release(unsigned i) {
 }
 static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
 void sys_reset(void) {
+ power_reset(clock_us());
  for(unsigned i=0;i<SYS_HANDLES;i++) release(i);
  eink_reset(); /* the kernel has the panel back, whatever ended the program */
  surface_mapped=false;surface_bytes=0;sys_presents=0;sys_healths=0;sys_health_seq=0;sys_wake_us=0;
@@ -397,11 +399,11 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[22]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48};
+static const uint32_t sizes[24]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48,[22]=40,[23]=32};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
- if(call>21||!sizes[call]) return -ENOSYS;
+ if(call>23||!sizes[call]) return -ENOSYS;
  if(reg[3]|reg[4]|reg[5]|reg[6]) return -EINVAL;
  if(reg[2]!=K_ABI_MAJOR) return -93;
  if(bytes<16||bytes>4096||bytes%8) return -EINVAL;
@@ -419,7 +421,7 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
   case 21: if(((struct k_app_arena *)rec)->address|((struct k_app_arena *)rec)->actual_bytes) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20||call==21)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20||call==21||call==22)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -479,7 +481,24 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 14: return sleep_until((const struct k_sleep *)rec);
   case 17: return health((const struct k_health *)rec);
   case 16: sys_exit_status=((struct k_exit *)rec)->status; return SYS_EXITED;
+  case 22: {
+   struct k_power_hold *r=(struct k_power_hold *)rec;
+   if(r->operation==1) {
+    if(r->token) return -EINVAL;
+    if((e=power_acquire(r->flags,&r->token))) return e;
+   } else if(r->operation==0) {
+    if(r->flags) return -EINVAL;
+    return power_release(r->token);
+   } else return -EINVAL;
+   break;
+  }
+  case 23: {
+   const struct k_power_timeouts *r=(const struct k_power_timeouts *)rec;
+   return power_timeouts(r->slowdown_seconds,r->blank_seconds,clock_us());
+  }
   case 21: return os_app_arena(va,(struct k_app_arena *)rec,bytes);
  }
- return us_copy_out(va,rec,bytes)?-EFAULT:0;
+ e=us_copy_out(va,rec,bytes);
+ if(e&&call==22) power_release(((struct k_power_hold *)rec)->token);
+ return e?-EFAULT:0;
 }

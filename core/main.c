@@ -4,6 +4,8 @@
 #include "os.h"
 #include "autostart.h"
 #include "clock.h"
+#include "power.h"
+#include "sys.h"
 #include "input.h"
 #include "fb_art.h"
 #include "audio_null.h"
@@ -99,6 +101,7 @@ void kernel_main(void) {
     file falls back to DIAG.ELF, and a missing DIAG keeps the recovery console. */
  bool autostart=boot_storage_policy(storage_ready);
  if(autostart) {char t[48]="OS autostart in 10 s: ";const char *a=autostart_pick();memcpy(t+22,a,strlen(a)+1);log_line(t);}
+ power_hw_init();
  uint32_t start=micros(),last=boot_time,old_ticks=ticks,seconds=0,remainder=0;
  bool trial=h[3]==1&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
@@ -147,5 +150,12 @@ void kernel_main(void) {
    }
 #endif
   }
+  power_hw_task();
+  /* SD is synchronous: no request survives this boundary. USB IRQs and DMA
+     wake directly; the <=1 ms one-shot bounds CEC, USB deferred retries,
+     null audio, panel and all other polled work. Never park a runnable OS
+     or its incremental cleanup. Recheck sleep after the work above. */
+  if(!os_cleanup_pending()&&!os_stop_pending()&&(!os_running()||os_asleep()))
+   idle_wait(power_wait_us(clock_us(),sys_wake_us));
  }
 }

@@ -160,6 +160,14 @@ static void rx_frame(struct cec_drv *d, uint32_t now) {
     d->rx_frames++;
     if (cec_parse(&m, raw, len)) { say(d, now, "RX bad frame"); return; }
     int op = cec_opcode(&m);
+    if(d->wake && d->sm.state==CEC_SM_CLAIMED && cec_initiator(&m)!=CEC_ADDR_BROADCAST) {
+        unsigned dst=cec_dest(&m);
+        if((dst==d->sm.laddr &&
+            ((op==CEC_OP_USER_CONTROL_PRESSED && cec_nparams(&m)>=1) ||
+             (op==CEC_OP_IMAGE_VIEW_ON && !cec_nparams(&m)))) ||
+           (dst==CEC_ADDR_BROADCAST && op==CEC_OP_ACTIVE_SOURCE && cec_nparams(&m)==2))
+            d->wake(d->ctx);
+    }
     struct cec_key_event ev[CEC_KEYS_MAX_EVENTS]; unsigned n;
     switch (cec_sm_rx(&d->sm, &m)) {
     case CEC_SM_EV_KEY_PRESSED: {

@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 10u /* 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
+#define K_ABI_MINOR 11u /* 1.11: power holds/timeouts; 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};
@@ -48,3 +48,8 @@ _Static_assert(offsetof(struct k_open,fd)==48&&offsetof(struct k_io,transferred)
 /* Check a record header against the registers: 0 or a negative errno.
  * known = bytes this kernel understands; longer records must have zero tails. */
 int abi_check(const void *record,uint32_t reg_bytes,uint32_t reg_major,uint32_t min_bytes,uint32_t known_bytes);
+
+struct k_power_hold {struct k_header h; uint64_t operation,flags,token;};
+struct k_power_timeouts {struct k_header h; uint64_t slowdown_seconds,blank_seconds;};
+_Static_assert(sizeof(struct k_power_hold)==40,"power hold");
+_Static_assert(sizeof(struct k_power_timeouts)==32,"power timeouts");

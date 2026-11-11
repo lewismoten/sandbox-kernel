@@ -94,7 +94,7 @@ read-only FAT assets, framebuffer presentation, native ELF32 loading in ARM
 User mode, input event queues, supervisor recovery, and OS A/B updates. Add the
 durable settings/save store before enabling those writes. A basic keyboard or
 synthetic event source can establish the input ABI; gamepad qualification is M2.
-The current SDK is ABI 1.10. Bounded FAT cache/save writes are implemented
+The current SDK is ABI 1.11. Bounded FAT cache/save writes are implemented
 ([cache-storage.md](cache-storage.md), [saves-storage.md)); they replace neither
 the proposed journal nor the OS A/B/pair-update gates. Physical save/cache
 power-cut durability remains hardware-untested. The tests below retain the

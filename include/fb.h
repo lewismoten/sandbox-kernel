@@ -55,3 +55,5 @@ extern const char *fb_fail;
 extern struct fb_info fb0;
 extern uint8_t *fb_pixels; /* kernel pointer to the mapped buffer, or NULL */
 bool fb_start(void); /* allocate, map, draw, log; never touches USB or the panel */
+
+extern uint32_t fb_mode_generation; /* firmware mode changes can clear blanking */

@@ -51,5 +51,6 @@ int cec_sm_next_tx(struct cec_sm *s, struct cec_msg *out, uint64_t *tx_id);
  * timed-out, duplicate and other mismatched completions have no effect. */
 void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result result);
 /* Wake the TV and take the screen: Image View On, then Active Source. */
+int cec_sm_standby(struct cec_sm *s);
 void cec_sm_announce(struct cec_sm *s);
 #endif

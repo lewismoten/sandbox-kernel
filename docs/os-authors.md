@@ -375,7 +375,7 @@ the recovery console. **Any other value counts as a fault** (and uses the restar
 ## 4. What is supported, by ABI version
 
 The major version is 1 and the current minor is the `SBX_ABI_MINOR` in
-`sdk/include/sandbox/abi.h:13` (currently **1.10**, also `include/abi.h:8`). Minors only add.
+`sdk/include/sandbox/abi.h:13` (currently **1.11**, also `include/abi.h:8`). Minors only add.
 Every returning syscall returns 0 or a negative errno. `exit` does not return to user
 code; `SYS_EXITED=1` is internal to the supervisor (`core/sys.c:475`, `core/os.c:171`).
 Existing call numbers and record layouts stay compatible. (The first row lists the ABI 1.0 draft
@@ -394,6 +394,7 @@ described in `docs/design.md`.)
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 16,384-frame ring (about 341 ms; `include/audio_ring.h:20`) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. Short drains are filled with silence. HDMI drains the ring when its backend starts; otherwise the null backend silently drains it. No ABI minor was added for this backend or its internal mixer. See the audio rules below and `docs/audio-device.md`. |
 | 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
+| 1.11 | 22, 23: keep-awake holds and idle timeout policy |
 
 **Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Hardware-untested:** HDMI audio output on physical sinks and the new e-ink/serial
 paths are not established by these code checks. **Not yet:** gamepads, Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
@@ -452,6 +453,44 @@ Clock selector must be 0; returned nanoseconds have microsecond resolution.
 `sleep_until` uses an absolute deadline, rounds up to microseconds, and returns
 immediately for a past deadline (`core/sys.c:379`).
 
+### Idle power (ABI 1.11)
+
+Call 22 (`POWER_HOLD`, 40-byte record: header, u64 operation, flags, token)
+acquires (operation 1, token initially zero) or releases (operation 0, flags zero)
+a keep-awake token. Flags are `NO_BLANK=1` (also no dim) and `NO_SLOWDOWN=2`;
+combine them for video. Up to 16 independent holds are ORed together. Acquire
+returns a nonzero token; release needs that exact token. Unknown flags, zero
+acquire flags or bad operations return EINVAL; stale tokens return EBADF; a full
+table returns EMFILE, exhausted token IDs EOVERFLOW. All holds are released on
+exit, fault, restart and USB stop. Tokens cannot be reused across OS launches.
+
+Call 23 (`POWER_TIMEOUTS`, 32-byte record: header, u64 slowdown_seconds,
+blank_seconds) sets the foreground OS's policy and restarts the inactivity timer.
+Zero disables that timeout; values above 86400 return EINVAL. Defaults are 60 and
+600 seconds and return on OS cleanup. No device handle or additional capability
+is required. Common ABI header, pointer, size and zero-tail checks apply.
+
+```c
+// Require startup->minor >= 11 (major 1).
+uint64_t hold;
+if (!sbx_power_acquire(SBX_POWER_NO_BLANK | SBX_POWER_NO_SLOWDOWN, &hold)) {
+    // Play a 2–3 hour movie; continue normal heartbeat and sleep calls.
+    sbx_power_release(hold);
+}
+sbx_power_timeouts(120, 900); // seconds; (0, 0) disables both
+```
+
+Accepted key changes/repeats and axis changes reset inactivity even without an
+input reader. CEC button presses (including unmapped buttons), Image View On and
+Active Source also wake the policy. A hold requests restoration of its protected resource on
+the next kernel pass; completion depends on the asynchronous firmware reply. Releasing a hold uses time since the last input, so an
+already expired timeout can take effect immediately. Holds inhibit clock/screen
+policy, not interrupt waits; runnable programs continue to run normally.
+HDMI blanking preserves framebuffer contents. Wake unblanks and sends Image View
+On / Active Source; standby sends a directed CEC Standby to the TV. Firmware or
+CEC failure is logged; physical TV behavior requires board validation. See
+[power implementation and board checks](power-saving.md).
+
 ### Audio rules and diagnostics
 
 `AUDIO_QUERY=0x20000` uses an 80-byte record: flags=0, rate, capacity_frames,
@@ -472,8 +511,8 @@ with app PCM for ring space (`core/mixer.c:19`, `core/mixer.c:85`,
 `drivers/hdmi_audio.c:149`). USB `AUDIO` reports backend, drain rate, starvation, DMA,
 ring, tone and mixer status. `TONE HZ MS` accepts 50–4000 Hz and 1–1000 ms, replying
 `OK tone` or `ERR tone args`, `no-hdmi`, or `busy`. Both require an INFO session
-(`core/protocol.c:118`, `core/audio_null.c:48`, `drivers/hdmi_audio.c:176`). HDMI-CEC
-helpers are not a live app or hardware service.
+(`core/protocol.c:118`, `core/audio_null.c:48`, `drivers/hdmi_audio.c:176`). HDMI-CEC runs as a polled kernel service; apps control idle standby through
+the power policy above. There is no raw CEC app interface.
 
 ### Numeric errors
 
@@ -485,7 +524,7 @@ The SDK declares these positive constants; syscall errors return their negatives
 | EPERM | 1 | operation not permitted |
 | ENOENT | 2 | missing path |
 | EIO | 5 | I/O failure |
-| EBADF | 9 | invalid handle or arena epoch |
+| EBADF | 9 | invalid handle, hold token or arena epoch |
 | EAGAIN | 11 | retry later |
 | ENOMEM | 12 | allocation or mapping resources unavailable |
 | EACCES | 13 | access denied |
@@ -495,7 +534,7 @@ The SDK declares these positive constants; syscall errors return their negatives
 | ENODEV | 19 | absent device or stale input instance |
 | ENOTDIR | 20 | expected a directory |
 | EINVAL | 22 | invalid argument or record |
-| EMFILE | 24 | handle limit |
+| EMFILE | 24 | handle or keep-awake hold limit |
 | ENOTTY | 25 | unsupported ioctl for this device |
 | ENOSPC | 28 | no storage or staging space |
 | ESPIPE | 29 | object cannot seek |
@@ -509,7 +548,8 @@ The SDK declares these positive constants; syscall errors return their negatives
 | EDQUOT | 122 | save folder/file quota |
 
 EPERM, EEXIST, EPIPE and ETIMEDOUT are declarations without current app syscall return
-paths; epoch EOVERFLOW is a supervisor launch failure. The storage backend can also
+paths; epoch EOVERFLOW is a supervisor launch failure, while exhausted power token
+IDs return EOVERFLOW from acquire. The storage backend can also
 return **−21 (EISDIR)** from fsync for an unacceptable target and **−27 (EFBIG)** from
 rename for a source larger than its 1 MiB scratch buffer; neither has an SDK constant
 (`core/fatput.c:241`, `core/fatput.c:335`, `core/fatput.c:360`). USB textual errors and
@@ -593,7 +633,7 @@ it still reads `kernel,no-os` when updates are ready (it never meant "no OS") an
 otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
 
 `INFO 2` is protocol version 2. Its literal `ABI=1.0` is stale and does **not** identify
-the app ABI: startup reports the current major/minor (1.10 on this branch). Gate app
+the app ABI: startup reports the current major/minor (1.11 on this branch). Gate app
 features on startup, never that INFO field (`core/protocol.c:135`, `core/os.c:111`,
 `include/abi.h:8`). INFO also reports `profile=zero-w-armv6`, `capacity=2097152`,
 `install_timeout=120`, and `serial=usb|none` (`core/protocol.c:143`).
@@ -708,7 +748,7 @@ as left out in `docs/js.md`).
   one input reader, one audio writer, one e-ink handle and one serial owner
   (`include/assets.h:6`, `core/sys.c:94`, `core/input.c:54`, `core/serial.c:7`).
 - **Check your minor version.** Gate features on the startup ABI version: with major 1,
-  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink and >= 10 for serial
+  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink and >= 10 for serial and >= 11 for power policy
   (`include/abi.h:8`). Fall back to silence or no saves when the version is lower.
   Unsupported operations do not all return `ENOSYS`: unknown syscall numbers return
   `ENOSYS` (-38), unknown device ioctls return `ENOTTY` (-25), and absent device

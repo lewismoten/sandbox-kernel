@@ -7,6 +7,9 @@
 SIZE(k_startup_ext,sbx_startup_ext); SAME(k_startup_ext,sbx_startup_ext,prefix); SAME(k_startup_ext,sbx_startup_ext,app_generation);
 SIZE(k_app_arena,sbx_app_arena_rec); SAME(k_app_arena,sbx_app_arena_rec,h); SAME(k_app_arena,sbx_app_arena_rec,owner_generation); SAME(k_app_arena,sbx_app_arena_rec,requested_bytes); SAME(k_app_arena,sbx_app_arena_rec,address); SAME(k_app_arena,sbx_app_arena_rec,actual_bytes);
 _Static_assert(SBX_CALL_APP_ARENA==21 && SBX_EOVERFLOW==75,"arena constants");
+SIZE(k_power_hold,sbx_power_hold_rec); SAME(k_power_hold,sbx_power_hold_rec,h); SAME(k_power_hold,sbx_power_hold_rec,operation); SAME(k_power_hold,sbx_power_hold_rec,flags); SAME(k_power_hold,sbx_power_hold_rec,token);
+SIZE(k_power_timeouts,sbx_power_timeouts_rec); SAME(k_power_timeouts,sbx_power_timeouts_rec,slowdown_seconds); SAME(k_power_timeouts,sbx_power_timeouts_rec,blank_seconds);
+_Static_assert(SBX_CALL_POWER_HOLD==22&&SBX_CALL_POWER_TIMEOUTS==23,"power calls");
 SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_header,flags); SAME(k_header,sbx_header,reserved0); SAME(k_header,sbx_header,reserved1);
 SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
 SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);
@@ -37,7 +40,7 @@ _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI versi
 #include <sandbox/syscall.h>
 /* Every wrapper compiles to ARM-state svc code. */
 int32_t use_all(uint64_t fd,char *b) {
- uint64_t n,f; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
+ uint64_t n=0,f=0; sbx_fb_mode m; int32_t s=sbx_open("/sd/x",5,SBX_O_RDONLY,&f);
  s|=sbx_read(fd,b,4,&n); s|=sbx_log(fd,"hi",2); s|=sbx_fb_query(fd,&m); s|=sbx_fb_present(fd,0,0,1,1); s|=sbx_close(fd); void *a; s|=sbx_fb_map(fd,4096,&a);
  sbx_serial_info si; sbx_input_info ii; sbx_input_state is; s|=sbx_getdents(fd,b,64,&n); s|=sbx_health(1,1); s|=sbx_serial_query(fd,&si); s|=sbx_input_query(fd,&ii); s|=sbx_input_state_get(fd,&is);
  uint64_t ns=0; s|=sbx_clock_ns(&ns); s|=sbx_sleep_until(ns+1000000u);
@@ -48,6 +51,7 @@ int32_t use_all(uint64_t fd,char *b) {
  sbx_audio_info ai; s|=sbx_audio_query(fd,&ai);
  sbx_startup_ext startup={{48,1,7,1,0,0,0,0},1};
  s|=sbx_app_arena(&startup.prefix,1,&a,&n);
+ s|=sbx_power_acquire(SBX_POWER_NO_BLANK,&n); s|=sbx_power_release(n); s|=sbx_power_timeouts(60,600);
  if(s==-1) sbx_exit(1);
  return s;
 }

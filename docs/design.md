@@ -113,13 +113,13 @@ produce `EFAULT`; unrelated kernel faults trigger panic recovery. DMA always use
 kernel-owned descriptors and bounded buffers. CPU page tables do not constrain
 DMA on Zero, so no raw DMA or arbitrary physical `mmap` is available.
 
-## System-call ABI, current version 1.10
+## System-call ABI, current version 1.11
 
 This is a POSIX-style source interface, not Linux binary compatibility or full
 POSIX compliance. The MIT SDK supplies C wrappers returning zero or negative
 `SBX_E*` values directly; it does not set libc `errno`. No C++ objects cross the
 boundary. Kernel and SDK declarations are independently checked by layout tests.
-Startup reports major 1/minor 10. Calls 0, 7, 8, 10 and 15 remain unimplemented
+Startup reports major 1/minor 11. Calls 0, 7, 8, 10 and 15 remain unimplemented
 (`ENOSYS`); their proposed records are not a public implemented contract.
 
 For ARM32, execute ARM-state `svc #0` with `r7` = call number, `r0` = pointer to
@@ -164,6 +164,8 @@ error except where a later explicit extension says otherwise.
 | 19 | `rename` | ABI 1.4/1.7: copy/publish within one cache or save folder |
 | 20 | `getdents_long_meta` | ABI 1.5: validated VFAT UTF-8 names, 24-byte metadata header |
 | 21 | `app_arena` | ABI 1.6: generation-bound fixed 2,195,456-byte arena |
+| 22 | `power_hold` | ABI 1.11: acquire/release a foreground keep-awake token (no blank and/or no slowdown) |
+| 23 | `power_timeouts` | ABI 1.11: slowdown/blank seconds, zero disables; reset on OS cleanup |
 
 The SDK wrappers in `sdk/include/sandbox/syscall.h` describe the exact records.
 ABI 1.2 adds framebuffer mode/palette ioctls, 1.7 save scope, 1.8 audio, 1.9

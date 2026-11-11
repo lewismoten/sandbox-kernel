@@ -13,6 +13,7 @@ struct cec_drv {
     uint32_t (*rd)(void *ctx, uint32_t off);
     void (*wr)(void *ctx, uint32_t off, uint32_t v);
     void (*key)(void *ctx, uint16_t code, uint8_t value); /* value 0 up, 1 down, 2 repeat */
+    void (*wake)(void *ctx); /* accepted button / display activation */
     void *ctx;
     struct cec_sm sm;
     struct cec_keys keys;

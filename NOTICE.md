@@ -181,3 +181,17 @@ copied to `UNICODE.TXT` in boot distributions. The original VFAT parser imports
 no FatFs or other filesystem implementation.
 
 **Silkscreen** (The Silkscreen Project Authors, SIL Open Font License 1.1) is bundled as WOFF2 in `docs/fonts/` (from the `@fontsource/silkscreen` 5.1.0 package) for the site's headings; the license text is `docs/fonts/OFL-Silkscreen.txt`.
+
+## Idle power policy, 2026-11-10
+
+Original MIT code adds CP15 WFI with system-timer compare 3, a foreground power
+policy, asynchronous firmware requests in a second uncached mailbox buffer,
+CEC standby/wake intent, ABI 1.11 calls 22–23 and SDK/host tests. No source or
+new third-party dependency was imported. Hardware facts use the existing
+Broadcom BCM2835 ARM Peripherals (2012-02-06), chapters 7/12; Arm DDI 0301H r0p7,
+chapter 3 c7 Wait For Interrupt; and Raspberry Pi's mailbox property interface
+(revision 2023-12-07, consulted 2026-11-10), clock id 3, GET_MIN_CLOCK_RATE,
+GET_CLOCK_RATE, SET_CLOCK_RATE and Blank Screen. See [power-saving.md](docs/power-saving.md)
+for the design, host coverage, limitations and outstanding physical acceptance.
+The pinned TinyUSB 0.21.0 local dependency was checked against its SHA256.json;
+its existing upstream/license inventory is unchanged.

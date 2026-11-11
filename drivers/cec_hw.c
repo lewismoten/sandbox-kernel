@@ -6,6 +6,8 @@
  * Needs config.txt hdmi_ignore_cec=1, or the firmware's own CEC task answers first
  * (scripts/assemble_boot.py). Hardware-untested until a TV session (docs/cec.md). */
 #include "kernel.h"
+#include "clock.h"
+#include "power.h"
 #include "cec_drv.h"
 #include "cec_edid.h"
 #include "hdmi_audio.h"
@@ -64,12 +66,14 @@ static int find_phys(void) {
     return -1;
 }
 
+static void wake(void *ctx) {(void)ctx;power_input(clock_us());}
+
 void cec_hw_init(void) {
     uint32_t hsm = hdmi_hsm_hz(REG(CM_HSMCTL), REG(CM_HSMDIV));
     bool hsm_assumed = !hsm;
     if (hsm_assumed) hsm = ASSUMED_HSM_HZ;
     int p = find_phys();
-    drv.rd = hrd; drv.wr = hwr; drv.key = sink; drv.ctx = 0;
+    drv.rd = hrd; drv.wr = hwr; drv.key = sink; drv.ctx = 0; drv.wake = wake;
     cec_drv_init(&drv, (uint16_t)(p >= 0 ? (unsigned)p : ASSUMED_PHYS), hsm, now_ms());
     if (hsm_assumed) cec_log_line(&drv.log, now_ms(), "HSM clock unreadable: assumed 163682000 Hz");
     cec_log_line(&drv.log, now_ms(), p >= 0 ? "physical address from the EDID" : "EDID unreadable: assumed physical address 1.0.0.0");
@@ -84,9 +88,11 @@ static void save_log(uint32_t now) {
     if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");
 }
 
+static void power_task(void);
 void cec_hw_task(void) {
     if (!up) return;
     uint32_t now = now_ms();
+    power_task();
     cec_drv_task(&drv, now);
     save_log(now);
 }
@@ -100,4 +106,18 @@ void cec_hw_report(void) {
         if (t[i] == '\n') { l[k] = 0; log_line(l); k = 0; }
         else if (k < 100) { if (k == 0) { l[0] = 'C'; l[1] = 'E'; l[2] = 'C'; l[3] = ' '; k = 4; } l[k++] = t[i]; }
     }
+}
+
+/* Queue power intent until address claim / queue room; task never blocks. */
+static int power_intent;
+void cec_hw_power(bool standby) {power_intent=standby?1:2;}
+static void power_task(void) {
+ if(!power_intent||drv.sm.state!=CEC_SM_CLAIMED) return;
+ if(power_intent==1) {
+  if(cec_sm_standby(&drv.sm)) return;
+ } else {
+  if(drv.sm.qn>CEC_SM_QUEUE-2) return;
+  cec_sm_announce(&drv.sm);
+ }
+ power_intent=0;
 }

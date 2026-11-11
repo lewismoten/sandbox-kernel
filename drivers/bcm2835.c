@@ -13,6 +13,43 @@ const char *property_fail="none";
 /* The message page (0x80000) is strongly ordered, so no cache maintenance is
  * needed. The GPU gets the 0xC0000000 alias (uncached, bypasses its L2), so a
  * response can never sit in a GPU cache line the ARM does not see. */
+/* Runtime power requests use a second strongly ordered mailbox buffer. All
+ * readers route its reply, including synchronous framebuffer/SD/CEC properties.
+ * No IRQ-side mailbox work and no user pointer is retained. */
+#define ASYNC_MAILBOX 0xc0080108u
+static bool async_owned,async_ready,async_late;
+static uint32_t async_since;
+static volatile uint32_t *const async_buffer=(volatile uint32_t *)0x80100;
+static void mailbox_route(uint32_t reply) {
+ if(reply==ASYNC_MAILBOX&&async_owned) async_ready=true;
+}
+bool property_async_start(uint32_t tag,const uint32_t *values,unsigned words) {
+ if(async_owned||!words||words>3||REG(PERIPH+0xb898)&0x80000000u) return false;
+ async_buffer[0]=(words+6)*4;async_buffer[1]=0;async_buffer[2]=tag;
+ async_buffer[3]=words*4;async_buffer[4]=0;
+ for(unsigned i=0;i<words;i++) async_buffer[5+i]=values[i];
+ async_buffer[5+words]=0;
+ uint32_t z=0;
+ __asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(z):"memory");
+ async_owned=true;async_ready=async_late=false;async_since=micros();
+ REG(PERIPH+0xb8a0)=ASYNC_MAILBOX;barrier();return true;
+}
+int property_async_poll(uint32_t *values,unsigned words) {
+ if(!async_owned||!words||words>3) return -5;
+ /* Bounded reads: never spin if a mailbox source is continuously active. */
+ for(unsigned i=0;i<16&&!(REG(PERIPH+0xb898)&0x40000000u);i++)
+  mailbox_route(REG(PERIPH+0xb880));
+ barrier();
+ if(async_ready) {
+  async_owned=false;
+  if(async_buffer[1]!=0x80000000u||!(async_buffer[4]&0x80000000u)||
+     (async_buffer[4]&0x7fffffffu)<words*4) return -5;
+  for(unsigned i=0;i<words;i++) values[i]=async_buffer[5+i];
+  return 1;
+ }
+ if(!async_late&&expired(async_since,100000)) {async_late=true;return -110;}
+ return 0;
+}
 /* Post a whole tag message (size word first, at most 64 words) and copy the
  * reply back. Bounded by `timeout` microseconds; never touches the reply on
  * failure. Used by single-tag calls and by multi-tag framebuffer allocation. */
@@ -23,12 +60,12 @@ bool property_message(uint32_t *m,unsigned words,uint32_t timeout) {
  uint32_t z=0; __asm__ volatile("mcr p15,0,%0,c7,c10,4":: "r"(z):"memory"); /* drain write buffer */
  uint32_t s=micros();
  while(REG(PERIPH+0xb898)&0x80000000u) if(expired(s,100000)) {property_fail="MBOX FULL";return false;}
- while(!(REG(PERIPH+0xb898)&0x40000000u)) (void)REG(PERIPH+0xb880); /* drop stale replies */
+ while(!(REG(PERIPH+0xb898)&0x40000000u)) mailbox_route(REG(PERIPH+0xb880)); /* drop stale replies */
  REG(PERIPH+0xb8a0)=0xc0080008u; barrier();
  while(!expired(s,timeout)) {
   if(!(REG(PERIPH+0xb898)&0x40000000u)) {
    uint32_t r=REG(PERIPH+0xb880); barrier();
-   if(r!=0xc0080008u) continue; /* some other reply; keep waiting */
+   if(r!=0xc0080008u) {mailbox_route(r);continue;} /* some other reply; keep waiting */
    if(b[1]!=0x80000000u) {property_fail="MBOX RESP";return false;}
    for(unsigned i=0;i<words;i++) m[i]=b[i];
    return true;
@@ -70,10 +107,28 @@ volatile uint32_t ticks;
 void irq_init(void) {
  REG(PERIPH+0xb21c)=~0u; REG(PERIPH+0xb220)=~0u; REG(PERIPH+0xb224)=~0u;
  REG(PERIPH+0x3000)=2; REG(PERIPH+0x3010)=micros()+10000;
- REG(PERIPH+0xb210)=2;
+ REG(PERIPH+0x3000)=8;
+ REG(PERIPH+0xb210)=2|8;
  __asm__ volatile("cpsie i":::"memory");
 }
+/* Timer compare 3 is a one-shot idle wake. Compare 1 remains the 10 ms
+ * scheduler tick, preserving user slices and heartbeat behavior. ARM1176's
+ * CP15 WFI wakes for a pending IRQ even with CPSR.I set. Mask across arming
+ * and WFI so an IRQ cannot be consumed between the check and wait. */
+void idle_wait(uint32_t us) {
+ if(!us) return;
+ uint32_t flags,z=0;
+ __asm__ volatile("mrs %0,cpsr\n cpsid i":"=r"(flags)::"memory","cc");
+ REG(PERIPH+0x3000)=8;
+ uint32_t compare=micros()+us;
+ REG(PERIPH+0x3018)=compare;
+ barrier();
+ if((int32_t)(compare-micros())>0)
+ __asm__ volatile("mcr p15,0,%0,c7,c10,4\n mcr p15,0,%0,c7,c0,4"::"r"(z):"memory");
+ __asm__ volatile("msr cpsr_c,%0"::"r"(flags):"memory","cc");
+}
 void irq_handler(void) {
+ if(REG(PERIPH+0x3000)&8) REG(PERIPH+0x3000)=8;
  if(REG(PERIPH+0x3000)&2) { REG(PERIPH+0x3000)=2; REG(PERIPH+0x3010)=micros()+10000; ticks++; }
 #ifndef SELECTOR
  if(REG(PERIPH+0xb204)&0x007e0000u) { hdmi_audio_irq(); }

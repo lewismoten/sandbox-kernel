@@ -7,8 +7,8 @@ are retained as evidence of the standalone test contribution.
 Historical scope: M1 slice 2, baseline `aac205c699c26a98641894dadd4ba97e6964115b`.
 The implemented calls are open (1), read (2), write (3), close (4), ioctl (5),
 mmap (6), and exit (16) at that baseline. The current dispatcher implements
-1–6, 9, 11–14 and 16–21 (ABI 1.10). The generic `records()` matrix now includes
-seek (9) and long metadata (20), not every current call; feature-specific tests
+1–6, 9, 11–14 and 16–23 (ABI 1.11). The generic `records()` matrix now includes
+seek (9), long metadata (20), power holds (22) and timeouts (23), not every current call; feature-specific tests
 cover the later calls/devices. “All seven calls” below labels the original scope.
 These tests exercise the actual dispatcher, ABI
 checker, user-range translator, asset reader and framebuffer code through the

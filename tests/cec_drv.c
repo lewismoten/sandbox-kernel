@@ -186,7 +186,32 @@ static void test_edid_log_timing(void) {
     cec_log_line(&l, 1, "bell\x07 x"); assert(strstr(l.text, "bell? x"));
 }
 
+static unsigned wake_count;
+static void wake_sink(void *ctx) {(void)ctx;wake_count++;}
+static void test_power(void) {
+ start(0x2100);drv.wake=wake_sink;wake_count=0;
+ /* Claim without pending discovery traffic, to isolate power frames. */
+ drv.sm.state=CEC_SM_CLAIMED;drv.sm.laddr=4;drv.sm.qn=0;
+ drv.last_state=CEC_SM_CLAIMED;drv.announced=1;
+ assert(!cec_sm_standby(&drv.sm));cec_drv_task(&drv,1);
+ expect(&chip,0,(uint8_t[]){0x40,0x36},2);assert(!drv.sm.active);
+ finish_tx(&chip,1);cec_drv_task(&drv,2);
+ cec_sm_announce(&drv.sm);cec_drv_task(&drv,3);
+ expect(&chip,1,(uint8_t[]){0x40,0x04},2);
+ finish_tx(&chip,1);cec_drv_task(&drv,4);
+ expect(&chip,2,(uint8_t[]){0x4f,0x82,0x21,0},4);
+ finish_tx(&chip,1);cec_drv_task(&drv,5);
+ inject(&chip,(uint8_t[]){0x04,0x44,0x66},3);cec_drv_task(&drv,6);assert(wake_count==1);
+ inject(&chip,(uint8_t[]){0x04,0x04},2);cec_drv_task(&drv,7);assert(wake_count==2);
+ inject(&chip,(uint8_t[]){0x0f,0x82,0x10,0},4);cec_drv_task(&drv,8);assert(wake_count==3);
+ inject(&chip,(uint8_t[]){0x08,0x44,1},3);cec_drv_task(&drv,9);assert(wake_count==3);
+ inject(&chip,(uint8_t[]){0x04,0x44},2);cec_drv_task(&drv,10);assert(wake_count==3);
+ inject(&chip,(uint8_t[]){0x0f,0x82},2);cec_drv_task(&drv,11);assert(wake_count==3);
+ drv.sm.qn=CEC_SM_QUEUE;assert(cec_sm_standby(&drv.sm)==-1);
+}
+
 int main(void) {
+    test_power();
     test_timing_and_claim(); puts("PASS timing and claim");
     test_next_candidate_and_none(); puts("PASS candidates and silence");
     test_timeout(); puts("PASS send timeout");

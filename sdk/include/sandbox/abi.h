@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 11u /* 1.11: power holds/timeouts; 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -18,7 +18,7 @@ enum {
   SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_SEEK = 9, SBX_CALL_GETDENTS = 11,
   SBX_CALL_FSYNC = 12, SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17,
   SBX_CALL_GETDENTS_META = 18, SBX_CALL_RENAME = 19,
-  SBX_CALL_GETDENTS_LONG_META = 20, SBX_CALL_APP_ARENA = 21
+  SBX_CALL_GETDENTS_LONG_META = 20, SBX_CALL_APP_ARENA = 21, SBX_CALL_POWER_HOLD = 22, SBX_CALL_POWER_TIMEOUTS = 23
 };
 
 /* Negative return values. */
@@ -113,6 +113,14 @@ enum {
 typedef struct sbx_header {
   uint32_t size, flags, reserved0, reserved1;
 } sbx_header;
+#define SBX_POWER_NO_BLANK 1u
+#define SBX_POWER_NO_DIM SBX_POWER_NO_BLANK
+#define SBX_POWER_NO_SLOWDOWN 2u
+typedef struct {sbx_header h; uint64_t operation,flags,token;} sbx_power_hold_rec;
+typedef struct {sbx_header h; uint64_t slowdown_seconds,blank_seconds;} sbx_power_timeouts_rec;
+_Static_assert(sizeof(sbx_power_hold_rec)==40,"power hold");
+_Static_assert(sizeof(sbx_power_timeouts_rec)==32,"power timeouts");
+
 
 typedef struct sbx_open_rec { /* path is absolute UTF-8, no NUL inside */
   sbx_header h;

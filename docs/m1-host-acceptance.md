@@ -59,7 +59,7 @@ synthetic transport credits, not USB hardware or TinyUSB internals.
 
 Outstanding milestone gates are not hidden:
 
-- At the ABI 1.0 baseline, no older minor existed. The current kernel is 1.10;
+- At the ABI 1.0 baseline, no older minor existed. The current kernel is 1.11;
   `test_supervisor_native.py` can load supplied old ELFs, and
   `test_app_arena_native.py` exercises legacy startup/SDK gating on the host.
   Actual older ARM application execution

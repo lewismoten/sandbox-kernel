@@ -82,6 +82,12 @@ void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result resu
     }
 }
 
+int cec_sm_standby(struct cec_sm *s) {
+ if(s->state!=CEC_SM_CLAIMED||s->qn==CEC_SM_QUEUE) return -1;
+ struct cec_msg m={.len=2,.b={(uint8_t)(s->laddr<<4),CEC_OP_STANDBY}};
+ s->active=0;push(s,&m);return 0;
+}
+
 void cec_sm_announce(struct cec_sm *s) {
     struct cec_msg m;
     if (s->state != CEC_SM_CLAIMED) return;

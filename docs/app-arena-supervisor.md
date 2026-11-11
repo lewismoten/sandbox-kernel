@@ -1,7 +1,7 @@
 # Supervisor reclaim — historical Slice B boundary
 
 Current status: Slice C now exposes the app arena through ABI 1.6 call 21 and
-a 48-byte startup extension; the current ABI is 1.10. See
+a 48-byte startup extension; the current ABI is 1.11. See
 [app-arena-abi.md](app-arena-abi.md). The lifecycle below remains in use;
 statements about unavailable allocation describe the original B-only slice.
 Physical cleanup timing and MMU/cache/TLB behavior remain hardware-untested.

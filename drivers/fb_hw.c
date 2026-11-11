@@ -5,6 +5,7 @@
 #include "fb.h"
 const char *fb_fail="none";
 struct fb_info fb0;
+uint32_t fb_mode_generation;
 uint8_t *fb_pixels;
 static void append(char **p,const char *s) {while(*s)*(*p)++=*s++; **p=0;}
 static void append_n(char **p,uint32_t n) {char t[12];number(t,n);append(p,t);}
@@ -23,6 +24,7 @@ bool fb_start(void) {
  if(!why&&!mmu_map_uncached(fb0.phys,fb0.bytes)) why="FB MAP";
  p=line;
  if(why) {fb_fail=why;append(&p,why);if(!strcmp(why,"FB MBOX")){append(&p," ");append(&p,property_fail);}boot_note(line);return false;}
+ fb_mode_generation++;
  fb_pixels=(uint8_t *)(uintptr_t)fb0.phys;
  fb_boot_screen(&fb0,fb_pixels);
  append(&p,"FB ok ");append_n(&p,fb0.width);append(&p,"x");append_n(&p,fb0.height);append(&p," ");append_n(&p,fb0.depth);append(&p," ");append_n(&p,fb0.pitch);
@@ -40,6 +42,7 @@ int fb_set_mode(uint32_t w,uint32_t h,uint32_t d) {
  const char *why=fb_parse(m,d,&f);
  if(why) {fb_fail=why;return -5;}
  if(!mmu_map_uncached(f.phys,f.bytes)) {fb_fail="FB MAP";return -5;}
+ fb_mode_generation++;
  fb0=f;fb_pixels=(uint8_t *)(uintptr_t)f.phys;
  for(uint32_t i=0;i<f.bytes/4u;i++) ((volatile uint32_t *)(void *)fb_pixels)[i]=0;
  fb_mode_us=micros()-t;

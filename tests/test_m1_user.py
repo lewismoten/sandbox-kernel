@@ -264,7 +264,7 @@ class Calls(CallsBase):
         self.assertEqual(self.call(2,None,size=48,va=0x00100000),-EFAULT)          # kernel record
         poke(self.c,IMAGE+0x100,good);self.assertEqual(self.call(2,None,size=48,va=IMAGE+0x100),-EFAULT)   # read-only record with outputs
         poke(self.c,IMAGE+0x100,self.hdr(24)+bytes(8));self.assertEqual(self.call(4,None,size=24,va=IMAGE+0x100),-EBADF)          # close reads only: text is fine to read
-        for n in (0,7,8,15,22,99,0xffffffff): self.assertEqual(self.call(n,good),-ENOSYS)
+        for n in (0,7,8,15,24,99,0xffffffff): self.assertEqual(self.call(n,good),-ENOSYS)
         self.assertEqual(self.call(2,good,size=8),-EINVAL);self.assertEqual(self.call(2,good,size=8192),-EINVAL)
     def test_open_rules(self):
         self.assertEqual(self.open('/sd/NOPE.TXT')[0],-ENOENT);self.assertEqual(self.open('/x')[0],-ENOENT)
@@ -357,7 +357,7 @@ class Supervisor(SupervisorBase,Calls):
     def test_entry_state(self):
         f=self.frame();self.assertEqual((f.pc,f.sp,f.lr,f.r[0],f.cpsr),(IMAGE,STACK_TOP,EXIT_VA,START_VA,0x10))
         size,major,minor,gen,trial,img,stack,handles=struct.unpack('<IHHIIQQQ',peek(self.c,START_VA,40))
-        self.assertEqual((size,major,minor,img,stack,handles),(48,1,10,8<<20,1<<20,16))
+        self.assertEqual((size,major,minor,img,stack,handles),(48,1,11,8<<20,1<<20,16))
         self.assertEqual(self.c.us_check(START_VA,40,W),-EFAULT)       # startup record is read-only
         self.assertIn(b'OS start /OS/DIAG.ELF entry 0x08000000 pages 3',self.c.take_log())
     def test_svc_paths(self):

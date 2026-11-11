@@ -39,3 +39,5 @@ int input_read(uint32_t instance,struct input_event_rec *out,uint32_t max);
 /* Current state: key bits (INPUT_KEYS/64 words) and axes; empties the queue. */
 int input_state(uint32_t instance,uint64_t keys[INPUT_KEYS/64],int64_t axes[INPUT_AXES]);
 extern uint32_t input_dropped; /* overflow count since boot */
+
+extern uint32_t input_activity; /* accepted changes, even without a reader */

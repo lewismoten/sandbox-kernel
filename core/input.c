@@ -11,7 +11,7 @@ static uint32_t instance,head,count;
 static uint64_t keys[INPUT_KEYS/64];
 static int64_t axes[INPUT_AXES];
 static struct input_event_rec queue[INPUT_QUEUE];
-uint32_t input_dropped;
+uint32_t input_dropped,input_activity;
 static void clear_state(void) {memset(keys,0,sizeof keys);memset(axes,0,sizeof axes);head=count=0;reading=false;}
 void input_init(void) {clear_state();present=true;instance=1;input_dropped=0;}
 bool input_present(void) {return present;}
@@ -44,6 +44,7 @@ int input_frame(const struct input_change *c,unsigned n) {
   }
   kept[k++]=c[i];
  }
+ if(k) input_activity++;
  if(!k||!reading) return 0;
  uint64_t ns=clock_us()*1000u;
  if(count+k+1>INPUT_QUEUE) {head=count=0;put(ns,EV_SYN,SYN_DROPPED,0);input_dropped++;return 0;}

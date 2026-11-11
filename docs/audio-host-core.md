@@ -3,7 +3,7 @@
 `core/audio_core.c` and `include/audio_core.h` are a fixed-memory qualification
 component, deliberately absent from `KERNEL` in the Makefile. They implement no
 syscall, SDK record, device path, availability flag, hardware backend or IRQ.
-This component does not change the ABI. The current runtime/SDK is ABI 1.10;
+This component does not change the ABI. The current runtime/SDK is ABI 1.11;
 [the linked audio device and HDMI backend](audio-device.md) use `audio_ring.c`
 and `audio_null.c`, independently of this qualification core.
 

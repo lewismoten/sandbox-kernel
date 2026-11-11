@@ -74,6 +74,8 @@ class SyscallEdges(m1.Work):
             5: self.hdr(48) + struct.pack('<4Q', fb, 0x10000, self.BUF, 56),
             6: self.hdr(64) + struct.pack('<6Q', fb, 0, 4096, 3, 1, 0),
             16: self.hdr(24) + struct.pack('<q', -7),
+            22: self.hdr(40) + struct.pack('<3Q',1,3,0),
+            23: self.hdr(32) + struct.pack('<2Q',60,600),
             20: self.hdr(48) + struct.pack('<4Q', directory, self.BUF + 0x400, 512, 0),
         }
 
@@ -130,7 +132,7 @@ class SyscallEdges(m1.Work):
     def test_unknown_dispatch_does_not_consume_handles_or_records(self):
         records = self.records()
         # Call 9 became real in ABI 1.3; these remain unimplemented.
-        for n in (0, 7, 8, 10, 15, 22, 0xffffffff):
+        for n in (0, 7, 8, 10, 15, 24, 0xffffffff):
             with self.subTest(call=n):
                 self.reject(n, records[4], m1.ENOSYS)
         # A valid handle remains usable after all dispatch/header failures.
