@@ -349,8 +349,78 @@ def screen_capture(port,path,eink=False,scale=1):
     print('E-ink: last sent plane; refresh, ghosting or panel failure may differ.' if eink else 'HDMI: live read; frames/palette may change during transfer; blanking is not shown.',file=sys.stderr)
     return 0
 
+GET_MAX=4*1024*1024
+
+def card_path(path):
+    if not isinstance(path,str) or not 1<=len(path)<=192 or not path.startswith('/'):
+        raise ValueError('card path must be absolute and at most 192 ASCII bytes')
+    parts=path[1:].split('/') if path!='/' else []
+    if len(parts)>16 or any(p in ('','.','..') for p in parts) or any(ord(c)<33 or ord(c)>126 or c in '\\:*?"<>|' for c in path):
+        raise ValueError('invalid card path')
+    return path
+
+def card_reply(port,command):
+    deadline=time.monotonic()+5
+    while True:
+        port.send((command+'\n').encode('ascii'))
+        while True:
+            line=port.line(max(0,deadline-time.monotonic()))
+            if not line.startswith(('LOG ','OS ','OS~ ','INFO 2 ')): break
+        if line!='ERR get busy': return line
+        if time.monotonic()>=deadline: raise TimeoutError('card busy')
+        time.sleep(0.002)
+
+def get_header(line,offset,previous=None):
+    m=re.fullmatch(r'GET'+r' ([0-9]{1,10})'*5,line)
+    if not m: raise ValueError(f'get reply: {line!r}')
+    ident,total,got,n,crc=map(int,m.groups())
+    if any(v>0xffffffff for v in (ident,total,got,n,crc)) or not ident or total>GET_MAX:
+        raise ValueError('get bounds')
+    if got!=offset or offset%256 or (total and offset>=total) or offset>total or n!=min(256,total-offset):
+        raise ValueError('get bounds')
+    meta=(ident,total)
+    if previous is not None and meta!=previous: raise ValueError('get transfer changed')
+    return meta,n,crc
+
+def get_file(port,path,out=None):
+    path=card_path(path);print(handshake(port),file=sys.stderr)
+    meta=None;data=bytearray();offset=0;deadline=time.monotonic()+300
+    while meta is None or offset<meta[1]:
+        if time.monotonic()>deadline: raise TimeoutError('get transfer')
+        line=card_reply(port,f'GET {path} {meta[0] if meta else 0} {offset}')
+        meta,n,crc=get_header(line,offset,meta)
+        if out is None and meta[1]>65536: raise ValueError('stdout limited to 64 KiB; supply an out-file')
+        block=port.exact(n)
+        if len(block)!=n or zlib.crc32(block)!=crc: raise ValueError('get CRC/length mismatch; reconnect and retry')
+        data.extend(block);offset+=n;time.sleep(0.002)
+    if out is not None:
+        pathlib.Path(out).write_bytes(data);print(f'Wrote {out} ({len(data)} bytes)',file=sys.stderr)
+    else:
+        text=data.decode('utf-8')
+        if any(ord(c)<32 and c not in '\n\r\t' or 0x7f<=ord(c)<0xa0 for c in text):
+            raise ValueError('binary file; supply an out-file')
+        sys.stdout.write(text)
+    return 0
+
+def list_card(port,path):
+    path=card_path(path);print(handshake(port),file=sys.stderr);ident=0
+    for index in range(65536):
+        line=card_reply(port,f'LS {path} {ident} {index}')
+        m=re.fullmatch(r'LS ([0-9]{1,10}) ([0-9]{1,10}) (END|[DF] ([0-9]{1,10}) ([!-~]{1,12}))',line)
+        if not m: raise ValueError(f'ls reply: {line!r}')
+        got,offset=int(m[1]),int(m[2])
+        if not 0<got<=0xffffffff or offset!=index or ident and ident!=got:
+            raise ValueError('ls transfer changed')
+        ident=got
+        if m[3]=='END': return 0
+        if int(m[4])>0xffffffff: raise ValueError('ls size')
+        print(f'{m[3][0]} {int(m[4]):10d} {m[5]}');time.sleep(0.002)
+    raise ValueError('directory entry limit')
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
+    p=sub.add_parser('get',help='read an existing card file; small UTF-8 text defaults to stdout');p.add_argument('path');p.add_argument('out',nargs='?',type=pathlib.Path)
+    p=sub.add_parser('ls',help='list card directory short aliases');p.add_argument('path')
     p=sub.add_parser('einkshot',help='save the last sent e-ink image as PNG');p.add_argument('out',type=pathlib.Path)
     p=sub.add_parser('fbshot',help='save the live HDMI framebuffer as RGB PNG');p.add_argument('out',type=pathlib.Path);p.add_argument('--scale',type=int,default=1)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
@@ -373,6 +443,8 @@ def main():
     sub.add_parser('audio',help='AUDIO: backend state, drain rate, underruns')
     a=ap.parse_args();port=Serial(a.port)
     try:
+        if a.action=='get': return get_file(port,a.path,a.out)
+        if a.action=='ls': return list_card(port,a.path)
         if a.action in ('einkshot','fbshot'): return screen_capture(port,a.out,a.action=='einkshot',getattr(a,'scale',1))
         if a.action=='install-host': return send_kernel(port,a.kernel,companion=True)
         if a.action=='send': return send_kernel(port,a.kernel)

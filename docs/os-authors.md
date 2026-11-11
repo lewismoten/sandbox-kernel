@@ -620,6 +620,7 @@ standard library only) talks to it. Each command runs an `INFO` handshake first.
 | `key NAME...` | press keys on the synthetic input device: `up down left right enter esc q space`, a Linux code, or `NAME:down` / `NAME:up` / `NAME:repeat` |
 | `axis CODE VALUE` | set an axis on the synthetic device |
 | `input add\|remove` | plug or unplug the synthetic device |
+| `get /OS/SAVES/KERNEL/FAULT.TXT [OUT]`, `ls /OS/SAVES` | read crash records/logs or list card directories while the OS runs; read-only, CRC-checked GET up to 4 MiB; [wire format](serial.md#reading-card-files-protocol-2-extension) |
 | `einkshot OUT.png` | save the last e-ink plane sent by the kernel, including status/name/build lines |
 | `fbshot OUT.png [--scale N]` | read the last presented HDMI framebuffer while your OS runs; integer decimation 1..16 |
 | `console` | two-way OS serial session; Ctrl-] exits |

@@ -136,3 +136,64 @@ Refusals are `ERR shot command`, `range`, `unavailable`, `stale`, `palette`,
 The host validates dimensions, format, lengths, offsets, ids and every chunk CRC
 before writing a PNG, using only Python's standard library and zlib. A truncated
 response times out; reconnect after a timeout/CRC error to discard residual bytes.
+
+## Reading card files (protocol 2 extension)
+
+`usb_kernel.py <port> get /OS/SAVES/KERNEL/FAULT.TXT` prints the crash record.
+Use `get /OS/SAVES/KERNEL/USB.TXT usb.txt` to save bytes, or
+`ls /OS/SAVES` to discover log/save directories. No OS stop is required. These
+commands require INFO and mounted storage, perform no writes, and use the device
+role's CDC link. Paths start at the card root (`/OS/...`, not `/sd/OS/...`).
+They are 1..192 printable ASCII bytes without spaces, at most 16 components;
+empty components, trailing slashes (except `/`), `.`, `..`, backslash, colon,
+`* ? " < > |` are rejected. Existing files/directories only; no path normalization.
+Case-insensitive FAT lookup and short aliases work; use aliases for names that
+cannot be represented by this command framing.
+
+Requests (all numbers unsigned decimal):
+
+```
+GET <path> <id> <offset>\n
+GET <id> <total> <offset> <count> <crc32>\n
+<exactly count raw bytes, no trailing newline>
+```
+
+The second line is the response header. Start with id=0, offset=0; retain the
+returned nonzero id and exact path for later requests. Total is at most 4 MiB.
+Offsets must be multiples of 256 and less than total; count=min(256,total-offset).
+An empty file returns total=offset=count=crc32=0 with a nonzero id. CRC is decimal
+IEEE CRC-32 of this chunk, identical to screenshot chunks and Python zlib.crc32.
+The header/body fit together in the 512-byte reply ring and cannot be interrupted
+by LOG or OS output. Skip complete LOG, OS, OS~ and delayed INFO lines before the
+header; consume the body by length, even if it contains newlines or those tags.
+GET/LS share the screenshot 2 ms rate limiter; retry `ERR get busy` after 2 ms.
+Use a single reader and one outstanding request at a time.
+
+GET/LS share one read handle, replaced by a new id=0 request and closed at EOF,
+disconnect/reset, or 2 seconds without an accepted chunk request. A handle under
+SAVES/CACHE temporarily blocks app publication through the existing FAT reader
+rules. Files are read live, not copied into a snapshot; CRC checks transport,
+not whole-file consistency. Card access is deferred from USB's nested SD service
+callbacks to the foreground loop to avoid reentering the FAT/SD reader. Initial
+open validates the existing FAT chain; a corrupt or slow card can delay a chunk.
+
+Directory enumeration uses short 8.3 aliases, one entry per request:
+
+```
+LS <path> <id> <index>\n
+LS <id> <index> <F|D> <size> <name>\n
+LS <id> <index> END\n
+```
+
+Start id=0,index=0, then use the returned id and next index. Only the next index
+is accepted; EOF closes the handle. Directories report size 0. At most 65,535
+entries plus END are accepted. Nonprintable/non-ASCII alias bytes display as `?`.
+LS replies are bounded text lines; no binary body or CRC is needed.
+
+Refusals: `ERR not-ready`, `ERR get command`, `busy`, `range`, `open`,
+`size-or-type`, `stale`, or `read`. They do not set a sticky panel error.
+After timeout, bad framing or CRC, reconnect and restart at id=0 to discard any
+residual bytes. The host validates ids, totals, offsets, counts and CRCs before
+writing an output file. Without an out-file it accepts only UTF-8 text up to
+64 KiB (no controls except CR/LF/tab), printing only content to stdout and
+handshake/status to stderr. Binary or larger files require an out-file.

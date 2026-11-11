@@ -84,6 +84,7 @@ void usb_task(void);
 void usb_host_events(uint32_t *attach,uint32_t *remove); /* host role: attach and remove events TinyUSB saw (for USB.TXT) */
 const char *usb_state(void);
 void protocol_task(void);
+void protocol_card_task(void);
 bool protocol_busy(void);
 bool verify_confirmed(void);
 void protocol_reset(void);

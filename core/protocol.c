@@ -14,6 +14,7 @@ static inline void tud_cdc_read_flush(void) {}
 #endif
 #include "serial.h"
 #include "shot.h"
+#include "assets.h"
 #include "audio_null.h"
 volatile bool usb_reset_seen;
 extern bool storage_ready,updates_ready;
@@ -29,11 +30,19 @@ static bool waiting_stop;
 static unsigned tx_left,tx_took;static uint32_t tx_since;
 #define TX_IDLE_US 2000000u /* a TX body that stalls this long is abandoned (docs/serial.md) */
 static bool shot_drain,shot_limited;static uint32_t shot_since;
+#define GET_PATH_MAX 192u
+#define GET_MAX (4u*1024u*1024u)
+static int get_handle=-1;
+static uint32_t get_id,get_total,get_index,get_activity;
+static bool get_directory;
+static char get_path[GET_PATH_MAX+1];
+static char get_request[256];static bool get_pending,get_request_directory;
+static void get_close(void) {if(get_handle>=0)asset_close(get_handle);get_handle=-1;}
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
-bool protocol_busy(void) {return phase!=0||shot_drain;}
-void protocol_reset(void) {shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
+bool protocol_busy(void) {return phase!=0||shot_drain||get_pending;}
+void protocol_reset(void) {get_pending=false;get_close();shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
 static void refuse(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");phase=0;used=0;overflow=false;putf=false;}
 /* ERR rule: a real error (bad command, storage, CRC, fault) goes through fail(),
    which also sets the e-ink "ERR:" line (sticky). A flow-control refusal, "not-ready"
@@ -71,6 +80,7 @@ static void file_command(const char *p) {
  if(!size||size>FATPUT_MAX) {fail("size");return;}
  if(!storage_ready) {fail("not-ready");return;}
  if(!session||control[4]!=NO_SLOT||os_running()) {refuse("not-ready");return;}
+ get_close();
  expected=size;transport_crc=((uint32_t)crc[0]<<24)|((uint32_t)crc[1]<<16)|((uint32_t)crc[2]<<8)|crc[3];received=0;block_end=size<1024?size:1024;activity=micros();
  putf=true;phase=1;usb_reply("READY 1024\n");
 }
@@ -127,8 +137,66 @@ static void shot_command(const char *p,bool eink) {
  for(unsigned i=0;i<10;i++) {field(fields[i]);usb_reply(i==9?"\n":" ");}
  usb_reply_bytes(s.data,s.count);shot_drain=true;
 }
+/* Card-root paths only, no normalization or parent traversal. ASCII command
+ * framing deliberately leaves spaces/UTF-8 to the existing app asset API. */
+static bool get_path_token(const char **p,char out[GET_PATH_MAX+1]) {
+ unsigned n=0,part=0,depth=0;
+ while(**p&&**p!=' ') {
+  unsigned char c=(unsigned char)*(*p)++;
+  if(n==GET_PATH_MAX||c<33||c>126||c=='\\'||c==':'||c=='*'||c=='?'||c=='"'||c=='<'||c=='>'||c=='|')return false;
+  if(c=='/') {
+   if(n&&(!part||(part==1&&out[n-1]=='.')||(part==2&&out[n-1]=='.'&&out[n-2]=='.')))return false;
+   if(++depth>ASSET_MAX_DEPTH)return false;
+   part=0;
+  } else part++;
+  out[n++]=(char)c;
+ }
+ out[n]=0;
+ return n&&out[0]=='/'&&(n==1||(part&&!(part==1&&out[n-1]=='.')&&!(part==2&&out[n-1]=='.'&&out[n-2]=='.')));
+}
+static void get_command(const char *p,bool directory) {
+ char path[GET_PATH_MAX+1];uint32_t id,offset;
+ if(!session||!storage_ready) {refuse("not-ready");return;}
+ if(!get_path_token(&p,path)||*p++!=' '||!decimal(&p,&id)||*p++!=' '||!decimal(&p,&offset)||*p) {refuse("get command");return;}
+ if(shot_limited&&!expired(shot_since,2000)) {refuse("get busy");return;}
+ shot_limited=true;shot_since=micros();
+ if(!id) {
+  if(offset) {refuse("get range");return;}
+  get_close();
+  get_handle=asset_open(path,(uint32_t)strlen(path),0);
+  if(get_handle<0) {refuse("get open");return;}
+  get_directory=directory;get_index=0;
+  memcpy(get_path,path,strlen(path)+1);
+  if(!++get_id)++get_id;
+  if(asset_size(get_handle,&get_total)||get_total>GET_MAX||(!directory&&asset_seek(get_handle,0))) {
+   get_close();refuse("get size-or-type");return;
+  }
+ } else if(get_handle<0||id!=get_id||directory!=get_directory||strcmp(path,get_path)) {refuse("get stale");return;}
+ get_activity=micros();
+ if(directory) {
+  if(offset!=get_index||offset>=65536) {refuse("get range");return;}
+  struct asset_dirent d;int r=asset_readdir(get_handle,&d);
+  if(r<0) {get_close();refuse("get read");return;}
+  usb_reply("LS ");field(get_id);usb_reply(" ");field(offset);
+  if(!r) {usb_reply(" END\n");get_close();return;}
+  usb_reply(d.is_dir?" D ":" F ");field(d.size);usb_reply(" ");
+  /* Short aliases can contain non-ASCII on foreign cards: replace rather
+   * than inject ambiguous terminal/wire text. */
+  for(unsigned i=0;d.name[i];i++)if((uint8_t)d.name[i]<33||(uint8_t)d.name[i]>126) d.name[i]='?';
+  usb_reply(d.name);usb_reply("\n");get_index++;return;
+ }
+ if(offset%SHOT_CHUNK||offset>get_total||(offset==get_total&&get_total)) {refuse("get range");return;}
+ uint8_t data[SHOT_CHUNK];uint32_t count=get_total-offset;if(count>SHOT_CHUNK)count=SHOT_CHUNK;
+ if(asset_seek(get_handle,offset)||asset_read(get_handle,data,count)!=(int)count) {get_close();refuse("get read");return;}
+ usb_reply("GET ");uint32_t fields[]={get_id,get_total,offset,count,crc32(data,count)};
+ for(unsigned i=0;i<5;i++) {field(fields[i]);usb_reply(i==4?"\n":" ");}
+ usb_reply_bytes(data,count);shot_drain=true;
+ if(offset+count==get_total)get_close();
+}
 static void command_line(void) {
  line[used]=0;
+ if(used>4&&!memcmp(line,"GET ",4)) {memcpy(get_request,line+4,used-3);get_request_directory=false;get_pending=true;return;}
+ if(used>3&&!memcmp(line,"LS ",3)) {memcpy(get_request,line+3,used-2);get_request_directory=true;get_pending=true;return;}
  if(used>9&&!memcmp(line,"EINKSHOT ",9)) {shot_command(line+9,true);return;}
  if(used>7&&!memcmp(line,"FBSHOT ",7)) {shot_command(line+7,false);return;}
  if(!strcmp(line,"STOP")) {
@@ -179,13 +247,16 @@ static void command_line(void) {
  if(*p||size<64||size>MAX_IMAGE) {fail("size");return;}
  if(!storage_ready) {fail("not-ready");return;}
  if(!session||!updates_ready||control[4]!=NO_SLOT) {refuse("not-ready");return;}
+ get_close();
  expected=size;transport_crc=crc;received=0;block_end=size<1024?size:1024;activity=micros();inactive=1-control[3];
  phase=1;usb_reply("READY 1024\n"); /* no panel, hashing or storage here */
 }
 static void work(void) {
+ if(get_handle>=0&&expired(get_activity,2000000))get_close();
  if(usb_reset_seen) {usb_reset_seen=false;protocol_reset();}
  /* STOP can be parsed inside SD service_io. Acknowledge only after the
     main-loop os_task boundary has revoked the old execution context. */
+ if(get_pending)return;
  if(shot_drain) {if(!usb_reply_pending())shot_drain=false;return;}
  /* A capture header and body must start at a clean reply boundary. */
  if(phase==0&&usb_reply_pending())return;
@@ -266,6 +337,14 @@ static void work(void) {
  }
 }
 void protocol_task(void) {if(executing)return;executing=true;work();executing=false;}
+/* Only the foreground main-loop boundary may enter FAT. service_io() can
+ * parse a request during an OS SD operation, but must not reenter SD/assets. */
+void protocol_card_task(void) {
+ if(executing||!get_pending||usb_reply_pending())return;
+ executing=true;get_pending=false;
+ get_command(get_request,get_request_directory);
+ executing=false;
+}
 /* Called once storage metadata exists; reads confirmed payload before PUT2. */
 bool verify_confirmed(void) {uint32_t n;return control[0]==CONTROL_MAGIC&&slot_load(control[3],staging,&n)&&((const uint32_t *)staging)[7]==0;}
 
