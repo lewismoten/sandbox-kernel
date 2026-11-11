@@ -2,6 +2,7 @@
 #pragma once
 #define CFG_TUSB_MCU OPT_MCU_BCM2835
 #define CFG_TUSB_OS OPT_OS_NONE
+#define CFG_TUD_TASK_EVENTS_PER_RUN 4
 #ifdef USB_ROLE_HOST
 /* USB_ROLE=host: the one port is a host: HID keyboards, one hub, PIO. Devices behind the hub are the receiver and up to two keyboards. */
 #define CFG_TUSB_RHPORT0_MODE (OPT_MODE_HOST | OPT_MODE_HIGH_SPEED)
@@ -19,7 +20,7 @@
 #define CFG_TUH_HID_EPIN_BUFSIZE 64
 #define CFG_TUH_ENDPOINT_MAX 16
 /* TinyUSB 0.21's dwc2_bcm.h has the device interrupt switch only; hcd_dwc2.c wants this one. */
-#define dwc2_int_set(_rhport, _role, _on) ((_on) ? BP_EnableIRQ(_dwc2_controller[_rhport].irqnum) : BP_DisableIRQ(_dwc2_controller[_rhport].irqnum))
+#define dwc2_int_set(_rhport, _role, _on) ((_on) ? (usb_wait_failed() ? (void)0 : BP_EnableIRQ(_dwc2_controller[_rhport].irqnum)) : BP_DisableIRQ(_dwc2_controller[_rhport].irqnum))
 #else
 #define CFG_TUSB_RHPORT0_MODE (OPT_MODE_DEVICE | OPT_MODE_HIGH_SPEED)
 #define CFG_TUD_ENABLED 1

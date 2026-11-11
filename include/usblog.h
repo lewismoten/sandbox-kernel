@@ -9,6 +9,7 @@
 #define USBLOG_MAX 8192 /* bytes kept; later lines are dropped after one "log full" line */
 #define USBLOG_LINE 96
 void usblog_clear(void);
+void usblog_add_critical(const char *line); /* retain a terminal fault even after log full */
 void usblog_add(const char *line);            /* appends line + '\n' */
 const char *usblog_text(uint32_t *bytes);
 uint32_t usblog_version(void);                /* changes whenever text is added */

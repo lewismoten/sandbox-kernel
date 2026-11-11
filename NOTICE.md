@@ -89,6 +89,12 @@ Reinhard Panhuber and other listed authors, are retained in
 replaces the whole `third_party/tinyusb` folder and writes `SHA256.json` with the hash of every retained file.
 Host builds apply the MIT-licensed local `patches/tinyusb-0.21-host.patch` to generated copies
 of `usbh.c` and `hub.c` in `build/tinyusb-host`; the fetched sources remain unchanged.
+Both roles also apply the local MIT-licensed `patches/tinyusb-0.21-bounded.patch`
+to verified copies in `build/tinyusb-bounded`. The original DWC2 implementation
+and its upstream notices are retained; local changes add deadlines, timeout
+propagation and interrupt quarantine. Original kernel glue, counters and tests
+are in `drivers/usb_wait.c`, `include/usb_wait.h`, and `tests/usb_wait.c`. See
+[USB latency bounds](docs/usb-bounded-waits.md) for the loop inventory and validation limits.
 
 V4 reset/register/waveform facts and sequence were adapted independently from
 Waveshare team's `EPD_2in13_V4.c` (V1.1, 2021-10-30) at commit

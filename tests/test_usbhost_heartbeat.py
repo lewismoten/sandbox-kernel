@@ -38,20 +38,32 @@ class USBHeartbeat(test_m1_user.Work):
 #include "usblog.h"
 static bool initialized=true;
 static uint32_t delay;
+static bool stalled_register;
+void advance(uint32_t us);
+static uint32_t usb_poll_micros(void) {advance(1);return micros();}
+void idle_wait(uint32_t us) {advance(us);}
+#define micros usb_poll_micros
+#include "drivers/usb_wait.c"
+#undef micros
+void host_stuck_register(void) {stalled_register=true;}
+
 unsigned usb_wait_requested;
 void advance(uint32_t us);
 void host_delay(uint32_t us) {delay=us;}
 static void tuh_task_ext(uint32_t timeout,bool isr) {
  if(timeout||isr) usb_wait_requested++;
- advance(delay);
+ if(stalled_register) {
+  static volatile uint32_t reg;
+  (void)usb_wait_reg(&reg,1,1,USB_WAIT_REG_US,USB_WAIT_AHB);
+ } else advance(delay);
 }
-static void watchdog(void) {}
+static void watchdog(void) {usb_wait_report();}
 static void lg(const char *s) {usblog_add(s);}
 ''' + task)
         link = ['-Wl,-Bsymbolic'] if sys.platform.startswith('linux') else []
         subprocess.run(['cc', '-shared', '-fPIC', '-O1', '-fno-builtin', '-DHOST_TEST',
                         '-D_FORTIFY_SOURCE=0', '-Wall', '-Wextra', '-Werror', *link,
-                        '-I' + str(ROOT / 'tests/stubs'), '-I' + str(ROOT / 'include'),
+                        '-I' + str(ROOT), '-I' + str(ROOT / 'tests/stubs'), '-I' + str(ROOT / 'include'),
                         *[str(ROOT / s) for s in hostlib.SOURCES], str(helper),
                         '-o', str(cls.work / 'core.dylib')], check=True)
 
@@ -119,3 +131,23 @@ static void lg(const char *s) {usblog_add(s);}
         self.assertEqual(C.c_uint64.in_dll(self.c, 'sys_wake_us').value, 0)
         self.c.os_handle(2, 0, 0)
         self.assertTrue(self.c.os_running())
+
+    def test_stuck_register_returns_to_running_os(self):
+        self.start()
+        self.c.usb_wait_failed.restype = C.c_bool
+        self.c.host_stuck_register()
+        begin = self.c.clock_us()
+        self.c.usb_task()
+        self.assertLessEqual(self.c.clock_us() - begin, 105)
+        self.assertTrue(self.c.usb_wait_failed())
+        size = C.c_uint32()
+        self.assertIn(b'DWC2 timeout AHB idle count=1', self.c.usblog_text(C.byref(size)))
+        for tick in range(4000):
+            self.c.usb_task()
+            self.c.advance(1000)
+            if tick % 500 == 0:
+                C.c_uint32.in_dll(self.c, 'sys_healths').value += 1
+            self.c.os_handle(2, 0, 0)
+            self.assertTrue(self.c.os_running())
+        self.assertEqual(C.c_uint32.in_dll(self.c, 'os_starts').value, 1)
+        self.assertNotIn(b'OS fault', self.c.take_log())

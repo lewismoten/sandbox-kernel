@@ -106,8 +106,9 @@ void kernel_main(void) {
  bool trial=h[3]==1&&control[0]==CONTROL_MAGIC&&control[4]==boot_slot&&control[5]&&control[7]==boot_generation;
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
 #if USB_ROLE_HOST
- unsigned kbd_seen=0,kbd_saved=0,usb_saves=0;bool usb_dirty=false;uint32_t kbd_since=micros(),usb_ver=0,usb_since=micros();
+ unsigned kbd_seen=0,kbd_saved=0;uint32_t kbd_since=micros();
 #endif
+ unsigned usb_saves=0;bool usb_dirty=false;uint32_t usb_ver=0,usb_since=micros();
  if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
   clock_us();audio_null_task();usb_task();protocol_task();protocol_card_task();os_task();cec_hw_task();
@@ -115,12 +116,18 @@ void kernel_main(void) {
   /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}
   else if(kbd_seen!=kbd_saved&&expired(kbd_since,2000000)) {if(storage_ready&&!os_running()) {kbd_saved=kbd_seen;char t[28]="Keyboards found: ";t[17]=(char)('0'+(kbd_seen>9?9:kbd_seen));t[18]=0;log_line(t);bootrec_keyboards(kbd_seen);}}
+#endif
   /* USB.TXT: saved once the log has been quiet for 1.5 s (at most 12 times a boot, and not once the OS runs) */
   if(usblog_version()!=usb_ver) {usb_ver=usblog_version();usb_since=micros();usb_dirty=true;}
   else if(usb_dirty&&usb_saves<12&&expired(usb_since,1500000)&&storage_ready&&!os_running()) {
-   usb_saves++;usb_dirty=false;uint32_t a,r;usb_host_events(&a,&r);bootrec_usblog(a,r);usb_ver=usblog_version();
-  }
+   usb_saves++;usb_dirty=false;uint32_t a,r;
+#if USB_ROLE_HOST
+   usb_host_events(&a,&r);
+#else
+   a=r=0;
 #endif
+   bootrec_usblog(a,r);usb_ver=usblog_version();
+  }
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;

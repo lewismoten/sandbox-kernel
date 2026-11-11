@@ -10,6 +10,7 @@
 #include "host-clock.h"
 #endif
 static uint32_t now;
+bool usb_wait_failed(void) {return false;}
 static unsigned setups, callbacks, retry_logs, enum_success, port_logs, polls;
 static bool submit_ok=true;
 static bool poll_submit_ok=true;
@@ -149,6 +150,11 @@ int main(void) {
  raw_us=1500;assert(host_clock_from_micros()==before_wrap+2);
 #endif
  reset();
+ // No callback means a synchronous call: refuse before claiming or queuing it.
+ tusb_control_request_t sync_request={.bmRequestType=0x80,.bRequest=TUSB_REQ_GET_DESCRIPTOR};
+ tuh_xfer_t sync={.daddr=1,.setup=&sync_request};
+ assert(!tuh_control_xfer(&sync));
+ assert(_usbh_data.ctrl_xfer_info.stage==CONTROL_STAGE_IDLE&&setups==0);
  // A controller can accept SETUP and never complete it for four seconds.
  // Every main-loop pass still returns so OS ticks/health calls can run.
  start();unsigned os_ticks=0, stalled_at=now;

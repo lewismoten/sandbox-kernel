@@ -8,6 +8,7 @@
 #include "usbkbd.h"
 #include "usblog.h"
 #include "usbhost_hooks.h"
+#include "usb_wait.h"
 #include "host/hcd.h"
 static bool initialized;
 static const char *init_fail="unavailable";
@@ -63,7 +64,10 @@ bool tuh_enum_descriptor_configuration_cb(uint8_t daddr,uint8_t cfg_index,const 
  }
  return true;
 }
-void usb_irq(void) {if(initialized)tuh_int_handler(0,true);}
+void usb_irq(void) {
+ if(initialized&&!usb_wait_failed()) tuh_int_handler(0,true);
+ if(usb_wait_failed()) hcd_int_disable(0);
+}
 void tuh_mount_cb(uint8_t daddr) {
  uint16_t vid=0,pid=0;tuh_vid_pid_get(daddr,&vid,&pid);usbkbd_attached(vid,pid);
  char l[USBLOG_LINE];usblog_fmt_note(l,daddr,0xFF,"mounted (configuration set, every driver done)");lg(l);dv_done(daddr,false);
@@ -109,7 +113,7 @@ void usb_init(void) {
  if(!property(0x28001,p,2)) {init_fail="USB POWER";error("USB POWER");log_line(property_fail);return;}
  usbkbd_init();
  initialized=true;
- if(!tusb_init()) {initialized=false;init_fail="TUSB HOST INIT";error("USB host init failed");return;}
+ if(!tusb_init()) {usb_wait_report();hcd_int_disable(0);initialized=false;init_fail="TUSB HOST INIT";error("USB host init failed");return;}
  usbkbd_host_up();usblog_add("host up: DWC2 host, TinyUSB 0.21, hubs and splits as configured");
 }
 void usb_reply_bytes(const uint8_t *p,uint32_t n) {(void)p;(void)n;}
@@ -118,6 +122,12 @@ bool usb_reply_pending(void) {return false;}
 void usb_log(const char *s) {(void)s;}
 /* A device that was read but never mounted within 4 s: say so once (TinyUSB drops a failed enumeration silently). */
 static void watchdog(void) {
+ usb_wait_report();
+ if(usb_wait_failed()) {
+  hcd_int_disable(0);initialized=false;init_fail="DWC2 TIMEOUT";
+  for(uint8_t d=1;d<=CFG_TUH_DEVICE_MAX+CFG_TUH_HUB;d++) usbkbd_device_gone(d);
+  return;
+ }
  for(unsigned i=0;i<8;i++) if(dv[i].d&&!dv[i].mounted&&!dv[i].warned&&expired(dv[i].t,4000000)) {
   dv[i].warned=true;lg("USB stall absorbed: enumeration pending; kernel loop continues");char l[USBLOG_LINE];usblog_fmt_note(l,dv[i].d,0xFF,"NOT MOUNTED after 4 s: enumeration incomplete (see CTRL/retry lines)");lg(l);
  }
@@ -161,4 +171,4 @@ uint32_t tusb_time_millis_api(void) {
  static uint32_t last,ms,remainder;uint32_t now=micros(),delta=now-last;last=now;
  ms+=delta/1000;remainder+=delta%1000;ms+=remainder/1000;remainder%=1000;return ms;
 }
-bool usb_healthy(void) {return initialized;}
+bool usb_healthy(void) {return initialized&&!usb_wait_failed();}

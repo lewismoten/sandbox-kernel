@@ -11,6 +11,17 @@ void usblog_add(const char *line) {
  for(uint32_t i=0;i<n;i++) buf[len++]=line[i]=='\n'||line[i]=='\r'?' ':line[i];
  buf[len++]='\n';buf[len]=0;ver++;
 }
+/* A terminal controller fault must remain visible after enumeration filled the
+ * log. Replace at most the last two lines' worth, retaining the earlier record. */
+void usblog_add_critical(const char *line) {
+ if(full||len+USBLOG_LINE>USBLOG_MAX-12) {
+  uint32_t keep=len>2*USBLOG_LINE?len-2*USBLOG_LINE:0;
+  while(keep&&buf[keep-1]!='\n') keep--;
+  len=keep;buf[len]=0;full=false;
+  usblog_add("log tail replaced for terminal fault");
+ }
+ usblog_add(line);
+}
 const char *usblog_text(uint32_t *bytes) {if(bytes)*bytes=len;return buf;}
 uint32_t usblog_version(void) {return ver;}
 static unsigned put(char *o,unsigned at,const char *s) {while(*s&&at<USBLOG_LINE-1)o[at++]=*s++;o[at]=0;return at;}

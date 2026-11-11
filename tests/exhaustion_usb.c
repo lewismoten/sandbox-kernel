@@ -26,7 +26,11 @@ bool tusb_init(void) {return true;}
 bool tud_deinit(uint8_t port) {(void)port;return true;}
 uint32_t tud_cdc_write_available(void) {return credits;}
 uint32_t tud_cdc_available(void) {return incoming;}
-void tud_task(void) {tasks++;}
+void tud_task_ext(uint32_t timeout,bool in_isr) {assert(!timeout&&!in_isr);tasks++;}
+void dcd_int_disable(uint8_t port) {(void)port;}
+bool usb_wait_failed(void) {return false;}
+void usb_wait_report(void) {}
+void idle_wait(uint32_t us) {(void)us;}
 void tud_cdc_write_char(char c) {
  assert(credits && sent+1<sizeof wire); credits--; wire[sent++]=c;wire[sent]=0;
 }

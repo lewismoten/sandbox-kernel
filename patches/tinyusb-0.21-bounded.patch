@@ -1,0 +1,756 @@
+--- device/usbd.c
++++ device/usbd.c
+@@ -694,7 +694,7 @@
+   }
+
+   // Loop until there are no more events in the queue or CFG_TUD_TASK_EVENTS_PER_RUN is reached
+-  for (unsigned epr = 0;; epr++) {
++  for (unsigned epr = 0; !usb_wait_failed(); epr++) {
+ #if CFG_TUD_TASK_EVENTS_PER_RUN > 0
+     if (epr >= CFG_TUD_TASK_EVENTS_PER_RUN) {
+       TU_LOG_USBD("USBD event limit (" TU_XSTRING(CFG_TUD_TASK_EVENTS_PER_RUN) ") reached\r\n");
+--- osal/osal_none.h
++++ osal/osal_none.h
+@@ -26,6 +26,7 @@
+
+ #ifndef TUSB_OSAL_NONE_H_
+ #define TUSB_OSAL_NONE_H_
++#include "usb_wait.h"
+
+ #ifdef __cplusplus
+ extern "C" {
+@@ -125,7 +126,10 @@
+ TU_ATTR_ALWAYS_INLINE static inline bool osal_semaphore_wait(osal_semaphore_t sem_hdl, uint32_t msec) {
+   (void) msec;
+
+-  while (sem_hdl->count == 0) {}
++  if (sem_hdl->count == 0) {
++    usb_wait_timeout(USB_WAIT_SEMAPHORE);
++    return false;
++  }
+   sem_hdl->count--;
+
+   return true;
+--- portable/synopsys/dwc2/dcd_dwc2.c
++++ portable/synopsys/dwc2/dcd_dwc2.c
+@@ -303,7 +303,7 @@
+   dwc2->daintmsk |= TU_BIT(epnum + DAINT_SHIFT(dir));
+ }
+
+-static void edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
++static bool edpt_disable(uint8_t rhport, uint8_t ep_addr, bool stall) {
+   (void) rhport;
+
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+@@ -319,17 +319,17 @@
+     } else {
+       // Stop transmitting packets and NAK IN xfers.
+       dep->diepctl |= DIEPCTL_SNAK;
+-      while ((dep->diepint & DIEPINT_INEPNE) == 0) {}
++      if (!dwc2_wait(dwc2, &dep->diepint, DIEPINT_INEPNE, DIEPINT_INEPNE, USB_WAIT_REG_US, USB_WAIT_IN_NAK)) return false;
+
+       // Disable the endpoint.
+       dep->diepctl |= DIEPCTL_EPDIS | stall_mask;
+-      while ((dep->diepint & DIEPINT_EPDISD_Msk) == 0) {}
++      if (!dwc2_wait(dwc2, &dep->diepint, DIEPINT_EPDISD_Msk, DIEPINT_EPDISD_Msk, USB_WAIT_REG_US, USB_WAIT_IN_DISABLE)) return false;
+
+       dep->diepint = DIEPINT_EPDISD;
+     }
+
+     // Flush the FIFO, and wait until we have confirmed it cleared.
+-    dfifo_flush_tx(dwc2, epnum);
++    if (!dfifo_flush_tx(dwc2, epnum)) return false;
+   } else {
+     if (!edpt_is_enabled(dep) || epnum == 0) {
+       // non-control not-enabled: stall if set
+@@ -338,14 +338,13 @@
+     } else {
+       // Asserting GONAK is required to STALL an OUT endpoint.
+       // Simpler to use polling here, we don't use the "B"OUTNAKEFF interrupt
+-      // anyway, and it can't be cleared by user code. If this while loop never
+-      // finishes, we have bigger problems than just the stack.
++      // anyway. Fail closed if hardware never acknowledges the NAK.
+       dwc2->dctl |= DCTL_SGONAK;
+-      while ((dwc2->gintsts & GINTSTS_BOUTNAKEFF_Msk) == 0) {}
++      if (!dwc2_wait(dwc2, &dwc2->gintsts, GINTSTS_BOUTNAKEFF_Msk, GINTSTS_BOUTNAKEFF_Msk, USB_WAIT_REG_US, USB_WAIT_OUT_NAK)) return false;
+
+       // Ditto here disable the endpoint.
+       dep->doepctl |= DOEPCTL_EPDIS | stall_mask;
+-      while ((dep->doepint & DOEPINT_EPDISD_Msk) == 0) {}
++      if (!dwc2_wait(dwc2, &dep->doepint, DOEPINT_EPDISD_Msk, DOEPINT_EPDISD_Msk, USB_WAIT_REG_US, USB_WAIT_OUT_DISABLE)) return false;
+
+       dep->doepint = DOEPINT_EPDISD;
+
+@@ -358,6 +357,7 @@
+   if (!stall && epnum != 0) {
+     dep->ctl &= ~EPCTL_USBAEP;
+   }
++  return true;
+ }
+
+ // Since this function returns void, it is not possible to return a boolean success message
+@@ -605,6 +605,7 @@
+  *------------------------------------------------------------------*/
+
+ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const* desc_edpt) {
++  if (usb_wait_failed()) return false;
+   TU_ASSERT(dfifo_alloc(rhport, desc_edpt->bEndpointAddress, tu_edpt_packet_size(desc_edpt),
+                        desc_edpt->bmAttributes.xfer == TUSB_XFER_BULK));
+   edpt_activate(rhport, desc_edpt);
+@@ -633,8 +634,10 @@
+     }
+   }
+
+-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
+-  dfifo_flush_rx(dwc2);
++  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) {
++    usbd_spin_unlock(false);
++    return;
++  }
+   dfifo_device_init(rhport); // re-init dfifo
+
+   usbd_spin_unlock(false);
+@@ -647,12 +650,13 @@
+
+ bool dcd_edpt_iso_activate(uint8_t rhport,  tusb_desc_endpoint_t const * p_endpoint_desc) {
+   // Disable EP to clear potential incomplete transfers
+-  edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false);
++  if (!edpt_disable(rhport, p_endpoint_desc->bEndpointAddress, false)) return false;
+   edpt_activate(rhport, p_endpoint_desc);
+   return true;
+ }
+
+ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t* buffer, uint16_t total_bytes, bool is_isr) {
++  if (usb_wait_failed()) return false;
+   (void) is_isr;
+   uint8_t const epnum = tu_edpt_number(ep_addr);
+   uint8_t const dir = tu_edpt_dir(ep_addr);
+@@ -689,6 +693,7 @@
+ // success message. If total_bytes is too big, the FIFO will copy only what is available
+ // into the USB buffer!
+ bool dcd_edpt_xfer_fifo(uint8_t rhport, uint8_t ep_addr, tu_fifo_t* ff, uint16_t total_bytes, bool is_isr) {
++  if (usb_wait_failed()) return false;
+   (void) is_isr;
+   uint8_t const epnum = tu_edpt_number(ep_addr);
+   uint8_t const dir = tu_edpt_dir(ep_addr);
+@@ -718,7 +723,7 @@
+
+ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr) {
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+-  edpt_disable(rhport, ep_addr, true);
++  if (!edpt_disable(rhport, ep_addr, true)) return;
+
+   // For control endpoint, prepare to receive SETUP packet
+   if (tu_edpt_number(ep_addr) == 0) {
+@@ -773,8 +778,7 @@
+   dwc2->diepmsk = DIEPMSK_TOM | DIEPMSK_XFRCM;
+
+   // 4. Set up DFIFO
+-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
+-  dfifo_flush_rx(dwc2);
++  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) return;
+   dfifo_device_init(rhport);
+
+   // 5. Reset device address
+@@ -928,7 +932,7 @@
+       epout->doeptsiz |= (3 << DOEPTSIZ_STUPCNT_Pos);
+       epout->doepint = DOEPINT_SETUP | DOEPINT_STPKTRX; // Clear SETUP interrupt, required for core to re-write this control word
+       if (edpt_is_enabled(&dwc2->epin[0])) {
+-        edpt_disable(rhport, 0x80, false);
++        if (!edpt_disable(rhport, 0x80, false)) return;
+       }
+       dcd_event_setup_received(rhport, _dcd_usbbuf.setup_buffer, true);
+       break;
+@@ -1026,7 +1030,7 @@
+     dwc2_dep_t* epin0 = &dwc2->epin[0];
+     dwc2_dep_t* epout0 = &dwc2->epout[0];
+     if (edpt_is_enabled(epin0)) {
+-      edpt_disable(rhport, 0x80, false);
++      if (!edpt_disable(rhport, 0x80, false)) return;
+     }
+
+     dcd_dcache_invalidate(_dcd_usbbuf.setup_buffer, sizeof(_dcd_usbbuf.setup_buffer));
+@@ -1158,7 +1162,7 @@
+         epin->diepctl = depctl.value;
+       } else {
+         // too many retries, give up, but keep endpoint activated
+-        edpt_disable(rhport, epnum | TUSB_DIR_IN_MASK, false);
++        if (!edpt_disable(rhport, epnum | TUSB_DIR_IN_MASK, false)) return;
+         epin->diepctl |= DIEPCTL_USBAEP;
+         dcd_event_xfer_complete(rhport, epnum | TUSB_DIR_IN_MASK, 0, XFER_RESULT_FAILED, true);
+       }
+@@ -1179,6 +1183,7 @@
+   are combined to generate dedicated interrupt line for each endpoint.
+  */
+ void dcd_int_handler(uint8_t rhport) {
++  if (usb_wait_failed()) return;
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+   const uint32_t gintmask = dwc2->gintmsk;
+   const uint32_t gintsts = dwc2->gintsts & gintmask;
+@@ -1190,6 +1195,7 @@
+     usbd_spin_lock(true);
+     handle_bus_reset(rhport);
+     usbd_spin_unlock(true);
++    if (usb_wait_failed()) return;
+   }
+
+   if (gintsts & GINTSTS_ENUMDNE) {
+@@ -1253,7 +1259,9 @@
+     // RXFLVL bit is read-only
+     dwc2->gintmsk &= ~GINTMSK_RXFLVLM; // disable RXFLVL interrupt while reading
+
++    uint32_t start = usb_wait_now();
+     do {
++      if (!dwc2_rx_budget(dwc2, start)) return;
+       handle_rxflvl_irq(rhport); // read all packets
+     } while(dwc2->gintsts & GINTSTS_RXFLVL);
+
+@@ -1262,6 +1270,8 @@
+ #endif
+
+ #if CFG_TUD_DWC2_DMA_ENABLE
++  if (usb_wait_failed()) return;
++
+   // OUT endpoint interrupt handling.
+   if (gintsts & GINTSTS_OEPINT) {
+     // OEPINT is read-only, clear using DOEPINTn
+--- portable/synopsys/dwc2/dwc2_bcm.h
++++ portable/synopsys/dwc2/dwc2_bcm.h
+@@ -55,7 +55,7 @@
+ TU_ATTR_ALWAYS_INLINE
+ static inline void dwc2_dcd_int_enable(uint8_t rhport)
+ {
+-  BP_EnableIRQ(_dwc2_controller[rhport].irqnum);
++  if (!usb_wait_failed()) BP_EnableIRQ(_dwc2_controller[rhport].irqnum);
+ }
+
+ TU_ATTR_ALWAYS_INLINE
+--- portable/synopsys/dwc2/dwc2_common.c
++++ portable/synopsys/dwc2/dwc2_common.c
+@@ -34,10 +34,9 @@
+ //--------------------------------------------------------------------
+ //
+ //--------------------------------------------------------------------
+-static void reset_core(dwc2_regs_t* dwc2) {
++static bool reset_core(dwc2_regs_t* dwc2) {
+   // The software must check that bit 31 in this register is set to 1 (AHB Master is Idle) before starting any operation
+-  while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {
+-  }
++  if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_REG_US, USB_WAIT_AHB)) return false;
+
+   const uint32_t gsnpsid = dwc2->gsnpsid; // preload gsnpsid which is not readable while resetting
+   dwc2->grstctl |= GRSTCTL_CSRST; // reset core
+@@ -46,19 +45,19 @@
+     // prior v4.20a: CSRST is self-clearing, and the core clears this bit after all the necessary logic is reset in
+     // the core, which can take several clocks, depending on the current state of the core. Once this bit has been
+     // cleared, the software must wait at least 3 PHY clocks before accessing the PHY domain (synchronization delay).
+-    while (dwc2->grstctl & GRSTCTL_CSRST) {}
++    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST, 0, USB_WAIT_REG_US, USB_WAIT_RESET)) return false;
+   } else {
+     // From v4.20a: CSRST bit is write only. The application must clear this bit after checking the bit 29 of this
+     // register i.e Core Soft Reset Done CSRT_DONE (w1c)
+-    while (!(dwc2->grstctl & GRSTCTL_CSRST_DONE)) {}
++    if (!dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_CSRST_DONE, GRSTCTL_CSRST_DONE, USB_WAIT_REG_US, USB_WAIT_RESET_DONE)) return false;
+     dwc2->grstctl = (dwc2->grstctl & ~GRSTCTL_CSRST) | GRSTCTL_CSRST_DONE;
+   }
+
+-  while (!(dwc2->grstctl & GRSTCTL_AHBIDL)) {} // wait for AHB master IDLE
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_AHBIDL, GRSTCTL_AHBIDL, USB_WAIT_REG_US, USB_WAIT_AHB);
+ }
+
+ // Dedicated FS PHY is internal with a clock 48Mhz.
+-static void phy_fs_init(dwc2_regs_t* dwc2) {
++static bool phy_fs_init(dwc2_regs_t* dwc2) {
+   TU_LOG(DWC2_COMMON_DEBUG, "Fullspeed PHY init\r\n");
+
+   uint32_t gusbcfg = dwc2->gusbcfg;
+@@ -71,7 +70,7 @@
+   dwc2_phy_init(dwc2, GHWCFG2_HSPHY_NOT_SUPPORTED);
+
+   // Reset core after selecting PHY
+-  reset_core(dwc2);
++  if (!reset_core(dwc2)) return false;
+
+   // USB turnaround time is critical for certification where long cables and 5-Hubs are used.
+   // So if you need the AHB to run at less than 30 MHz, and if USB turnaround time is not critical,
+@@ -82,6 +81,7 @@
+
+   // MCU specific PHY update post reset
+   dwc2_phy_update(dwc2, GHWCFG2_HSPHY_NOT_SUPPORTED);
++  return true;
+ }
+
+ /* dwc2 has 2 highspeed PHYs options
+@@ -90,7 +90,7 @@
+  *
+  * In addition, UTMI+/ULPI can be shared to run at fullspeed mode with 48Mhz
+  */
+-static void phy_hs_init(dwc2_regs_t* dwc2) {
++static bool phy_hs_init(dwc2_regs_t* dwc2) {
+   uint32_t gusbcfg = dwc2->gusbcfg;
+   const dwc2_ghwcfg2_t ghwcfg2 = {.value = dwc2->ghwcfg2};
+   const dwc2_ghwcfg4_t ghwcfg4 = {.value = dwc2->ghwcfg4};
+@@ -144,7 +144,7 @@
+   dwc2_phy_init(dwc2, ghwcfg2.hs_phy_type);
+
+   // Reset core after selecting PHY
+-  reset_core(dwc2);
++  if (!reset_core(dwc2)) return false;
+
+   // Set turn-around, must after core reset otherwise it will be clear
+   // - 9 if using 8-bit PHY interface
+@@ -155,6 +155,7 @@
+
+   // MCU specific PHY update post reset
+   dwc2_phy_update(dwc2, ghwcfg2.hs_phy_type);
++  return true;
+ }
+
+ static bool check_dwc2(dwc2_regs_t* dwc2) {
+@@ -206,9 +207,9 @@
+   dwc2->gahbcfg &= ~GAHBCFG_GINT;
+
+   if (is_hs_phy) {
+-    phy_hs_init(dwc2);
+-  } else {
+-    phy_fs_init(dwc2);
++    if (!phy_hs_init(dwc2)) return false;
++  } else {
++    if (!phy_fs_init(dwc2)) return false;
+   }
+
+   /* Set HS/FS Timeout Calibration to 7 (max available value).
+@@ -223,8 +224,7 @@
+   // Enable PHY clock TODO stop/gate clock when suspended mode
+   dwc2->pcgcctl &= ~(PCGCCTL_STOPPCLK | PCGCCTL_GATEHCLK | PCGCCTL_PWRCLMP | PCGCCTL_RSTPDWNMODULE);
+
+-  dfifo_flush_tx(dwc2, 0x10); // all tx fifo
+-  dfifo_flush_rx(dwc2);
++  if (!dfifo_flush_tx(dwc2, 0x10) || !dfifo_flush_rx(dwc2)) return false;
+
+   // Clear pending and disable all interrupts
+   dwc2->gintsts = 0xFFFFFFFFU;
+@@ -250,7 +250,7 @@
+   dwc2->gahbcfg &= ~GAHBCFG_GINT;
+
+   // Reset core: this also flushes FIFOs and clears all interrupt registers
+-  reset_core(dwc2);
++  if (!reset_core(dwc2)) return;
+
+   // Stop PHY clock and gate HCLK for power saving (per databook chapter 14)
+   dwc2->pcgcctl |= PCGCCTL_STOPPCLK | PCGCCTL_GATEHCLK;
+--- portable/synopsys/dwc2/dwc2_common.h
++++ portable/synopsys/dwc2/dwc2_common.h
+@@ -29,6 +29,7 @@
+
+ #include "common/tusb_common.h"
+ #include "dwc2_type.h"
++#include "usb_wait.h"
+
+ #if CFG_TUD_ENABLED
+ #include "device/dcd.h"
+@@ -79,6 +80,7 @@
+ //--------------------------------------------------------------------+
+ // Core/Controller
+ //--------------------------------------------------------------------+
++#ifndef DWC2_REG
+ TU_ATTR_ALWAYS_INLINE static inline dwc2_regs_t* DWC2_REG(uint8_t rhport) {
+   if (rhport >= DWC2_CONTROLLER_COUNT) {
+     // user mis-configured, ignore and use first controller
+@@ -87,7 +89,25 @@
+   return (dwc2_regs_t*)_dwc2_controller[rhport].reg_base;
+ }
+
+-// check if highspeed phy should be used
++#endif
++
++/* Quarantine immediately, including inside an ISR. Foreground reports counters
++ * and marks the stack unhealthy; no logging or recursive USB service in IRQ. */
++static inline bool dwc2_wait(dwc2_regs_t *dwc2, volatile const uint32_t *reg,
++                             uint32_t mask, uint32_t value, uint32_t us, enum usb_wait_kind kind) {
++  if (usb_wait_reg(reg, mask, value, us, kind)) return true;
++  dwc2->gintmsk = 0;
++  dwc2->gahbcfg &= ~GAHBCFG_GINT;
++  return false;
++}
++static inline bool dwc2_rx_budget(dwc2_regs_t *dwc2, uint32_t start) {
++  if ((uint32_t)(usb_wait_now()-start) < USB_WAIT_IRQ_US) return true;
++  usb_wait_timeout(USB_WAIT_RX_IRQ);
++  dwc2->gintmsk = 0;
++  dwc2->gahbcfg &= ~GAHBCFG_GINT;
++  return false;
++}
++
+ bool dwc2_core_is_highspeed_phy(dwc2_regs_t* dwc2, bool prefer_hs_phy);
+ bool dwc2_core_init(uint8_t rhport, bool is_hs_phy, bool is_dma);
+ void dwc2_core_deinit(uint8_t rhport);
+@@ -96,16 +116,16 @@
+ //--------------------------------------------------------------------+
+ // DFIFO
+ //--------------------------------------------------------------------+
+-TU_ATTR_ALWAYS_INLINE static inline void dfifo_flush_tx(dwc2_regs_t* dwc2, uint8_t fnum) {
++TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_tx(dwc2_regs_t* dwc2, uint8_t fnum) {
+   // flush TX fifo and wait for it cleared
+   dwc2->grstctl = GRSTCTL_TXFFLSH | (fnum << GRSTCTL_TXFNUM_Pos);
+-  while (0 != (dwc2->grstctl & GRSTCTL_TXFFLSH_Msk)) {}
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_TXFFLSH_Msk, 0, USB_WAIT_REG_US, USB_WAIT_TX_FLUSH);
+ }
+
+-TU_ATTR_ALWAYS_INLINE static inline void dfifo_flush_rx(dwc2_regs_t* dwc2) {
++TU_ATTR_ALWAYS_INLINE static inline bool dfifo_flush_rx(dwc2_regs_t* dwc2) {
+   // flush RX fifo and wait for it cleared
+   dwc2->grstctl = GRSTCTL_RXFFLSH;
+-  while (0 != (dwc2->grstctl & GRSTCTL_RXFFLSH_Msk)) {}
++  return dwc2_wait(dwc2, &dwc2->grstctl, GRSTCTL_RXFFLSH_Msk, 0, USB_WAIT_REG_US, USB_WAIT_RX_FLUSH);
+ }
+
+ void dfifo_read_packet(dwc2_regs_t* dwc2, uint8_t* dst, uint16_t len);
+--- portable/synopsys/dwc2/hcd_dwc2.c
++++ portable/synopsys/dwc2/hcd_dwc2.c
+@@ -165,7 +165,7 @@
+ // Allocate a channel for new transfer
+ TU_ATTR_ALWAYS_INLINE static inline uint8_t channel_alloc(dwc2_regs_t* dwc2) {
+   const uint8_t max_channel = dwc2_channel_count(dwc2);
+-  for (uint8_t ch_id = 0; ch_id < max_channel; ch_id++) {
++  for (uint8_t ch_id = 0; ch_id < max_channel && !usb_wait_failed(); ch_id++) {
+     hcd_xfer_t* xfer = &_hcd_data.xfer[ch_id];
+     if (!xfer->allocated) {
+       tu_memclr(xfer, sizeof(hcd_xfer_t));
+@@ -198,7 +198,21 @@
+   dwc2->haintmsk &= ~TU_BIT(ch_id);
+ }
+
+-TU_ATTR_ALWAYS_INLINE static inline bool channel_disable(const dwc2_regs_t* dwc2, dwc2_channel_t* channel) {
++static bool channel_wait_queue(dwc2_regs_t *dwc2, bool periodic) {
++  uint32_t start = usb_wait_now();
++  while (!req_queue_avail(dwc2, periodic)) {
++    if (usb_wait_failed()) return false;
++    if ((uint32_t)(usb_wait_now()-start) >= USB_WAIT_REG_US) {
++      usb_wait_timeout(USB_WAIT_REQUEST);
++      dwc2->gintmsk = 0;
++      dwc2->gahbcfg &= ~GAHBCFG_GINT;
++      return false;
++    }
++  }
++  return !usb_wait_failed();
++}
++
++TU_ATTR_ALWAYS_INLINE static inline bool channel_disable(dwc2_regs_t* dwc2, dwc2_channel_t* channel) {
+   const bool is_period = channel_is_periodic(channel->hcchar);
+   if (dma_host_enabled(dwc2)) {
+     // In buffer DMA or external DMA mode:
+@@ -210,9 +224,7 @@
+       return true;
+     }
+   } else {
+-    while (0 == req_queue_avail(dwc2, is_period)) {
+-      // blocking wait for request queue available
+-    }
++    if (!channel_wait_queue(dwc2, is_period)) return false;
+   }
+   channel->hcintmsk |= HCINT_HALTED;
+   channel->hcchar |= HCCHAR_CHDIS | HCCHAR_CHENA; // must set both CHDIS and CHENA
+@@ -220,10 +232,8 @@
+ }
+
+ // attempt to send IN token to receive data
+-TU_ATTR_ALWAYS_INLINE static inline bool channel_send_in_token(const dwc2_regs_t* dwc2, dwc2_channel_t* channel) {
+-  while (0 == req_queue_avail(dwc2, channel_is_periodic(channel->hcchar))) {
+-    // blocking wait for request queue available
+-  }
++TU_ATTR_ALWAYS_INLINE static inline bool channel_send_in_token(dwc2_regs_t* dwc2, dwc2_channel_t* channel) {
++  if (!channel_wait_queue(dwc2, channel_is_periodic(channel->hcchar))) return false;
+   channel->hcchar |= HCCHAR_CHENA;
+   return true;
+ }
+@@ -231,7 +241,7 @@
+ // Find currently enabled channel. Note: EP0 is bidirectional
+ TU_ATTR_ALWAYS_INLINE static inline uint8_t channel_find_enabled(dwc2_regs_t* dwc2, uint8_t dev_addr, uint8_t ep_num, uint8_t ep_dir) {
+   const uint8_t max_channel = dwc2_channel_count(dwc2);
+-  for (uint8_t ch_id = 0; ch_id < max_channel; ch_id++) {
++  for (uint8_t ch_id = 0; ch_id < max_channel && !usb_wait_failed(); ch_id++) {
+     if (_hcd_data.xfer[ch_id].allocated) {
+       const dwc2_channel_char_t hcchar = {.value = dwc2->channel[ch_id].hcchar};
+       if (hcchar.dev_addr == dev_addr && hcchar.ep_num == ep_num && (ep_num == 0 || hcchar.ep_dir == ep_dir)) {
+@@ -271,7 +281,7 @@
+     if (xfer->allocated && xfer->ep_id == ep_id) {
+       dwc2_channel_t *channel = &dwc2->channel[ch_id];
+       xfer->closing           = 1;
+-      channel_disable(dwc2, channel);
++      if (!channel_disable(dwc2, channel)) return ;
+       return; // only 1 active channel per endpoint
+     }
+   }
+@@ -426,7 +436,7 @@
+
+   // force host mode and wait for mode switch
+   dwc2->gusbcfg = (dwc2->gusbcfg & ~GUSBCFG_FDMOD) | GUSBCFG_FHMOD;
+-  while ((dwc2->gintsts & GINTSTS_CMOD) != GINTSTS_CMODE_HOST) {}
++  if (!dwc2_wait(dwc2, &dwc2->gintsts, GINTSTS_CMOD, GINTSTS_CMODE_HOST, USB_WAIT_MODE_US, USB_WAIT_HOST_MODE)) return false;
+
+   #ifdef TUP_USBIP_DWC2_STM32
+   dwc2_stm32_gccfg_cfg(dwc2, false, true);
+@@ -533,6 +543,7 @@
+
+ // Open an endpoint
+ bool hcd_edpt_open(uint8_t rhport, uint8_t dev_addr, const tusb_desc_endpoint_t* desc_ep) {
++  if (usb_wait_failed()) return false;
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+   const tusb_speed_t rh_speed = hprt_speed_get(dwc2);
+
+@@ -597,7 +608,7 @@
+
+   edpt_close(dwc2, ep_id);
+
+-  return true;
++  return !usb_wait_failed();
+ }
+
+ // clean up channel after part of transfer is done but the whole urb is not complete
+@@ -672,7 +683,7 @@
+     channel->hcdma = (uint32_t) edpt->buffer;
+
+     if (hcchar_bm->ep_dir == TUSB_DIR_IN) {
+-      channel_send_in_token(dwc2, channel);
++      if (!channel_send_in_token(dwc2, channel)) return false;
+     } else {
+       hcd_dcache_clean(edpt->buffer, edpt->buflen);
+       channel->hcchar |= HCCHAR_CHENA;
+@@ -696,7 +707,7 @@
+     // IN Token. If we got NAK, we have to re-enable the channel again in the interrupt. Due to the way usbh stack only
+     // call hcd_edpt_xfer() once, we will need to manage de-allocate/re-allocate IN channel dynamically.
+     if (hcchar_bm->ep_dir == TUSB_DIR_IN) {
+-      channel_send_in_token(dwc2, channel);
++      if (!channel_send_in_token(dwc2, channel)) return false;
+     } else {
+       channel->hcchar |= HCCHAR_CHENA;
+       if (edpt->buflen > 0) {
+@@ -707,7 +718,7 @@
+     }
+   }
+
+-  return true;
++  return !usb_wait_failed();
+ }
+
+ // kick-off transfer with an endpoint
+@@ -722,6 +733,7 @@
+ }
+
+ bool hcd_edpt_xfer(uint8_t rhport, uint8_t dev_addr, uint8_t ep_addr, uint8_t * buffer, uint16_t buflen) {
++  if (usb_wait_failed()) return false;
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+   const uint8_t ep_num = tu_edpt_number(ep_addr);
+   const uint8_t ep_dir = tu_edpt_dir(ep_addr);
+@@ -745,6 +757,7 @@
+ // Abort a queued transfer. Note: it can only abort transfer that has not been started
+ // Return true if a queued transfer is aborted, false if there is no transfer to abort
+ bool hcd_edpt_abort_xfer(uint8_t rhport, uint8_t dev_addr, uint8_t ep_addr) {
++  if (usb_wait_failed()) return false;
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+   const uint8_t ep_num = tu_edpt_number(ep_addr);
+   const uint8_t ep_dir = tu_edpt_dir(ep_addr);
+@@ -757,16 +770,17 @@
+   const uint8_t ch_id = channel_find_enabled(dwc2, dev_addr, ep_num, ep_dir);
+   if (ch_id < 16) {
+     dwc2_channel_t* channel = &dwc2->channel[ch_id];
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   }
+
+   // hcd_int_enable(rhport);
+
+-  return true;
++  return !usb_wait_failed();
+ }
+
+ // Submit a special transfer to send 8-byte Setup Packet, when complete hcd_event_xfer_complete() must be invoked
+ bool hcd_setup_send(uint8_t rhport, uint8_t dev_addr, const uint8_t setup_packet[8]) {
++  if (usb_wait_failed()) return false;
+   uint8_t ep_id = edpt_find_opened(dev_addr, 0, TUSB_DIR_OUT);
+   TU_ASSERT(ep_id < CFG_TUH_DWC2_ENDPOINT_MAX); // no opened endpoint
+   hcd_endpoint_t* edpt = &_hcd_data.edpt[ep_id];
+@@ -809,7 +823,7 @@
+       if (xfer->period_split_nyet_count < HCD_XFER_PERIOD_SPLIT_NYET_MAX) {
+         hcchar.odd_frame = 1 - (dwc2->hfnum & 1); // transfer on next frame
+         channel->hcchar = hcchar.value;
+-        channel_send_in_token(dwc2, channel);
++        if (!channel_send_in_token(dwc2, channel)) return ;
+         return;
+       } else {
+         // too many NYET, de-allocate channel with below code
+@@ -822,7 +836,7 @@
+       // retry on next frame if bInterval is 1
+       hcchar.odd_frame = 1 - (dwc2->hfnum & 1);
+       channel->hcchar = hcchar.value;
+-      channel_send_in_token(dwc2, channel);
++      if (!channel_send_in_token(dwc2, channel)) return ;
+     } else {
+       // otherwise, de-allocate channel, enable SOF set frame counter for later transfer
+       const dwc2_channel_tsize_t hctsiz = {.value = channel->hctsiz};
+@@ -838,7 +852,7 @@
+     }
+   } else {
+     // for control/bulk: retry immediately
+-    channel_send_in_token(dwc2, channel);
++    if (!channel_send_in_token(dwc2, channel)) return ;
+   }
+ }
+
+@@ -905,7 +919,7 @@
+ // return true if there is still pending data and need more ISR
+ static bool handle_txfifo_empty(dwc2_regs_t* dwc2, bool is_periodic) {
+   const uint8_t max_channel = dwc2_channel_count(dwc2);
+-  for (uint8_t ch_id = 0; ch_id < max_channel; ch_id++) {
++  for (uint8_t ch_id = 0; ch_id < max_channel && !usb_wait_failed(); ch_id++) {
+     dwc2_channel_t* channel = &dwc2->channel[ch_id];
+     const dwc2_channel_char_t hcchar = {.value = channel->hcchar};
+     // skip writing to FIFO if channel is expecting halted.
+@@ -964,7 +978,7 @@
+       xfer->result = XFER_RESULT_SUCCESS;
+     }
+
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else if (hcint & (HCINT_XACT_ERR | HCINT_BABBLE_ERR | HCINT_STALL)) {
+     if (hcint & HCINT_STALL) {
+       xfer->result = XFER_RESULT_STALLED;
+@@ -977,13 +991,13 @@
+       // nothing to do
+     }
+
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else if (hcint & HCINT_NYET) {
+     // restart complete split
+     hcsplt.split_compl = 1;
+     channel->hcsplt = hcsplt.value;
+     xfer->halted_nyet = 1;
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else if (hcint & HCINT_NAK) {
+     // NAK received, disable channel to flush all posted request and try again
+     if (hcsplt.split_en == 1u) {
+@@ -991,7 +1005,7 @@
+       channel->hcsplt = hcsplt.value;
+     }
+
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else if (hcint & HCINT_ACK) {
+     xfer->err_count = 0;
+
+@@ -1001,7 +1015,7 @@
+         channel->hcintmsk |= HCINT_NYET;
+         hcsplt.split_compl = 1;
+         channel->hcsplt = hcsplt.value;
+-        channel_send_in_token(dwc2, channel);
++        if (!channel_send_in_token(dwc2, channel)) return false;
+       } else {
+         // do nothing for complete split with DATA, this will trigger XferComplete and handled there
+       }
+@@ -1012,7 +1026,7 @@
+         // still more packet to receive, also reset to start split
+         hcsplt.split_compl = 0;
+         channel->hcsplt = hcsplt.value;
+-        channel_send_in_token(dwc2, channel);
++        if (!channel_send_in_token(dwc2, channel)) return false;
+       }
+     }
+   } else if (hcint & HCINT_HALTED) {
+@@ -1033,7 +1047,7 @@
+     xfer->err_count = 0;
+     hcsplt.split_compl = 0; // restart with start-split
+     channel->hcsplt = hcsplt.value;
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else {
+     // nothing to do
+   }
+@@ -1057,7 +1071,7 @@
+     }
+   } else if (hcint & HCINT_STALL) {
+     xfer->result = XFER_RESULT_STALLED;
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+   } else if (hcint & HCINT_NYET) {
+     xfer->err_count = 0;
+     if (hcsplt.split_en == 1u) {
+@@ -1068,12 +1082,12 @@
+     } else {
+       edpt->next_do_ping = 1;
+       channel_xfer_out_wrapup(dwc2, ch_id);
+-      channel_disable(dwc2, channel);
++      if (!channel_disable(dwc2, channel)) return false;
+     }
+   } else if (hcint & (HCINT_NAK | HCINT_XACT_ERR)) {
+     // clean up transfer so far, disable and start again later
+     channel_xfer_out_wrapup(dwc2, ch_id);
+-    channel_disable(dwc2, channel);
++    if (!channel_disable(dwc2, channel)) return false;
+     if (hcint & HCINT_XACT_ERR) {
+       xfer->err_count++;
+       channel->hcintmsk |= HCINT_ACK;
+@@ -1145,7 +1159,7 @@
+       if (xfer->closing) {
+         is_done = true;
+       } else {
+-        channel_send_in_token(dwc2, channel);
++        if (!channel_send_in_token(dwc2, channel)) return false;
+       }
+     } else if (hcint & (HCINT_XFER_COMPLETE | HCINT_STALL | HCINT_BABBLE_ERR)) {
+       const uint16_t remain_bytes = (uint16_t) hctsiz.xfer_size;
+@@ -1206,7 +1220,7 @@
+           hcchar.odd_frame = 1 - (dwc2->hfnum & 1); // transfer on next frame
+           channel->hcchar = hcchar.value;
+         }
+-        channel_send_in_token(dwc2, channel);
++        if (!channel_send_in_token(dwc2, channel)) return false;
+       }
+     } else if (hcint & (HCINT_NAK | HCINT_DATATOGGLE_ERR)) {
+       xfer->err_count = 0;
+@@ -1218,7 +1232,7 @@
+       // path); no frame deferral. Programming Guide 3.5 (p73) Note permits disable on NAK/FrmOvrn splits.
+       if ((hcint & HCINT_NAK) && hcsplt.split_en && !channel_is_periodic(channel->hcchar)) {
+         xfer->retry_disabled = 1;
+-        channel_disable(dwc2, channel);
++        if (!channel_disable(dwc2, channel)) return false;
+       } else {
+         channel_xfer_in_retry(dwc2, ch_id, hcint);
+       }
+@@ -1285,7 +1299,7 @@
+          channel_xfer_out_wrapup(dwc2, ch_id);
+          if (hcsplt.split_en && !channel_is_periodic(channel->hcchar)) {
+            xfer->retry_disabled = 1;
+-           channel_disable(dwc2, channel);
++           if (!channel_disable(dwc2, channel)) return false;
+          } else {
+            channel_xfer_start(dwc2, ch_id);
+          }
+@@ -1331,7 +1345,7 @@
+   const bool is_dma = dma_host_enabled(dwc2);
+   const uint8_t max_channel = dwc2_channel_count(dwc2);
+
+-  for (uint8_t ch_id = 0; ch_id < max_channel; ch_id++) {
++  for (uint8_t ch_id = 0; ch_id < max_channel && !usb_wait_failed(); ch_id++) {
+     if (tu_bit_test(dwc2->haint, ch_id)) {
+       dwc2_channel_t* channel = &dwc2->channel[ch_id];
+       hcd_xfer_t* xfer = &_hcd_data.xfer[ch_id];
+@@ -1507,6 +1521,7 @@
+     GINTSTS :  HCInt     | PrtInt | NPTxFEmp | PTxFEmpp | RXFLVL | SOF
+ */
+ void hcd_int_handler(uint8_t rhport, bool in_isr) {
++  if (usb_wait_failed()) return;
+   dwc2_regs_t* dwc2 = DWC2_REG(rhport);
+   const uint32_t gintmsk = dwc2->gintmsk;
+   const uint32_t gintsts = dwc2->gintsts & gintmsk;
+@@ -1547,7 +1562,9 @@
+     // RXFLVL bit is read-only
+     dwc2->gintmsk &= ~GINTSTS_RXFLVL; // disable RXFLVL interrupt while reading
+
++    uint32_t start = usb_wait_now();
+     do {
++      if (!dwc2_rx_budget(dwc2, start)) return;
+       handle_rxflvl_irq(rhport); // read all packets
+     } while(dwc2->gintsts & GINTSTS_RXFLVL);
+

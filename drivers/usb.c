@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT; descriptors and original TinyUSB board glue. */
 #include "kernel.h"
 #include "serial.h"
+#include "power.h"
+#include "usb_wait.h"
 #include "tusb.h"
 #include "usbrole.h"
 #include "device/dcd.h"
@@ -29,7 +31,10 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index,uint16_t lang) {
  if(index==1)s="sandbox-kernel";else if(index==2)s="Zero W M0 recovery";else if(index==3)s="M0-development";else if(index==4)s="Recovery CDC";else return NULL;
  unsigned n=strlen(s);for(unsigned i=0;i<n;i++)b[1+i]=(uint8_t)s[i];b[0]=(uint16_t)(0x300|((n+1)*2));return b;
 }
-void usb_irq(void) {if(initialized)tud_int_handler(0);}
+void usb_irq(void) {
+ if(initialized&&!usb_wait_failed()) tud_int_handler(0);
+ if(usb_wait_failed()) dcd_int_disable(0);
+}
 void tud_mount_cb(void) {suspended=false;log_line("USB enumerated (reader separate)");}
 void tud_umount_cb(void) {protocol_reset();log_line("USB unmounted");}
 void tud_suspend_cb(bool remote) {(void)remote;suspended=true;protocol_reset();}
@@ -66,12 +71,13 @@ void usb_init(void) {
     docs/usb-host-keyboard.md has the qualified guarantee. VERIFY on hardware. */
  if(usbrole_window_may_open(REG(USBROLE_HPRT0)))
  {REG(USBROLE_GUSBCFG)=usbrole_window_gusbcfg(REG(USBROLE_GUSBCFG));
-  uint32_t t=micros();while((uint32_t)(micros()-t)<100000u){}
+  /* Boot-only debounce; sleep between observations so no 100 ms spin. */
+  uint32_t t=micros();while((uint32_t)(micros()-t)<100000u) idle_wait(1000);
   id_grounded=usbrole_id_grounded(REG(USBROLE_GOTGCTL));}
  usbrole_init(&role);
  REG(USBROLE_GUSBCFG)=usbrole_device_gusbcfg(REG(USBROLE_GUSBCFG));
  /* Device role is forced above; internal UTMI+ PHY selected by TinyUSB. */
- initialized=true;if(!tusb_init()) {initialized=false;init_fail="TUSB INIT";error("TUSB INIT");}
+ initialized=true;if(!tusb_init()) {usb_wait_report();dcd_int_disable(0);initialized=false;init_fail="TUSB INIT";error("TUSB INIT");}
 }
 void usb_reply_bytes(const uint8_t *p,uint32_t n) {
  if(n>sizeof(replies)-(wp-rp)) {error("Reply queue full");return;}
@@ -95,8 +101,11 @@ static void os_lines(void) {
  }
 }
 void usb_task(void) {
+ usb_wait_report();
+ if(usb_wait_failed()) {dcd_int_disable(0);initialized=false;init_fail="DWC2 TIMEOUT";}
  if(!initialized||inside) {return;}
- inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task();
+ inside=true;if(usb_reset_seen) {rp=wp=0;}tud_task_ext(0,false);
+ if(usb_wait_failed()) {dcd_int_disable(0);inside=false;return;}
  serial_set_reader(tud_mounted()&&tud_cdc_connected());
  if(!tud_mounted()) {inside=false;return;}
  while(log_active&&lr!=lw&&tud_cdc_write_available()) {char c=logs[lr++%sizeof(logs)];tud_cdc_write_char(c);log_active=c!='\n';}
@@ -112,4 +121,4 @@ void usb_task(void) {
 void service_io(void) {usb_task();protocol_task();}
 uint32_t tusb_time_millis_api(void) {return micros()/1000;}
 
-bool usb_healthy(void) {return initialized;}
+bool usb_healthy(void) {return initialized&&!usb_wait_failed();}

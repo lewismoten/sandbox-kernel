@@ -7,7 +7,8 @@ PYTHON ?= python3
 BUILD_ID ?= $(shell $(PYTHON) scripts/build_id.py --hash)
 TUSB_VERSION := 0.21.0
 TUSB_STAMP := third_party/tinyusb/.fetched-$(TUSB_VERSION)
-TUSB := third_party/tinyusb/src
+TUSB := build/tinyusb-bounded
+BOUNDED_OVERLAY := $(TUSB)/.stamp
 PANEL_ROTATE_180 ?= 1
 # USB_ROLE=device (default, the Mac link) or host (a keyboard on the OTG port; see docs/usb-host-keyboard.md)
 USB_ROLE ?= device
@@ -25,7 +26,7 @@ USBDRV := drivers/usb.c
 else
 $(error USB_ROLE must be device or host)
 endif
-KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c core/bootinfo.c core/bootrec.c core/usblog.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c core/serial.c core/eink.c core/iec958.c core/hdmi_audio_plan.c drivers/hdmi_audio.c drivers/cec_msg.c drivers/cec_keys.c drivers/cec_sm.c drivers/cec_regs.c drivers/cec_edid.c drivers/cec_log.c drivers/cec_drv.c drivers/cec_hw.c $(USBDRV) core/protocol.c core/shot.c core/power.c drivers/power.c core/main.c $(USB)
+KERNEL := $(COMMON) drivers/panel.c drivers/fb_hw.c core/fb.c core/assets.c core/probe.c core/uspace.c core/app_arena_core.c core/elf.c core/sys.c core/os.c core/autostart.c core/clock.c core/input.c core/audio_ring.c core/audio_null.c core/mixer.c core/usbrole.c drivers/usb_wait.c core/bootinfo.c core/bootrec.c core/usblog.c core/usbdesc.c core/hidboot.c core/fatput.c core/abi.c core/font.c core/fb_art.c core/render.c core/logo_data.c core/serial.c core/eink.c core/iec958.c core/hdmi_audio_plan.c drivers/hdmi_audio.c drivers/cec_msg.c drivers/cec_keys.c drivers/cec_sm.c drivers/cec_regs.c drivers/cec_edid.c drivers/cec_log.c drivers/cec_drv.c drivers/cec_hw.c $(USBDRV) core/protocol.c core/shot.c core/power.c drivers/power.c core/main.c $(USB)
 HEADERS := $(wildcard include/*.h include/broadcom/*.h)
 .PHONY: all clean deps boot test test-asan programs examples FORCE
 all: build/kernel.img build/runtime.img build/runtime.ski programs
@@ -61,9 +62,11 @@ build/build_id.h: FORCE | build
 	$(PYTHON) scripts/build_id.py '$(BUILD_ID)'
 build/selector.elf: Makefile build/build_id.h $(COMMON) core/selector.c $(HEADERS) arch/armv6/link.ld | build
 	$(CC) $(CFLAGS) -DSELECTOR $(COMMON) core/selector.c $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x8000,--defsym=MEMORY_LIMIT=0x70000,-Map=build/selector.map -o $@
+$(BOUNDED_OVERLAY): scripts/usb_bounded_overlay.py patches/tinyusb-0.21-bounded.patch $(TUSB_STAMP) | build
+	$(PYTHON) scripts/usb_bounded_overlay.py
 build/tinyusb-host/.stamp: scripts/usb_host_overlay.py patches/tinyusb-0.21-host.patch $(TUSB_STAMP) | build
 	$(PYTHON) scripts/usb_host_overlay.py
-build/runtime.elf: $(HOST_OVERLAY) Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
+build/runtime.elf: $(BOUNDED_OVERLAY) $(HOST_OVERLAY) Makefile build/usb_role.stamp build/build_id.h $(filter-out $(USB),$(KERNEL)) $(HEADERS) arch/armv6/link.ld $(TUSB_STAMP) | build
 	$(CC) $(CFLAGS) $(KERNEL) $(LDFLAGS) -Wl,--defsym=LOAD_ADDRESS=0x100000,--defsym=MEMORY_LIMIT=0x08000000,-Map=build/runtime.map -o $@
 build/kernel.img: build/selector.elf
 	$(OBJCOPY) -O binary $< $@
