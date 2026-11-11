@@ -63,6 +63,16 @@ class Stop(ProtocolBase):
         self.assertFalse(any(keys));self.assertFalse(any(axes))
         self.assertIn(b'OS stopped by USB; recovery console',self.c.take_log())
 
+    def test_usblog_during_sd_read_waits_for_foreground(self):
+        self.put(program());self.command('RUN DIAG.ELF')
+        r,fd=self.open('/sd/MIT.TXT');self.assertEqual(r,0)
+        self.c.feed(b'USBLOG 0\n',9);self.c.protocol_on_next_sd_read()
+        r,n=self.io(2,fd,self.BUF,32);self.assertEqual((r,n),(0,32))
+        self.assertEqual(self.c.take_output(),b'')  # parsed mid-read, but no FAT access yet
+        self.c.protocol_card_task()
+        out=self.c.take_output().decode()
+        self.assertTrue(out.startswith('USBLOG 0/') or out=='ERR usblog-unreadable\n',out)
+
     def test_stop_during_read_does_not_revoke_inflight_syscall(self):
         self.put(program());self.command('RUN DIAG.ELF')
         r,fd=self.open('/sd/MIT.TXT');self.assertEqual(r,0)

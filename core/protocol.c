@@ -36,13 +36,13 @@ static int get_handle=-1;
 static uint32_t get_id,get_total,get_index,get_activity;
 static bool get_directory;
 static char get_path[GET_PATH_MAX+1];
-static char get_request[256];static bool get_pending,get_request_directory;
+static char get_request[256];static bool get_pending,get_request_directory,usblog_cmd;static unsigned usblog_idx;
 static void get_close(void) {if(get_handle>=0)asset_close(get_handle);get_handle=-1;}
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
 bool protocol_busy(void) {return phase!=0||shot_drain||get_pending;}
-void protocol_reset(void) {get_pending=false;get_close();shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
+void protocol_reset(void) {get_pending=false;usblog_cmd=false;get_close();shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
 static void refuse(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");phase=0;used=0;overflow=false;putf=false;}
 /* ERR rule: a real error (bad command, storage, CRC, fault) goes through fail(),
    which also sets the e-ink "ERR:" line (sticky). A flow-control refusal, "not-ready"
@@ -220,9 +220,7 @@ static void command_line(void) {
  }
  if(!memcmp(line,"USBLOG ",7)&&used>7) { /* part N of /OS/SAVES/KERNEL/USB.TXT, newlines as '|' */
   unsigned i=0;for(const char *c=line+7;*c>='0'&&*c<='9'&&i<1000;c++) i=i*10+(unsigned)(*c-'0');
-  char part[USBLOG_PART+1];int parts=bootrec_usblog_part(i,part);
-  if(parts<0) {refuse("usblog-unreadable");return;}
-  usb_reply("USBLOG ");field(i);usb_reply("/");field((uint32_t)parts);usb_reply(" ");usb_reply(part);usb_reply("\n");return;
+  usblog_idx=i;usblog_cmd=true;get_pending=true;return; /* FAT read: deferred to protocol_card_task like GET */
  }
  if(!strcmp(line,"LASTBOOT")) { /* the previous boot's record (decision, keyboards found), then this boot's */
   usb_reply("LASTBOOT name=");usb_reply(bootinfo_name());usb_reply(" previous=");usb_reply(bootinfo_prev());usb_reply(" this=");usb_reply(bootinfo_this());usb_reply("\n");return;
@@ -342,7 +340,11 @@ void protocol_task(void) {if(executing)return;executing=true;work();executing=fa
 void protocol_card_task(void) {
  if(executing||!get_pending||usb_reply_pending())return;
  executing=true;get_pending=false;
- get_command(get_request,get_request_directory);
+ if(usblog_cmd) {
+  usblog_cmd=false;char part[USBLOG_PART+1];int parts=bootrec_usblog_part(usblog_idx,part);
+  if(parts<0) refuse("usblog-unreadable");
+  else {usb_reply("USBLOG ");field(usblog_idx);usb_reply("/");field((uint32_t)parts);usb_reply(" ");usb_reply(part);usb_reply("\n");}
+ } else get_command(get_request,get_request_directory);
  executing=false;
 }
 /* Called once storage metadata exists; reads confirmed payload before PUT2. */
