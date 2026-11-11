@@ -368,5 +368,40 @@ When the OS program faults (abort, undefined instruction, missed heartbeat, or a
 saves `/OS/SAVES/KERNEL/FAULT.TXT` before it restarts the program or falls back to DIAG.ELF. Line 1 has the
 program, the kind, the PC, the fault status and address registers, how long the program ran, its system calls
 and presents, and how many times it was started. Each following `>` line is one of the program's last four
-log lines (those OS log lines are otherwise only on the serial port). Read it on a Mac with the card in a
-reader. A new fault replaces the file, so read it after the first crash at the TV.
+log lines (those OS log lines are otherwise only on the serial port). A new fault replaces the file,
+so read it after the first crash at the TV.
+
+With the normal device kernel running and the Mac USB cable attached, use:
+
+```sh
+python3 scripts/usb_kernel.py /dev/cu.usbmodem* fault
+python3 scripts/usb_kernel.py /dev/cu.usbmodem* fault --elf path/to/GMOS.ELF
+python3 scripts/usb_kernel.py /dev/cu.usbmodem* logs --out kernel-logs
+```
+
+`fault` fetches the record with GET and prints the program, kind, PC, FSR, address,
+run time in ms, calls, presents, start count and last OS log lines. It decodes the
+ARM1176 FSR status into words such as alignment, translation, domain or permission
+fault (section/page). Zero means no fault status; exit and heartbeat records need
+not describe a memory fault. If GET cannot open the record it prints `no fault recorded`.
+The protocol's open refusal can also mean inaccessible storage; other transfer or
+parse errors remain errors. You can also read the file with a card reader.
+
+`--elf` uses the matching program ELF, preferably with debug information, and the
+first tool on PATH among `arm-none-eabi-addr2line`, `llvm-addr2line` and
+`llvm-symbolizer` to show PC and LR as `function:file:line`. Without any of these
+tools it says symbol resolution is unavailable and still displays the record.
+The current kernel does not save LR: the tool labels it unavailable; records that
+include `lr 0x...` immediately after PC can resolve both registers. Use the exact
+ELF that ran; a different build can give misleading source locations.
+
+`logs` collects `BOOT.TXT`, `USB.TXT`, `CEC.TXT` and `FAULT.TXT` from
+`/OS/SAVES/KERNEL/` over one connection, preserving their bytes. Without `--out`
+it creates `kernel-logs-YYYYMMDD-HHMMSS` in the current directory. It creates the
+output directory as needed, replaces same-named local files on successful reads,
+and reports unavailable records while continuing with the others. Existing local
+files for unavailable records remain in place; use a fresh directory for each
+collection. The records are fetched sequentially, not as one atomic snapshot.
+Both commands use GET's chunk CRC checks and require the device-role CDC link;
+they do not stop the OS. Host tests in `tests/test_fault_cli.py` cover sample
+records, missing files, corrupt transfers and a fake addr2line executable.

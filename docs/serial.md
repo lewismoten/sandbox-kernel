@@ -140,6 +140,25 @@ response times out; reconnect after a timeout/CRC error to discard residual byte
 ## Reading card files (protocol 2 extension)
 
 `usb_kernel.py <port> get /OS/SAVES/KERNEL/FAULT.TXT` prints the crash record.
+`usb_kernel.py <port> fault [--elf path/to/GMOS.ELF]` fetches the same file
+and formats its program, fault kind, registers, run time, counters and recent OS
+logs, with ARM1176 FSR status decoded into words. An initial GET open refusal
+prints `no fault recorded` (the wire protocol cannot distinguish a missing file
+from other open failures). Other transfer/format errors remain errors.
+With `--elf`, it uses `arm-none-eabi-addr2line`, `llvm-addr2line` or
+`llvm-symbolizer` on PATH to resolve PC and any saved LR to `function:file:line`;
+without a tool it reports symbol resolution unavailable. Current kernel records
+omit LR, so it is shown as unavailable. Use the ELF matching the running build.
+
+`usb_kernel.py <port> logs [--out dir]` retrieves `BOOT.TXT`, `USB.TXT`,
+`CEC.TXT` and `FAULT.TXT` from `/OS/SAVES/KERNEL/` in one connection.
+The default output folder is `kernel-logs-YYYYMMDD-HHMMSS`; missing/unopenable
+records are reported and skipped. Successful reads overwrite same-named local
+files; unavailable records leave existing local files untouched. Use a fresh
+directory to avoid mixing collections. Bytes are preserved and CRC checked;
+the four reads are sequential, not an atomic snapshot. See
+[The fault record](usb-host-keyboard.md#the-fault-record-faulttxt).
+
 Use `get /OS/SAVES/KERNEL/USB.TXT usb.txt` to save bytes, or
 `ls /OS/SAVES` to discover log/save directories. No OS stop is required. These
 commands require INFO and mounted storage, perform no writes, and use the device
