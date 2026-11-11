@@ -60,8 +60,8 @@ announcement, received keys and replies, a stuck send, and the log bound.
    `ack`/`nack` result for completed frames; see the bench evidence below.
 
 Once claimed, valid directed User Control Pressed (including unmapped UI
-codes) and operand-free Image View On, plus broadcast Active Source with two
-operands, reset idle power activity. Initiator 15 is ignored. A pending standby
+codes) and operand-free Image View On reset idle power activity. A broadcast Active Source from
+another device does not: it neither wakes the Pi nor makes it take the input back. Initiator 15 is ignored. A pending standby
 or wake intent waits for a claimed address and queue room, with the newest intent
 replacing the older one. No raw CEC syscall or device is exposed.
 

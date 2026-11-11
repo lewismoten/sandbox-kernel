@@ -36,7 +36,7 @@ have been made for this change.
 slowdown and 600 seconds before blanking. Input changes and held-key repeats
 count even with no open input reader. CEC recognizes unmapped button presses as
 activity once an address is claimed, plus operand-free Image View On directed
-to that address and broadcast Active Source with two operands; initiator 15 is ignored. Acquiring a
+to that address; initiator 15 is ignored, and another device's broadcast Active Source does not count. Acquiring a
 hold inhibits the selected transition and requests restoration if already idle.
 Releasing the last hold permits an already expired timeout immediately. An OS
 cleanup clears all holds and timeout overrides and restarts the default policy.

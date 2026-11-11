@@ -224,10 +224,10 @@ static void test_power(void) {
  finish_tx(&chip,1);cec_drv_task(&drv,5);
  inject(&chip,(uint8_t[]){0x04,0x44,0x66},3);cec_drv_task(&drv,6);assert(wake_count==1);
  inject(&chip,(uint8_t[]){0x04,0x04},2);cec_drv_task(&drv,7);assert(wake_count==2);
- inject(&chip,(uint8_t[]){0x0f,0x82,0x10,0},4);cec_drv_task(&drv,8);assert(wake_count==3);
- inject(&chip,(uint8_t[]){0x08,0x44,1},3);cec_drv_task(&drv,9);assert(wake_count==3);
- inject(&chip,(uint8_t[]){0x04,0x44},2);cec_drv_task(&drv,10);assert(wake_count==3);
- inject(&chip,(uint8_t[]){0x0f,0x82},2);cec_drv_task(&drv,11);assert(wake_count==3);
+ inject(&chip,(uint8_t[]){0x0f,0x82,0x10,0},4);cec_drv_task(&drv,8);assert(wake_count==2); /* foreign Active Source: no wake */
+ inject(&chip,(uint8_t[]){0x08,0x44,1},3);cec_drv_task(&drv,9);assert(wake_count==2);
+ inject(&chip,(uint8_t[]){0x04,0x44},2);cec_drv_task(&drv,10);assert(wake_count==2);
+ inject(&chip,(uint8_t[]){0x0f,0x82},2);cec_drv_task(&drv,11);assert(wake_count==2);
  drv.sm.qn=CEC_SM_QUEUE;assert(cec_sm_standby(&drv.sm)==-1);
 }
 

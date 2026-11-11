@@ -165,8 +165,9 @@ static void rx_frame(struct cec_drv *d, uint32_t now) {
         unsigned dst=cec_dest(&m);
         if((dst==d->sm.laddr &&
             ((op==CEC_OP_USER_CONTROL_PRESSED && cec_nparams(&m)>=1) ||
-             (op==CEC_OP_IMAGE_VIEW_ON && !cec_nparams(&m)))) ||
-           (dst==CEC_ADDR_BROADCAST && op==CEC_OP_ACTIVE_SOURCE && cec_nparams(&m)==2))
+             (op==CEC_OP_IMAGE_VIEW_ON && !cec_nparams(&m)))))
+            /* A foreign broadcast Active Source is another device taking the input: it must
+               neither wake us nor make us announce and take it back. */
             d->wake(d->ctx);
     }
     struct cec_key_event ev[CEC_KEYS_MAX_EVENTS]; unsigned n;
