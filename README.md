@@ -56,7 +56,8 @@ files; `ls [path]` lists a folder (macOS dot items such as `.Spotlight-V100` and
 `mv <src> <dst>` moves or renames a file or folder; `rm <path>` deletes a file; `rmdir <path>` deletes an
 empty folder. Paths are real card paths in upper-case 8.3 (`GAMES/DICE/DICE.GAM`). Changes reach only
 `GAMES`, `POCKET`, `OS/APPS` and plain files in `OS`, never the boot, firmware, slot or control files,
-`OS/CACHE` or `OS/SAVES`. Wire format and power-cut order are in [os-authors](docs/os-authors.md).
+`OS/CACHE` or `OS/SAVES`. A power cut during any of them loses no data (a cut move is settled on the next
+boot's first change). Wire format and power-cut order are in [os-authors](docs/os-authors.md).
 
 A separate Circle-based prototype supplied hardware observations recorded in the
 [milestones](docs/milestones.md); its sources were not consulted for this implementation.

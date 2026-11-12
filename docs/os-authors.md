@@ -637,10 +637,23 @@ Reach: `GAMES` and `POCKET` (below the folder itself), `OS/APPS` (below it), and
 refusal (no panel ERR line); storage faults say `PUT ...` and set it. Every change unpublishes the games
 index cache first and remounts the volume after.
 
-Power-cut order: a rename inside one folder is one 32-byte directory entry write. A move to another folder
-writes the new entry, then repoints a moved folder's `..`, then marks the old entry deleted, so a cut leaves
-the item under both names (nothing lost; a disk check merges the duplicate). A delete marks the entry deleted
-first and frees the cluster chain after, so a cut leaks clusters at worst.
+Power cuts: after a cut at any single write of `mv`, `rm`, `rmdir` or `putf`, no file's data is lost and no
+cluster chain still in use is freed later; at worst clusters leak until a disk check reclaims them.
+
+- A rename inside one folder is one 32-byte directory entry write (the old long name is removed first).
+- A move to another folder writes the new entry with bit `0x40` of its reserved byte 12 set, repoints a moved
+  folder's `..`, deletes the old long name and then the old entry, and clears the bit last. A cut in between
+  leaves the item under both names on one chain, the new one marked. The first changing command after the next
+  boot walks `GAMES`, `POCKET`, `OS` and `OS/APPS` once, keeps each marked entry, deletes the other live name
+  with the same start cluster (repointing a folder's `..`) and clears the mark. An empty file has no chain to
+  share and may keep both names.
+- `rm` and `rmdir` mark the entry deleted first and free the chain after. If another live entry in those folders
+  starts at the same cluster, they remove the name only and free nothing.
+- Each FAT entry is written to copy 1, then copy 2. A changing command that meets two copies that differ sets
+  both to the one that is not free (copy 1 if neither is), so a cut there leaks a cluster and never frees one.
+  `ls` never writes.
+- The FSInfo free count is a hint: nothing here chooses clusters by it, so a cut that leaves it stale only
+  misreports free space until a disk check.
 
 Only 8.3 entries are addressed. Long-name entries whose name starts with a dot (macOS `._*`, `.Spotlight-V100`,
 `.fseventsd`, `.Trashes`) are skipped by `LS` and counted in `skipped=`; they never stop a listing, a move or a
