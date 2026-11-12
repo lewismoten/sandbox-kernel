@@ -70,6 +70,44 @@ static void file_command(const char *p) {
  expected=size;transport_crc=((uint32_t)crc[0]<<24)|((uint32_t)crc[1]<<16)|((uint32_t)crc[2]<<8)|crc[3];received=0;block_end=size<1024?size:1024;activity=micros();
  putf=true;phase=1;usb_reply("READY 1024\n");
 }
+/* MV <src> <dst>, RM <path>, RMDIR <path>, LS <path|/> [from]: move, delete and list on the card's FAT
+   volume (core/fatput.c has the path rules and the power-cut order). A path is a real card path without
+   a leading slash (GAMES/DICE/DICE.GAM, OS/APPS/HELLO); a refusal is "ERR <reason>" (a "MOV ..." reason
+   is a flow-control refusal; a storage fault also sets the panel's ERR line). LS replies with ENT lines
+   (at most about 360 bytes, the reply queue is 512), then "OK ls /<path> next=<n|end> skipped=<k>". */
+static bool fs_path(const char **p,char out[64]) {
+ unsigned n=0;while(**p&&**p!=' ') {if(n==63)return false;out[n++]=*(*p)++;}out[n]=0;return n>0;
+}
+static void fs_done(int r) {
+ if(!r) return;
+ if(!memcmp(fatput_fail,"MOV ",4)) refuse(fatput_fail); else fail(fatput_fail);
+}
+static void fs_command(char kind,const char *p) { /* kind: 'm' MV, 'r' RM, 'd' RMDIR, 'l' LS */
+ char a[64],b[64];uint32_t from=0;
+ if(!fs_path(&p,a)) {fail("command");return;}
+ if(kind=='m') {if(*p++!=' '||!fs_path(&p,b)) {fail("command");return;}}
+ if(kind=='l'&&*p==' ') {p++;if(!decimal(&p,&from)) {fail("command");return;}}
+ if(*p) {fail("command");return;}
+ if(!storage_ready) {fail("not-ready");return;}
+ if(!session||control[4]!=NO_SLOT||os_running()) {refuse("not-ready");return;}
+ int r;
+ if(kind=='l') {
+  char lines[400];uint32_t next,skipped;
+  r=fatfs_ls(a,from,lines,sizeof lines-40,&next,&skipped);
+  if(r<0) {fs_done(r);return;}
+  usb_reply(lines);usb_reply("OK ls ");if(strcmp(a,"/"))usb_reply("/");usb_reply(a);usb_reply(" next=");
+  if(next==~0u)usb_reply("end");else field(next);
+  usb_reply(" skipped=");field(skipped);usb_reply("\n");return;
+ }
+ r=kind=='m'?fatfs_mv(a,b):kind=='r'?fatfs_rm(a):fatfs_rmdir(a);
+ if(r) {fs_done(r);return;}
+ usb_reply(kind=='m'?"OK mv /":kind=='r'?"OK rm /":"OK rmdir /");usb_reply(a);
+ if(kind=='m') {usb_reply(" /");usb_reply(b);}
+ usb_reply("\n");
+ char t[160]="Card ";unsigned k=5;const char *w=kind=='m'?"move ":kind=='r'?"remove ":"rmdir ";
+ memcpy(t+k,w,strlen(w));k+=(unsigned)strlen(w);
+ for(const char *c=a;*c&&k<150;c++)t[k++]=*c;t[k]=0;log_line(t);
+}
 static void run_command(const char *p) {
  char name[13],path[20]="/OS/";
  if(!name_token(&p,name)||*p) {fail("command");return;}
@@ -120,6 +158,10 @@ static void command_line(void) {
   char r[160];if(audio_command(line,r,sizeof r)) {usb_reply(r);return;}
  }
  if(used>5&&!memcmp(line,"PUTF ",5)) {file_command(line+5);return;}
+ if(used>3&&!memcmp(line,"MV ",3)) {fs_command('m',line+3);return;}
+ if(used>3&&!memcmp(line,"RM ",3)) {fs_command('r',line+3);return;}
+ if(used>6&&!memcmp(line,"RMDIR ",6)) {fs_command('d',line+6);return;}
+ if(used>3&&!memcmp(line,"LS ",3)) {fs_command('l',line+3);return;}
  if(used>4&&!memcmp(line,"RUN ",4)) {run_command(line+4);return;}
  if(used>3&&!memcmp(line,"TX ",3)) {tx_command(line+3);return;}
  if(used>4&&!memcmp(line,"KEY ",4)) {input_command(line+4,false);return;}

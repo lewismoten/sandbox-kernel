@@ -364,3 +364,179 @@ int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scr
  if((r=fatsave_put(game,to,scratch,bytes)))return r;
  return fatsave_remove(game,from);
 }
+/* ---- USB MV, RM, RMDIR and LS (move, delete, list; 8.3 names only) ----
+ * Paths are real card paths without a leading slash, upper-case 8.3 parts, at
+ * most MV_MAXC deep. Changing commands reach only /GAMES and /POCKET (any depth),
+ * /OS/APPS (any depth) and plain files in /OS: never the card root, the boot, firmware,
+ * slot or control files, /OS/CACHE or /OS/SAVES, and never the top folders
+ * themselves. Power-cut order: a rename inside one folder is a single 32-byte
+ * directory entry write (a sector write); a move to another folder writes the
+ * new entry first, repoints a moved folder's ".." second and marks the old
+ * entry deleted last, so a cut leaves the item under both names (nothing is
+ * lost; a disk check merges the duplicate); a delete marks the entry deleted
+ * first and frees the chain after, so a cut leaks clusters at worst. */
+#define MV_MAXC 6
+struct mpath {char p[MV_MAXC][13]; uint8_t c[MV_MAXC][11]; unsigned n;};
+static int mv_fail(const char *w,int e) {return fail(w,e);}
+static int mpath_parse(const char *path,struct mpath *m) {
+ unsigned k=0; m->n=0;
+ if(!strcmp(path,"/")) return 0; /* the root (LS only) */
+ for(const char *p=path;;p++) {
+  if(*p=='/'||!*p) {
+   if(!k||m->n==MV_MAXC) return mv_fail("MOV PATH",22);
+   m->p[m->n][k]=0; if(fatput_name(m->p[m->n],m->c[m->n])) return mv_fail("MOV PATH",22);
+   m->n++;k=0; if(!*p) break; continue;
+  }
+  if(k==12) return mv_fail("MOV PATH",22);
+  m->p[m->n][k++]=*p;
+ }
+ return 0;
+}
+/* 0 if a changing command may touch this item; *file_only: only a plain file. */
+static int mv_zone(const struct mpath *m,bool *file_only) {
+ *file_only=false;
+ if(m->n>=2&&(!strcmp(m->p[0],"GAMES")||!strcmp(m->p[0],"POCKET"))) return 0;
+ if(m->n==2&&!strcmp(m->p[0],"OS")) {*file_only=true;return 0;}
+ if(m->n>=3&&!strcmp(m->p[0],"OS")&&!strcmp(m->p[1],"APPS")) return 0;
+ return mv_fail("MOV ZONE",13);
+}
+static uint32_t ecl(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
+/* The directory reached through the first count parts of m. */
+static int mv_dirs(const struct mpath *m,unsigned count,uint32_t *dir) {
+ *dir=v.root;
+ for(unsigned i=0;i<count;i++) {
+  struct slot hit,fs; uint8_t e[32]; int r=scan(*dir,m->c[i],&hit,&fs,e); if(r) return r;
+  if(!hit.found) return mv_fail("MOV MISSING",2);
+  if((e[11]&0x1e)!=0x10) return mv_fail("MOV NOT DIR",20);
+  *dir=ecl(e); if(!cluster_ok(*dir)) return fail("PUT DIR CLUSTER",5);
+ }
+ return 0;
+}
+static int mv_start(void) {
+ int r=fatcache_invalidate(); if(r&&r!=-2) return r; /* the games index is stale after any change */
+ if(asset_volume(&v)) return fail("PUT UNMOUNTED",19);
+ fc_sec=~0u; return 0;
+}
+static int fsinfo_free(uint32_t n) {
+ int r=rd(v.base,s); if(r||!n) return r;
+ uint32_t off=u16(s+48); if(!off||off==0xffff||off>=v.fat-v.base) return 0;
+ uint32_t fsinfo=v.base+off; if((r=rd(fsinfo,s))) return r;
+ if(u32(s)==0x41615252u&&u32(s+484)==0x61417272u) {
+  uint32_t f=u32(s+488);
+  if(f!=~0u) {put32(s+488,f<=v.clusters&&n<=v.clusters-f?f+n:~0u);return wr(fsinfo,s,fsinfo);}
+ }
+ return 0;
+}
+int fatfs_mv(const char *from,const char *to) {
+ struct mpath a,b; bool fo_a,fo_b; int r;
+ if((r=mpath_parse(from,&a))||(r=mpath_parse(to,&b))) return r;
+ if(!a.n||!b.n) return mv_fail("MOV PATH",22);
+ if((r=mv_zone(&a,&fo_a))||(r=mv_zone(&b,&fo_b))) return r;
+ if(b.n>=a.n) {bool same=true; for(unsigned i=0;i<a.n;i++) if(memcmp(a.c[i],b.c[i],11)) same=false; if(same) return mv_fail("MOV SELF",22);}
+ if((r=mv_start())) return r;
+ struct slot hit,fs,h2,f2; uint8_t e[32],e2[32]; uint32_t pa,pb;
+ if((r=mv_dirs(&a,a.n-1,&pa))||(r=scan(pa,a.c[a.n-1],&hit,&fs,e))) return r;
+ if(!hit.found) return mv_fail("MOV MISSING",2);
+ bool isdir=e[11]&0x10;
+ if(isdir?(e[11]&0x1e)!=0x10:(e[11]&0x1f)) return mv_fail(isdir?"MOV NOT DIR":"MOV NOT FILE",isdir?20:21);
+ if(isdir&&(fo_a||fo_b)) return mv_fail("MOV NOT FILE",21);
+ if((r=mv_dirs(&b,b.n-1,&pb))||(r=scan(pb,b.c[b.n-1],&h2,&f2,e2))) return r;
+ if(h2.found) return mv_fail("MOV EXISTS",17);
+ memcpy(e2,e,32); memcpy(e2,b.c[b.n-1],11);
+ if(pa==pb) { /* one entry, one sector write */
+  if((r=rd(hit.lba,s))) return r;
+  memcpy(s+hit.off,b.c[b.n-1],11); if((r=wr(hit.lba,s,0))) return r;
+  fatput_fail="none"; return asset_mount();
+ }
+ uint32_t first=ecl(e);
+ if(isdir) { /* check the moved folder's ".." before any write */
+  if(!cluster_ok(first)||(r=rd(lba_of(first,0),s))) return r?r:fail("PUT DIR CLUSTER",5);
+  if(s[32]!='.'||s[33]!='.') return fail("PUT DIR CLUSTER",5);
+ }
+ if(!f2.found&&(r=grow(&f2))) return r;
+ if((r=rd(f2.lba,s))) return r;
+ memcpy(s+f2.off,e2,32); if((r=wr(f2.lba,s,0))) return r;
+ if(isdir) {
+  if((r=rd(lba_of(first,0),s))) return r;
+  put16(s+52,pb>>16); put16(s+58,pb&0xffffu); if((r=wr(lba_of(first,0),s,0))) return r;
+ }
+ if((r=rd(hit.lba,s))) return r;
+ s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r;
+ fatput_fail="none"; return asset_mount();
+}
+static int fatfs_remove(const char *path,bool want_dir) {
+ struct mpath m; bool fo; int r;
+ if((r=mpath_parse(path,&m))) return r;
+ if(!m.n) return mv_fail("MOV PATH",22);
+ if((r=mv_zone(&m,&fo))) return r;
+ if(want_dir&&fo) return mv_fail("MOV NOT DIR",20);
+ if((r=mv_start())) return r;
+ struct slot hit,fs; uint8_t e[32]; uint32_t pd;
+ if((r=mv_dirs(&m,m.n-1,&pd))||(r=scan(pd,m.c[m.n-1],&hit,&fs,e))) return r;
+ if(!hit.found) return mv_fail("MOV MISSING",2);
+ if(want_dir?(e[11]&0x1e)!=0x10:(e[11]&0x1f)) return mv_fail(want_dir?"MOV NOT DIR":"MOV NOT FILE",want_dir?20:21);
+ uint32_t first=ecl(e);
+ if(want_dir) {
+  if(!cluster_ok(first)) return fail("PUT DIR CLUSTER",5);
+  uint32_t n; if((r=count_entries(first,&n))) return r;
+  if(n) return mv_fail("MOV NOT EMPTY",39);
+ }
+ if((r=rd(hit.lba,s))) return r;
+ s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r; /* unpublished: now the chain may be freed */
+ uint32_t freed=0,c=first;
+ while(cluster_ok(c)&&freed<=v.clusters) {
+  uint32_t nx; if((r=fat_get(c,&nx))||(r=fat_set(c,0))) return r;
+  freed++; if(!(freed&0xff)) watchdog_feed();
+  if(nx>=0x0ffffff8u||!nx) break;
+  c=nx;
+ }
+ if((r=fsinfo_free(freed))) return r;
+ fatput_fail="none"; return asset_mount();
+}
+int fatfs_rm(const char *path) {return fatfs_remove(path,false);}
+int fatfs_rmdir(const char *path) {return fatfs_remove(path,true);}
+/* Up to cap-1 bytes of "ENT <D|F> <size> <attr hex> <NAME>\n" lines for a folder, from raw
+   slot index `from`; *next is where to resume (~0u at the end). Names a long-name entry
+   starts with a dot (macOS ._*, .Spotlight-V100, .fseventsd, .Trashes) are skipped and
+   counted in *skipped. Returns the lines written or a negative errno. */
+int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *next,uint32_t *skipped) {
+ struct mpath m; int r; uint32_t dir,idx=0,grp=0,len=0,lines=0; bool in_lfn=false,dot=false;
+ *next=~0u;*skipped=0; out[0]=0;
+ if((r=mpath_parse(path,&m))) return r;
+ if(asset_volume(&v)) return fail("PUT UNMOUNTED",19);
+ fc_sec=~0u;
+ if((r=mv_dirs(&m,m.n,&dir))) return r;
+ uint32_t c=dir;
+ for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
+  if(!cluster_ok(c)) return fail("PUT DIR CLUSTER",5);
+  for(uint32_t i=0;i<v.spc;i++) {
+   if((r=rd(lba_of(c,i),s))) return r;
+   for(uint32_t o=0;o<512;o+=32,idx++) {
+    const uint8_t *e=s+o;
+    if(!e[0]) return 0;
+    if(e[0]==0xe5) {in_lfn=false;continue;}
+    if(!in_lfn) {grp=idx;dot=false;}
+    if((e[11]&0x3f)==0x0f) {in_lfn=true;if((e[0]&0x1f)==1) dot=e[1]=='.'&&!e[2];continue;}
+    in_lfn=false;
+    if((e[11]&0x08)||e[0]=='.'||grp<from) continue;
+    if(dot) {(*skipped)++;continue;}
+    char name[13];unsigned k=0;
+    for(unsigned j=0;j<8&&e[j]!=' ';j++) name[k++]=(char)(e[j]==5?0xe5:e[j]);
+    if(e[8]!=' ') {name[k++]='.';for(unsigned j=8;j<11&&e[j]!=' ';j++) name[k++]=(char)e[j];}
+    name[k]=0;
+    char line[48];unsigned q=0; uint32_t sz=(e[11]&0x10)?0:u32(e+28);
+    memcpy(line,(e[11]&0x10)?"ENT D ":"ENT F ",6);q=6;
+    char dg[11];unsigned nd=0; do {dg[nd++]=(char)('0'+sz%10);sz/=10;} while(sz);
+    while(nd) line[q++]=dg[--nd];
+    line[q++]=' ';line[q++]="0123456789ABCDEF"[e[11]>>4];line[q++]="0123456789ABCDEF"[e[11]&15];line[q++]=' ';
+    memcpy(line+q,name,k);q+=k;line[q++]='\n';
+    if(len+q>=cap) {*next=grp;return (int)lines;}
+    memcpy(out+len,line,q);len+=q;out[len]=0;lines++;
+   }
+  }
+  uint32_t n; if((r=fat_get(c,&n))) return r;
+  if(n>=0x0ffffff8u) return (int)lines;
+  c=n;
+ }
+ return fail("PUT DIR LOOP",5);
+}

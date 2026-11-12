@@ -12,6 +12,18 @@ class FakePort:
 def old_sender_accepts(info):
     """The base usb_kernel.py check, verbatim: old clients need this token."""
     return 'features=kernel,no-os' in info.split()
+class FsCommandTests(unittest.TestCase):
+    def test_paths(self):
+        self.assertEqual(usb_kernel.fs_path('/GAMES/DICE/DICE.GAM'),'GAMES/DICE/DICE.GAM');self.assertEqual(usb_kernel.fs_path('/',True),'/')
+        for bad in ('games/dice','GAMES//X','../X','GAMES/A B','GAMES/TOOLONGNAME','A.B.C','','GAMES/'+'/'.join('A'*3 for _ in range(6))): 
+            with self.assertRaises(ValueError,msg=bad): usb_kernel.fs_path(bad)
+    def test_mv_rm_rmdir_send_one_command_and_check_ok(self):
+        for cmd,reply,rc in (('MV GAMES/A GAMES/B','OK mv /GAMES/A /GAMES/B',0),('RM GAMES/A/X.GAM','ERR MOV MISSING',1),('RMDIR GAMES/A','OK rmdir /GAMES/A',0)):
+            p=FakePort(['INFO 2 t',reply])
+            self.assertEqual(usb_kernel.fs_command(p,cmd),rc);self.assertEqual(p.sent,[b'INFO\n',cmd.encode()+b'\n'])
+    def test_ls_pages_until_next_end(self):
+        p=FakePort(['INFO 2 t','ENT F 5 20 A.GAM','OK ls /GAMES next=7 skipped=0','ENT D 0 10 B','OK ls /GAMES next=end skipped=1'])
+        self.assertEqual(usb_kernel.list_dir(p,'GAMES'),0);self.assertEqual(p.sent,[b'INFO\n',b'LS GAMES 0\n',b'LS GAMES 7\n'])
 class SenderTests(unittest.TestCase):
     def test_old_sender_accepts_new_info_ready(self):
         import re,pathlib

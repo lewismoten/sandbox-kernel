@@ -120,6 +120,37 @@ def send_file(port,path,name):
     expect(port,f'OK file {shown} {len(data)}',120)
     print(f'Installed {shown} ({len(data)} bytes)');return 0
 
+def fs_path(p,allow_root=False):
+    """A card path as MV/RM/RMDIR/LS take it: upper-case 8.3 parts, at most 6 deep; one leading slash is dropped
+    (LS also takes the root). The kernel decides which folders a changing command may reach."""
+    p=p[1:] if p.startswith('/') else p
+    if allow_root and p=='': return '/'
+    if not re.fullmatch(r'[A-Z0-9_-]{1,8}(\.[A-Z0-9_-]{1,3})?(/[A-Z0-9_-]{1,8}(\.[A-Z0-9_-]{1,3})?){0,5}',p): raise ValueError(f'{p!r} is not an upper-case 8.3 card path (e.g. GAMES/DICE/DICE.GAM)')
+    return p
+
+def fs_command(port,command):
+    """MV/RM/RMDIR: one command, one OK or ERR line."""
+    print(handshake(port));port.send((command+'\n').encode());line=port.reply(30)
+    while line.startswith('INFO 2 '): line=port.reply(30)
+    print(line);return 0 if line.startswith('OK') else 1
+
+def list_dir(port,path):
+    """LS: every entry of a folder, paging by the kernel's next= value (its replies are small)."""
+    print(handshake(port));at=0
+    while True:
+        port.send(f'LS {path} {at}\n'.encode())
+        while True:
+            line=port.reply(10)
+            if line.startswith('INFO 2 '): continue
+            if line.startswith('ENT '):
+                _,kind,size,attr,name=line.split(' ',4);print(f'{"<DIR>" if kind=="D" else size:>10}  {name}{"/" if kind=="D" else ""}   [{attr}]');continue
+            break
+        if not line.startswith('OK ls '): print(line);return 1
+        nxt=line.split('next=')[1].split()[0];skipped=line.split('skipped=')[1].split()[0]
+        if skipped!='0': print(f'  ({skipped} hidden dot item(s) skipped)',file=sys.stderr)
+        if nxt=='end': return 0
+        at=int(nxt)
+
 def send_folder(port,folder,dir_name,root='GAMES'):
     """Install every file of a game folder as /GAMES/<DIR>/<NAME>, one PUTF each."""
     files=sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith('.'))
@@ -233,6 +264,10 @@ def main():
     sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
     p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('putapp',help='install an app folder as /OS/APPS/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
+    p=sub.add_parser('mv',help='MV <src> <dst>: move or rename a file or folder on the card (GAMES/, POCKET/, OS/APPS/, plain files in OS/)');p.add_argument('src');p.add_argument('dst')
+    p=sub.add_parser('rm',help='RM <path>: delete one file');p.add_argument('path')
+    p=sub.add_parser('rmdir',help='RMDIR <path>: delete an empty folder');p.add_argument('path')
+    p=sub.add_parser('ls',help='LS <path>: list a folder (default the card root); macOS dot items are skipped');p.add_argument('path',nargs='?',default='/')
     p=sub.add_parser('key',help='press keys on the synthetic /dev/input/event0: up down enter esc q, a code, or name:down / name:up')
     p.add_argument('keys',nargs='+');p.add_argument('--gap',type=float,default=0.3);p.add_argument('--seconds',type=float,default=2)
     p=sub.add_parser('axis',help='AXIS <code> <value> on the synthetic device');p.add_argument('code',type=int);p.add_argument('value',type=int)
@@ -248,6 +283,10 @@ def main():
         if a.action=='stop': return stop_program(port)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
+        if a.action=='mv': return fs_command(port,f'MV {fs_path(a.src)} {fs_path(a.dst)}')
+        if a.action=='rm': return fs_command(port,f'RM {fs_path(a.path)}')
+        if a.action=='rmdir': return fs_command(port,f'RMDIR {fs_path(a.path)}')
+        if a.action=='ls': return list_dir(port,fs_path(a.path,True))
         if a.action=='key': return send_keys(port,a.keys,a.gap,a.seconds)
         if a.action=='axis': return send_command(port,f'AXIS {a.code} {a.value}')
         if a.action=='console': return console(port)

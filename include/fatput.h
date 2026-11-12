@@ -28,3 +28,12 @@ int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t ca
 int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t bytes);
 int fatsave_remove(const char *game,const char *name);
 int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scratch,uint32_t cap);
+/* USB MV, RM, RMDIR and LS: real card paths, no leading slash, upper-case 8.3 parts (LS also takes "/").
+   Changing commands reach only GAMES, POCKET and OS/APPS (any depth) and plain files in OS. Each returns 0 or a
+   negative errno, with fatput_fail "MOV ..." for a refusal and "PUT ..." for a storage fault. */
+int fatfs_mv(const char *from,const char *to);
+int fatfs_rm(const char *path);
+int fatfs_rmdir(const char *path);
+/* ENT lines into out (NUL-terminated, under cap bytes) from raw slot `from`; *next resumes (~0u at the end);
+   dot-named (macOS) entries are skipped and counted in *skipped. Returns the line count or a negative errno. */
+int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *next,uint32_t *skipped);
