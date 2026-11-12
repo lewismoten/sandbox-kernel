@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "kernel.h"
+#include "looptrace.h"
 #include "fb.h"
 #include "os.h"
 #include "autostart.h"
@@ -113,7 +114,10 @@ void kernel_main(void) {
  unsigned usb_saves=0;bool usb_dirty=false;uint32_t usb_ver=0,usb_since=micros();
  if(h[3]==1&&!trial) {error("Trial metadata mismatch");for(;;) {service_io();if(storage_ready)protocol_card_task();} /* GET/LS/USBLOG still answer; the card itself is not what failed */}
  for(;;) {
-  clock_us();audio_null_task();usb_task();protocol_task();protocol_card_task();os_task();cec_hw_task();hdmi_audio_poll();if(storage_ready&&!protocol_busy()&&fatlog_pump()<0)log_line("Log write failed");
+  clock_us();looptrace0.passes++;
+#define PHASE(i,call) {uint32_t t0_=micros();call;looptrace_note(i,(uint32_t)(micros()-t0_));}
+  PHASE(0,audio_null_task());PHASE(1,usb_task());PHASE(2,protocol_task());PHASE(3,protocol_card_task());PHASE(4,os_task());PHASE(5,cec_hw_task());PHASE(6,hdmi_audio_poll());
+  PHASE(7,if(storage_ready&&!protocol_busy()&&fatlog_pump()<0)log_line("Log write failed"));
 #if USB_ROLE_HOST
   /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}
