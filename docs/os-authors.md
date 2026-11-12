@@ -434,7 +434,7 @@ console. `make USB_ROLE=host` instead links TinyUSB HID host and supports one bo
 keyboard through the same queue, with no CDC protocol or log console
 (`Makefile:12`, `drivers/usb_host.c:1`, `core/usbkbd.c:36`). This hardware-untested host
 path runs only as a trial and deliberately never confirms; power cycling returns to
-the confirmed device kernel. Factory image assembly refuses host builds
+the confirmed device kernel. Keyboards tried so far, and how to add one: [tested keyboards](tested-keyboards.md). Factory image assembly refuses host builds
 (`core/main.c:23`, `core/main.c:85`, `scripts/assemble_boot.py:8`).
 
 ### Arena and clock rules
