@@ -123,7 +123,7 @@ static void reset(unsigned mode) {
  memset(misc_regs, 0, sizeof misc_regs); memset(dma_regs, 0, sizeof dma_regs);
  memset(&hw, 0, sizeof hw); memset(&audio_hw, 0, sizeof audio_hw);
  memset(&diagnostics, 0, sizeof diagnostics); memset(&observed, 0, sizeof observed);
- link_pending = link_edged = 0; link_pend = link_pend_since = link_edge_at = 0; attempts = window_attempts = retry_since = retry_delay = poll_since = last_link = save_since = saves = 0;
+ link_pending = link_edged = 0; link_pend = link_pend_since = link_edge_at = 0; attempts = window_attempts = retry_since = retry_delay = poll_since = last_link = save_since = saves = saved_len = saved_dropped = 0;
  log_us = log_ms = log_rem = 0;
  probed = 0; card_writes = pixel_queries = 0; card_busy = false; storage_ready = true; saved[0] = 0;
  audio_dev_init();
@@ -298,7 +298,13 @@ int main(void) {
  reset(0); pixel_hz = 0; os_on = true; os_credits = 0; assert(hdmi_audio_init() == -1);
  now += 3000000; hdmi_audio_poll(); assert(card_writes == 1 && os_credits == 1);
  hdmi_audio_edid(1, (uint8_t[128]){2, 3}); now += 3000000; hdmi_audio_poll(); assert(card_writes == 1);
- now += 30000000; hdmi_audio_poll(); assert(card_writes == 2 && os_credits == 2);
+ now += 30000000; hdmi_audio_poll(); assert(card_writes == 1);   /* 33 s, 2 minutes not yet */
+ { unsigned grew = diagnostics.len - saved_len; now += 100000000; hdmi_audio_poll(); assert(grew >= 1024u ? card_writes == 2 : card_writes == 1); }  /* 2 minutes: a save only with 1 KiB of new log */
+ if (card_writes == 1) { memset(diagnostics.text + diagnostics.len, 'x', 1100); diagnostics.len += 1100; diagnostics.text[diagnostics.len] = 0; diagnostics.dirty = 1; hdmi_audio_poll(); }
+ assert(card_writes == 2 && os_credits == 2);
+ /* A simulated hour with the OS running and a log that grows 200 B a minute: a handful of saves, never one a pass. */
+ for (unsigned m = 0; m < 60; m++) { now += 60000000; diagnostics.len += 200; if (diagnostics.len > 8000) diagnostics.len = 8000; diagnostics.text[diagnostics.len] = 0; diagnostics.dirty = 1; hdmi_audio_poll(); }
+ assert(card_writes <= 2 + 12);
  os_on = false;
  /* CEC's EDID reads are included in the same persisted session. */
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};

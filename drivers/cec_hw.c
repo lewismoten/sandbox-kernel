@@ -21,16 +21,16 @@
 #define ASSUMED_HSM_HZ 163682000u /* what the 2026-11-09 hardware log read; used only if the registers are unreadable */
 #define ASSUMED_PHYS 0x1000u      /* 1.0.0.0, HDMI port 1; used only if the EDID cannot be read */
 #define SAVE_FIRST_MS 8000u       /* first CEC.TXT write, then at most one per SAVE_EVERY_MS */
-#define SAVE_EVERY_MS 10000u      /* the first 10 minutes; after that one write a minute */
+#define SAVE_EVERY_MS 30000u      /* a save rewrites the whole file with the main loop held (146 ms at 4.5 KB), so: 30 s apart, and only for 6 new lines; after 10 minutes one write per 2 minutes */
 #define SAVE_SLOW_AFTER_MS 600000u
-#define SAVE_SLOW_EVERY_MS 60000u
+#define SAVE_SLOW_EVERY_MS 120000u
 #define SAVE_MAX 400u
 
 extern bool storage_ready;
 bool protocol_busy(void);
 static struct cec_drv drv;
 static bool up;
-static uint32_t saves, last_save_ms;
+static uint32_t saves, last_save_ms, saved_total;
 
 static uint32_t hrd(void *c, uint32_t o) { (void)c; return REG(HDMI_CORE_BASE + o); }
 static void hwr(void *c, uint32_t o, uint32_t v) { (void)c; REG(HDMI_CORE_BASE + o) = v; barrier(); }
@@ -99,7 +99,8 @@ void cec_hw_init(void) {
 static void save_log(uint32_t now) {
     if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || os_running() || saves >= SAVE_MAX) return;
     if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS))) return;
-    drv.log.dirty = 0; last_save_ms = now; saves++;
+    if (saves > 1u && drv.log.lines + drv.log.dropped < saved_total + 6u && now - last_save_ms < 600000u) return;   /* little new: wait */
+    drv.log.dirty = 0; last_save_ms = now; saves++; saved_total = drv.log.lines + drv.log.dropped;
     uint32_t t0 = micros(), bytes = drv.log.len;
     if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");
     if (saves <= 5u) {   /* how long the main loop was held, for the first saves (a save writes the whole log, up to 24 KiB): read it in the next CEC.TXT */
