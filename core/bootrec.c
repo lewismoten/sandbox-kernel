@@ -41,7 +41,8 @@ void bootrec_usblog(uint32_t attach,uint32_t remove) {
 }
 int bootrec_usblog_part(unsigned i,char *o) {
  static char buf[USBLOG_MAX+80];int n=slurp("/OS/SAVES/KERNEL/USB.TXT",buf,sizeof buf);
- if(n<0) return -1;if(n==0) return 0;
+ if(n<0) return -1;
+ if(n==0) return 0;
  unsigned parts=((unsigned)n+USBLOG_PART-1)/USBLOG_PART;if(i>=parts) {o[0]=0;return (int)parts;}
  unsigned from=i*USBLOG_PART,to=from+USBLOG_PART;if(to>(unsigned)n)to=(unsigned)n;unsigned k=0;
  for(unsigned j=from;j<to;j++) o[k++]=buf[j]=='\n'?'|':buf[j];

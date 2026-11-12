@@ -36,7 +36,8 @@ void usblog_set_stats(const char *text) {
   for(unsigned i=0;i<remain;i++)stats[i]=stats[next+i];
   used=remain;
  }
- for(unsigned i=0;i<n;i++)stats[used++]=text[i];stats[used]=0;ver++;
+ for(unsigned i=0;i<n;i++)stats[used++]=text[i];
+ stats[used]=0;ver++;
 }
 const char *usblog_text(uint32_t *bytes) {
  unsigned n=0;while(n<len){snapshot[n]=buf[n];n++;}
