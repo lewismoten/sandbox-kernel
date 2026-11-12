@@ -36,7 +36,10 @@ static volatile uint8_t ready[HDMI_DMA_SEGS];
 static volatile uint32_t irq_starved; /* completed segments played without a task refill */
 static uint8_t stL[24], stR[24];
 static struct mixer mx;
-static volatile uint32_t completions; /* single writer: segment-complete IRQ */
+static volatile uint32_t completions; /* segment-complete IRQ, or poll_completions() when the IRQ never arrives */
+static uint32_t pos_idx; /* ring segment DMA was reading at the last completion */
+static int poll_mode; /* 1: completions come from polling CS/CONBLK, not the IRQ */
+static const char *detect = "none";
 static uint32_t last_completed, segs_played, starved, started_us, errors, tones;
 static uint32_t last_progress_us;
 static int stalled;
@@ -213,7 +216,30 @@ void hdmi_audio_irq(void) {
  for (uint32_t i = 0; i < SEG_WORDS; i++) buf[seg * SEG_WORDS + i] = silence[i];
  drain();
  ready[seg] = 0;
+ pos_idx = current;
  completions++;
+}
+
+/* Fallback when the DMA IRQ is not delivered (seen on a board: DMA ran, the
+ * IRQ handler never did). Same bookkeeping as hdmi_audio_irq, driven by the
+ * sticky INT bit or the DMA position; a real stall changes neither, so the
+ * watchdog still fires. IRQs stay masked so the two paths never interleave. */
+static void poll_completions(void) {
+ uint32_t flags = irq_save();
+ if (hw.ch >= 1) {
+  uint32_t cs = dma(DMA_CS), current = dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS);
+  uint32_t n = (current + HDMI_DMA_SEGS - pos_idx) & (HDMI_DMA_SEGS - 1u);
+  if (cs & 4u) dmaw(DMA_CS, (cs & ~0x102u) | 4u);
+  if (n || (cs & 4u)) {
+   uint32_t seg = (current + HDMI_DMA_SEGS - 1u) & (HDMI_DMA_SEGS - 1u);
+   if (!n) n = 1;
+   if (!ready[seg]) irq_starved++;
+   for (uint32_t i = 0; i < SEG_WORDS; i++) buf[seg * SEG_WORDS + i] = silence[i];
+   ready[seg] = 0;
+   pos_idx = current; completions += n;
+  }
+ }
+ irq_restore(flags);
 }
 
 int hdmi_audio_init(void) {
@@ -300,7 +326,7 @@ int hdmi_audio_init(void) {
  dmaw(DMA_DEBUG, 7u);
  dmaw(DMA_CONBLK, bus(cbs));
  started_us = micros(); last_progress_us = started_us;
- completions = 0; last_completed = 0; segs_played = 0; starved = 0; errors = 0; stalled = 0;
+ completions = 0; last_completed = 0; pos_idx = 0; poll_mode = 0; detect = "none"; segs_played = 0; starved = 0; errors = 0; stalled = 0;
  REG(PERIPH + 0xb210u) = 1u << (16u + (uint32_t)hw.ch); barrier();
  say("DMA channel ", (uint32_t)hw.ch, " (32-bit, burst 2, DREQ 17)");
  sayhex("DMA destination ", cbs[0].dst);
@@ -310,6 +336,11 @@ int hdmi_audio_init(void) {
  sayhex("DMA CS ", dma(DMA_CS)); sayhex("DMA DEBUG ", dma(DMA_DEBUG)); sayhex("MAI_CTL ", mc);
  sayhex("DMA CONBLK ", conblk);
  say("DMA completed segments ", completions, " in 30 ms");
+ if (!(cs & 0x100u) && completions) detect = "irq";
+ else if (!(cs & 0x100u) && ((cs & 4u) || conblk != bus(cbs))) {
+  /* No IRQ, but the hardware is consuming (INT bit set or CONBLK moved): healthy, so poll instead. */
+  poll_mode = 1; detect = "poll"; poll_completions(); say("DMA IRQ missing; polling, segments ", completions, "");
+ }
  if ((cs & 0x100u) || !completions) {
   REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
   dmaw(DMA_CS, 0x80000000u); hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
@@ -317,6 +348,7 @@ int hdmi_audio_init(void) {
   return fail(conblk != bus(cbs) || (cs & 4u) ? "DMA advanced but no completion IRQ (check IRQ routing)" : "DMA is not draining (DREQ or MAI not running)");
  }
  hw.active = 1; why = "ok";
+ audio_diag_line(&diagnostics, timestamp(), poll_mode ? "dma_detect=poll (IRQ not seen; DMA position advancing)" : "dma_detect=irq");
  audio0.clocked = 0; /* discard the null backend's elapsed-time anchor */
  audio_hw.task = hdmi_audio_task; audio_hw.tone = hdmi_audio_tone;
  boot_note("AUDIO hdmi: DMA draining; HDMI replaces the null backend (silence until /dev/audio or TONE)");
@@ -376,6 +408,7 @@ void hdmi_audio_poll(void) {
 
 void hdmi_audio_task(void) {
  if (!hw.active) return;
+ if (poll_mode) poll_completions();
  if (mixer_active(&mx)) mixer_pump_dev(&mx, HDMI_DMA_SEG_FRAMES);
  /* Unsigned subtraction retains full laps and tolerates 32-bit wrap. */
  uint32_t completed = completions, adv = completed - last_completed;

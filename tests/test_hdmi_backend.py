@@ -108,7 +108,7 @@ int main(void) {
         # Exercise the production reader, circular builder, IRQ and task bodies.
         bodies = []
         for signature in ('static void read_pcm(', 'static void fill(', 'static void build_ring(',
-                          'void hdmi_audio_irq(', 'void hdmi_audio_task('):
+                          'void hdmi_audio_irq(', 'static void poll_completions(', 'void hdmi_audio_task('):
             start = source.index(signature)
             end = source.index('\n}', start) + 2
             bodies.append(source[start:end])

@@ -103,6 +103,7 @@ static void delay_us(uint32_t duration) {
  if (scenario != 1) dma_regs[1] += 3 * 32;
  if (!scenario) completions = 3;
  if (scenario == 3) dma_regs[0] |= 0x100u;
+ if (scenario == 5) dma_regs[0] |= 4u;
  now += duration;
 }
 static uint32_t measured_hz, mode_w, mode_h;
@@ -162,14 +163,26 @@ int main(void) {
   assert(!hdmi_audio_init() && write_count == previous_writes);
  }
  for (unsigned mode = 1; mode <= 4; mode++) {
+  if (mode == 2) continue; /* position advancing without IRQ is now accepted: below */
   reset(mode); assert(hdmi_audio_init() == -1 && !hw.active);
   assert(!audio_hw.task && !audio_hw.tone && audio_hw.report == hdmi_audio_report);
   if (mode == 1) assert(strstr(why, "not draining"));
-  if (mode == 2) assert(strstr(why, "no completion IRQ"));
   if (mode == 3) assert(!strcmp(why, "DMA error"));
   if (mode == 4) assert(!strcmp(why, "DMA reset timed out"));
   assert(!(hd_regs[HD_MAI_CTL / 4] & 8u));
  }
+ /* Scenario 2: DMA advances but no IRQ is ever seen. Accepted on the first attempt, by polling. */
+ reset(2); assert(!hdmi_audio_init() && hw.active && attempts == 1 && poll_mode && !strcmp(detect, "poll"));
+ assert(audio_hw.task == hdmi_audio_task && completions == 3);
+ assert(strstr(diagnostics.text, "dma_detect=poll"));
+ /* Scenario 5: INT bit set, no IRQ: also accepted by polling. */
+ reset(5); assert(!hdmi_audio_init() && hw.active && poll_mode && completions >= 1);
+ /* Healthy IRQ path reports irq. */
+ reset(0); assert(!hdmi_audio_init() && !poll_mode && !strcmp(detect, "irq"));
+ /* A jittery measured clock (148499000) is not a failure: N/CTS computed. */
+ reset(0); pixel_hz = 148499000; assert(!hdmi_audio_init() && hw.active && clk.n == 6144 && clk.cts == 148499);
+ reset(0); pixel_hz = 74250400; assert(!hdmi_audio_init() && clk.n == 6144 && clk.cts == 74250);
+ reset(0); pixel_hz = 100000000; assert(hdmi_audio_init() == -1 && strstr(why, "no N/CTS"));
  reset(0); core_regs[HC_SCHEDULER_CONTROL / 4] = 1;
  assert(hdmi_audio_init() == -1 && strstr(why, "DVI mode") && !write_count);
  reset(0); pixel_hz = 0;

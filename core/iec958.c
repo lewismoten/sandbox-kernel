@@ -46,5 +46,17 @@ static const struct {uint32_t fs, pix, n, cts;} nct[] = {
 int hdmi_nct(uint32_t rate, uint32_t pixel_hz, uint32_t *n, uint32_t *cts) {
     for (size_t i = 0; i < sizeof nct / sizeof *nct; i++)
         if (nct[i].fs == rate && nct[i].pix == pixel_hz) { *n = nct[i].n; *cts = nct[i].cts; return 0; }
-    return -1;
+    /* The firmware's measured clock jitters (148499000 for 148.5 MHz was seen on a board). Take the nearest
+     * table mode within 0.2% for N and compute CTS = f_pix * N / (128 * fs) from the identity above. */
+    int best = -1; uint32_t best_d = 0;
+    for (size_t i = 0; i < sizeof nct / sizeof *nct; i++) {
+        if (nct[i].fs != rate || (128u * rate) % nct[i].n) continue; /* only N that divides 128*fs: keeps CTS 32-bit */
+        uint32_t d = pixel_hz > nct[i].pix ? pixel_hz - nct[i].pix : nct[i].pix - pixel_hz;
+        if (d <= nct[i].pix / 500u && (best < 0 || d < best_d)) { best = (int)i; best_d = d; }
+    }
+    if (best < 0) return -1;
+    *n = nct[best].n;
+    uint32_t d = 128u * rate / *n; /* CTS = f_pix / d: 1000 or 900 */
+    *cts = (pixel_hz + d / 2u) / d;
+    return 0;
 }

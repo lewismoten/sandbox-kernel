@@ -26,6 +26,8 @@ static uint32_t last_completed, segs_played, starved, errors, fake_cs, fake_us;
 static uint32_t last_progress_us;
 static int stalled;
 static unsigned dma_writes;
+static uint32_t pos_idx;
+static int poll_mode;
 static uint32_t micros(void) { return fake_us; }
 uint64_t clock_us(void) { return 0; }
 static uint32_t bus(const void *p) { return p == cbs ? 0x100000u : 0x200000u; }
@@ -151,5 +153,12 @@ int main(void) {
  interrupt_before_publish = 1; fill(target);
  assert(!memcmp(buf + target * SEG_WORDS, expected, sizeof expected));
  assert(ready[target]);
+ /* IRQ never delivered: polling counts the DMA position advancing; a frozen DMA counts nothing. */
+ reset_dma(); poll_mode = 1; pos_idx = 0; fake_cs = 1u | (8u << 16) | (15u << 20);
+ hdmi_audio_task(); assert(!completions);
+ current = 3; hdmi_audio_task(); assert(completions == 3 && pos_idx == 3);
+ hdmi_audio_task(); assert(completions == 3);
+ current = 1; fake_cs |= 6u; hdmi_audio_task(); assert(completions == 9 && !(fake_cs & 4u) && pos_idx == 1);
+ poll_mode = 0;
  return 0;
 }
