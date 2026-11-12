@@ -147,7 +147,7 @@ static int fail(const char *w) {
 }
 
 static void read_pcm(void) {
- uint32_t q = audio_ring_queued(&audio0.ring), n = (audio0.open && audio0.wrote) ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
+ uint32_t q = audio_ring_queued(&audio0.ring), n = (audio0.open && audio0.wrote && !audio0.asleep) ? HDMI_DMA_SEG_FRAMES : (q < HDMI_DMA_SEG_FRAMES ? q : HDMI_DMA_SEG_FRAMES);
  if (n) audio_ring_read(&audio0.ring, pcm, n); /* after first write: short queues count an underrun and pad with silence */
  for (uint32_t i = n; i < HDMI_DMA_SEG_FRAMES; i++) pcm[i] = 0;
 }
