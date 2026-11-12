@@ -298,6 +298,18 @@ static void command_line(void) {
  expected=size;transport_crc=crc;received=0;block_end=size<1024?size:1024;activity=micros();inactive=1-control[3];
  phase=1;usb_reply("READY 1024\n"); /* no panel, hashing or storage here */
 }
+__attribute__((weak)) uint32_t card_busy;
+#define CARD_WAIT_US 5000000u
+static uint32_t busy_since;static bool busy_waiting;
+/* True when no OS file operation is in flight. Otherwise the caller returns and tries again on the
+   next pass; after 5 s of waiting it is a plain refusal ("card-busy"): nothing was written to a
+   slot's control record, so updates stay ready. */
+static bool card_free(void) {
+ if(!card_busy) {busy_waiting=false;return true;}
+ if(!busy_waiting) {busy_waiting=true;busy_since=micros();}
+ else if(expired(busy_since,CARD_WAIT_US)) {busy_waiting=false;fail("card-busy");}
+ return false;
+}
 static void work(void) {
  if(get_handle>=0&&expired(get_activity,2000000))get_close();
  if(usb_reset_seen) {usb_reset_seen=false;protocol_reset();}
@@ -318,6 +330,7 @@ static void work(void) {
  if(phase>=2) {
   if(phase>=3&&phase<7&&tud_cdc_available()) {tud_cdc_read_flush();fail("trailing-input");return;}
   if(phase==2) {if(usb_reply_pending())return;phase=3;return;}
+  if(phase>=3&&phase<7&&!card_free()) return;
   if(phase==3) {
    if(tud_cdc_available()) {tud_cdc_read_flush();fail("trailing-input");return;}
    if(crc32(staging,expected)!=transport_crc) {fail("crc");return;}
@@ -325,6 +338,7 @@ static void work(void) {
     uint8_t h[32];sha256(staging,expected,h);
     if(memcmp(h,put_hash,32)) {fail("sha256");return;}
     int r=fatput(put_name,staging,expected);
+    if(r) r=fatput(put_name,staging,expected); /* one retry: a transient card error is not a failure */
     if(r) {fail(fatput_fail);return;}
     putf=false;phase=0;usb_reply("OK file ");reply_path(put_name);usb_reply(" ");field(expected);usb_reply("\n");
     char t[64]="File installed ";unsigned k=15;if(in_os(put_name)){memcpy(t+k,"/OS",3);k+=3;}t[k++]='/';memcpy(t+k,put_name,strlen(put_name)+1);log_line(t);return;
@@ -342,12 +356,15 @@ static void work(void) {
   if(expired(install_since,120000000)&&phase<7) {fail("install-timeout");return;}
   if(phase==4) {
    uint8_t b[512];memset(b,0,512);uint32_t n=expected-sector_index*512;if(n>512)n=512;memcpy(b,staging+sector_index*512,n);
-   if(!file_write(&slots[inactive],sector_index,b)) {updates_ready=false;fail("write");return;}
+   if(!file_write(&slots[inactive],sector_index,b)&&!file_write(&slots[inactive],sector_index,b)) {updates_ready=false;fail("write");return;}
    if(++sector_index==(expected+511)/512) {sector_index=0;phase=5;}return;
   }
   if(phase==5) {
    uint8_t b[512];uint32_t n=expected-sector_index*512;if(n>512)n=512;
-   if(!file_read(&slots[inactive],sector_index,b)||memcmp(b,staging+sector_index*512,n)) {updates_ready=false;fail("readback");return;}
+   if(!file_read(&slots[inactive],sector_index,b)||memcmp(b,staging+sector_index*512,n)) {
+    uint8_t w[512];memset(w,0,512);memcpy(w,staging+sector_index*512,n); /* rewrite and compare once more */
+    if(!file_write(&slots[inactive],sector_index,w)||!file_read(&slots[inactive],sector_index,b)||memcmp(b,w,512)) {updates_ready=false;fail("readback");return;}
+   }
    for(unsigned i=n;i<512;i++)if(b[i]) {updates_ready=false;fail("padding");return;}
    if(++sector_index==(expected+511)/512)phase=6;
    return;

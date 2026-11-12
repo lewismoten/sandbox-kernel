@@ -140,6 +140,26 @@ class CoreTests(unittest.TestCase):
     def test_companion_cannot_be_factory_confirmed(self):
         with self.assertRaises(ValueError):image.control_record(image.pack(b'H'*4,'host',role='host'))
 
+    def busy(self,n):C.c_uint32.in_dll(self.c,'card_busy').value=n
+    def test_install_waits_for_an_os_file_operation_in_flight(self):
+        self.begin(self.known);self.transfer(self.known);self.busy(1)
+        for _ in range(50):self.c.protocol_task()
+        self.assertEqual(self.c.write_count(),0)   # nothing written while the OS owns the card
+        self.assertEqual(self.c.take_output().decode(),'')
+        self.busy(0)
+        self.assertIn('OK pending',self.install())
+        ctl=(C.c_uint32*128).in_dll(self.c,'control');self.assertNotEqual(ctl[4],image.NO_SLOT)
+    def test_install_busy_card_times_out_without_locking_updates(self):
+        self.begin(self.known);self.transfer(self.known);self.busy(1)
+        for _ in range(5):self.c.protocol_task()
+        self.c.advance(6000000)
+        self.assertIn('ERR card-busy',self.install());self.busy(0)
+        self.assertEqual(self.c.write_count(),0)
+        self.assertIn('updates=ready',self.cmd('INFO\n'))
+    def test_transient_slot_write_error_is_retried_once(self):
+        self.begin(self.known);self.transfer(self.known);self.c.fail_write_once(2)
+        self.assertIn('OK pending',self.install())
+        ctl=(C.c_uint32*128).in_dll(self.c,'control');self.assertNotEqual(ctl[4],image.NO_SLOT)
     def test_write_failure_never_pending(self):
         self.begin(self.known);self.transfer(self.known);self.c.inject_failure(1)
         self.assertIn('ERR write',self.install());ctl=(C.c_uint32*128).in_dll(self.c,'control');self.assertEqual(ctl[4],image.NO_SLOT)

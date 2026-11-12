@@ -400,7 +400,13 @@ static int sleep_until(const struct k_sleep *r) {
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
 static const uint32_t sizes[24]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48,[22]=40,[23]=32};
-int32_t sys_call(const uint32_t reg[8]) {
+/* card_busy: nonzero while an OS syscall (and so its card/FAT writes) is in flight. The protocol's
+   card writes (PUTF, install, slot writes) wait on it, so service_io() inside an OS SD wait cannot
+   run one nested in the OS's file operation. */
+__attribute__((weak)) uint32_t card_busy;
+static int32_t sys_call_inner(const uint32_t reg[8]);
+int32_t sys_call(const uint32_t reg[8]) {card_busy++;int32_t r=sys_call_inner(reg);card_busy--;return r;}
+static int32_t sys_call_inner(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
  if(call>23||!sizes[call]) return -ENOSYS;

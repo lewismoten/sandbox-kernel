@@ -36,7 +36,8 @@ void fail_read_nth(uint32_t lba,uint32_t n) {nth_lba=lba;nth_left=n;}
 static bool nth_fails(uint32_t lba) {return lba==nth_lba&&nth_left&&!--nth_left;}
 void protocol_on_next_sd_read(void) {pump_read=true;}
 bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&!nth_fails(lba)&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
-bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
+static uint32_t once_at=~0u;void fail_write_once(uint32_t after) {once_at=writes+after;} /* the write `after` from now fails, once */
+bool sd_write(uint32_t lba,const void *p) {if(writes==once_at) {once_at=~0u;writes++;return false;}if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
 void usb_reply_bytes(const uint8_t *p,uint32_t n) {if(out+n>=sizeof(output))abort();memcpy(output+out,p,n);out+=n;}

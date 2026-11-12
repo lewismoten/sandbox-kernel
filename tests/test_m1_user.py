@@ -512,6 +512,21 @@ class Protocol(ProtocolBase,Install):
         self.assertIn('ERR not-ready',self.put(b'x'))                  # never while the OS runs
         self.c.feed(b'RUN DIAG.ELF\n',13);self.assertIn('ERR not-ready',self.run_protocol())
         self.untouched()
+    def test_put_waits_for_an_os_file_operation_then_succeeds(self):
+        busy=C.c_uint32.in_dll(self.c,'card_busy');data=program()
+        self.c.feed(b'INFO\n',5);self.run_protocol(3);self.c.take_output()
+        line=f'PUTF DIAG.ELF {len(data)} {zlib.crc32(data):08x} {hashlib.sha256(data).hexdigest()}\n'.encode()
+        self.c.feed(line,len(line));self.assertIn('READY',self.run_protocol(50))
+        busy.value=1;self.c.feed(data,len(data));w=self.c.write_count()
+        out=self.run_protocol(300);self.assertNotIn('OK file',out);self.assertNotIn('ERR',out)
+        self.assertEqual(self.c.write_count(),w)             # the protocol wrote nothing while the OS held the card
+        busy.value=0;out=self.run_protocol();self.assertIn('OK file /OS/DIAG.ELF',out)
+        self.assertEqual(self.read('/OS/DIAG.ELF'),data)
+    def test_put_retries_a_transient_write_error_once(self):
+        self.c.fail_write_once(1);out=self.put(program());self.assertIn('OK file /OS/DIAG.ELF',out)
+        self.assertEqual(self.read('/OS/DIAG.ELF'),program())
+    def test_put_real_write_failure_still_fails(self):
+        self.c.inject_failure(self.c.write_count());out=self.put(program());self.assertIn('ERR PUT',out)
     def test_put_refusals(self):
         self.assertIn('ERR sha256',self.put(b'hello',sha='0'*64))
         self.assertIn('ERR crc',self.put(b'hello',crc=1))

@@ -53,6 +53,7 @@ extern const char *sd_fail; /* short code of the failing init step */
 extern const char *store_fail; /* short code of the failing store_init step */
 bool sd_read(uint32_t lba,void *data);
 bool sd_write(uint32_t lba,const void *data);
+extern uint32_t card_busy; /* OS syscalls in flight; protocol card writes wait for 0 (core/sys.c) */
 uint32_t sd_sectors(void);
 uint32_t crc32(const void *p,size_t n);
 void sha256(const void *p,size_t n,uint8_t out[32]);
