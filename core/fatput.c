@@ -64,9 +64,30 @@ static int walk(uint32_t first,uint32_t bytes,uint32_t *out,uint32_t max,uint32_
 }
 struct slot {uint32_t lba,off; bool found;};
 static uint32_t scan_last,scan_hops; /* the last cluster scan() saw, and how many */
+/* The valid long-name group right before the entry scan() last found: its slots, nearest the
+   short entry last. Only a group whose order and checksum match that entry is kept. */
+static struct slot lfn_at[20],lfn_run[20]; static unsigned lfn_n,lfn_run_n;
+static uint8_t lfn_run_ord[20],lfn_run_sum[20];
+static uint8_t lfn_sum(const uint8_t *n) {uint8_t x=0; for(unsigned i=0;i<11;i++) x=(uint8_t)(((x&1)<<7)+(x>>1)+n[i]); return x;}
+static void lfn_keep(const uint8_t name[11]) {
+ uint8_t sum=lfn_sum(name); lfn_n=0;
+ for(unsigned k=0;k<lfn_run_n;k++) { /* k = distance from the short entry */
+  unsigned j=lfn_run_n-1-k;
+  if((lfn_run_ord[j]&0x1f)!=k+1||lfn_run_sum[j]!=sum) return;
+  if(lfn_run_ord[j]&0x40) {for(unsigned i=0;i<=k;i++) lfn_at[i]=lfn_run[j+i];lfn_n=k+1;return;}
+ }
+}
+/* Mark a long-name group as deleted (the short entry is handled by the caller). */
+static int lfn_delete(const struct slot *g,unsigned n) {
+ for(unsigned i=0;i<n;i++) {
+  int r=rd(g[i].lba,s); if(r) return r;
+  s[g[i].off]=0xe5; if((r=wr(g[i].lba,s,0))) return r;
+ }
+ return 0;
+}
 /* Look for name in a directory chain; also remember the first usable free slot. */
 static int scan(uint32_t dir,const uint8_t name[11],struct slot *hit,struct slot *free_slot,uint8_t entry[32]) {
- hit->found=free_slot->found=false; uint32_t c=dir;
+ hit->found=free_slot->found=false; uint32_t c=dir; lfn_n=lfn_run_n=0;
  for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
   if(!cluster_ok(c)) return fail("PUT DIR CLUSTER",5);
   scan_last=c;scan_hops=hop+1;
@@ -79,9 +100,14 @@ static int scan(uint32_t dir,const uint8_t name[11],struct slot *hit,struct slot
      if(!free_slot->found&&next_free) *free_slot=(struct slot){lba_of(c,i),o,true};
      return 0;
     }
-    if(e[0]==0xe5) {if(!free_slot->found) *free_slot=(struct slot){lba_of(c,i),o,true};continue;}
-    if((e[11]&0x3f)==0x0f) continue;
-    if(!memcmp(e,name,11)) {*hit=(struct slot){lba_of(c,i),o,true};memcpy(entry,e,32);return 0;}
+    if(e[0]==0xe5) {lfn_run_n=0;if(!free_slot->found) *free_slot=(struct slot){lba_of(c,i),o,true};continue;}
+    if((e[11]&0x3f)==0x0f) {
+     if(e[0]&0x40) lfn_run_n=0;
+     if(lfn_run_n<20) {lfn_run[lfn_run_n]=(struct slot){lba_of(c,i),o,true};lfn_run_ord[lfn_run_n]=e[0];lfn_run_sum[lfn_run_n]=e[13];lfn_run_n++;}
+     continue;
+    }
+    if(!memcmp(e,name,11)) {*hit=(struct slot){lba_of(c,i),o,true};memcpy(entry,e,32);lfn_keep(name);return 0;}
+    lfn_run_n=0;
    }
   }
   uint32_t n; int r=fat_get(c,&n); if(r) return r;
@@ -427,6 +453,17 @@ static int fsinfo_free(uint32_t n) {
  }
  return 0;
 }
+/* n clusters were taken: lower FSInfo's free count (an unknown count stays unknown). */
+static int fsinfo_used(uint32_t n) {
+ int r=rd(v.base,s); if(r) return r;
+ uint32_t off=u16(s+48); if(!off||off==0xffff||off>=v.fat-v.base) return 0;
+ uint32_t fsinfo=v.base+off; if((r=rd(fsinfo,s))) return r;
+ if(u32(s)==0x41615252u&&u32(s+484)==0x61417272u) {
+  uint32_t f=u32(s+488);
+  if(f!=~0u) {put32(s+488,f<=v.clusters&&f>=n?f-n:~0u);return wr(fsinfo,s,fsinfo);}
+ }
+ return 0;
+}
 int fatfs_mv(const char *from,const char *to) {
  struct mpath a,b; bool fo_a,fo_b; int r;
  if((r=mpath_parse(from,&a))||(r=mpath_parse(to,&b))) return r;
@@ -437,6 +474,7 @@ int fatfs_mv(const char *from,const char *to) {
  struct slot hit,fs,h2,f2; uint8_t e[32],e2[32]; uint32_t pa,pb;
  if((r=mv_dirs(&a,a.n-1,&pa))||(r=scan(pa,a.c[a.n-1],&hit,&fs,e))) return r;
  if(!hit.found) return mv_fail("MOV MISSING",2);
+ struct slot own[20]; unsigned own_n=lfn_n; memcpy(own,lfn_at,sizeof own);
  bool isdir=e[11]&0x10;
  if(isdir?(e[11]&0x1e)!=0x10:(e[11]&0x1f)) return mv_fail(isdir?"MOV NOT DIR":"MOV NOT FILE",isdir?20:21);
  if(isdir&&(fo_a||fo_b)) return mv_fail("MOV NOT FILE",21);
@@ -444,6 +482,7 @@ int fatfs_mv(const char *from,const char *to) {
  if(h2.found) return mv_fail("MOV EXISTS",17);
  memcpy(e2,e,32); memcpy(e2,b.c[b.n-1],11);
  if(pa==pb) { /* one entry, one sector write */
+  if((r=lfn_delete(own,own_n))) return r; /* the old long name goes first: a cut leaves a plain short name */
   if((r=rd(hit.lba,s))) return r;
   memcpy(s+hit.off,b.c[b.n-1],11); if((r=wr(hit.lba,s,0))) return r;
   fatput_fail="none"; return asset_mount();
@@ -453,7 +492,7 @@ int fatfs_mv(const char *from,const char *to) {
   if(!cluster_ok(first)||(r=rd(lba_of(first,0),s))) return r?r:fail("PUT DIR CLUSTER",5);
   if(s[32]!='.'||s[33]!='.') return fail("PUT DIR CLUSTER",5);
  }
- if(!f2.found&&(r=grow(&f2))) return r;
+ if(!f2.found) {if((r=grow(&f2))||(r=fsinfo_used(1))) return r;}
  if((r=rd(f2.lba,s))) return r;
  memcpy(s+f2.off,e2,32); if((r=wr(f2.lba,s,0))) return r;
  if(isdir) {
@@ -462,7 +501,21 @@ int fatfs_mv(const char *from,const char *to) {
  }
  if((r=rd(hit.lba,s))) return r;
  s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r;
+ if((r=lfn_delete(own,own_n))) return r; /* a cut before this leaves orphan long-name slots, which readers ignore */
  fatput_fail="none"; return asset_mount();
+}
+/* The chain from first is sound before it is freed: every cluster in range (not free, bad or
+   reserved), the same in both FATs, no cluster twice, and a file's length matching its size. */
+static int chain_check(uint32_t first,uint32_t bytes,bool dir) {
+ uint32_t need=dir?0:(bytes+v.spc*512-1)/(v.spc*512),c=first,n=0;
+ if(!dir&&!need) return first?fail("PUT OLD CHAIN",5):0;
+ while(true) {
+  if(!cluster_ok(c)||n>v.clusters||(!dir&&n>=need)) return fail("PUT OLD CHAIN",5);
+  n++; uint32_t nx; int r=fat_get(c,&nx); if(r) return r;
+  if(!(n&0xff)) watchdog_feed();
+  if(nx>=0x0ffffff8u) return dir||n==need?0:fail("PUT OLD CHAIN",5);
+  c=nx;
+ }
 }
 static int fatfs_remove(const char *path,bool want_dir) {
  struct mpath m; bool fo; int r;
@@ -476,11 +529,14 @@ static int fatfs_remove(const char *path,bool want_dir) {
  if(!hit.found) return mv_fail("MOV MISSING",2);
  if(want_dir?(e[11]&0x1e)!=0x10:(e[11]&0x1f)) return mv_fail(want_dir?"MOV NOT DIR":"MOV NOT FILE",want_dir?20:21);
  uint32_t first=ecl(e);
+ struct slot own[20]; unsigned own_n=lfn_n; memcpy(own,lfn_at,sizeof own);
  if(want_dir) {
   if(!cluster_ok(first)) return fail("PUT DIR CLUSTER",5);
   uint32_t n; if((r=count_entries(first,&n))) return r;
   if(n) return mv_fail("MOV NOT EMPTY",39);
  }
+ if((r=chain_check(first,want_dir?0:u32(e+28),want_dir))) return r; /* a damaged chain is never freed */
+ if((r=lfn_delete(own,own_n))) return r;
  if((r=rd(hit.lba,s))) return r;
  s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r; /* unpublished: now the chain may be freed */
  uint32_t freed=0,c=first;
