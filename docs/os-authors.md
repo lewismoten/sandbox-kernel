@@ -618,6 +618,34 @@ the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 first**, then install, then `run`. If you are fast, you can also install during the first
 10 s after boot, before autostart. Install a new `JS.ELF` or `GMOS.ELF` the same way.
 
+### Move, delete and list over USB (`MV`, `RM`, `RMDIR`, `LS`)
+
+Each is one line, answered like `PUTF`: refused with `ERR not-ready` unless an `INFO` session is open,
+no update is pending and no OS is running. Paths are real card paths without a leading slash, upper-case
+8.3 parts, at most 6 deep (`core/fatput.c`, `fatfs_*`); LS also takes `/`.
+
+| Command | Reply |
+| --- | --- |
+| `MV <src> <dst>` | `OK mv /<src> /<dst>`; refuses an existing `<dst>` (`ERR MOV EXISTS`), moving a folder into itself (`MOV SELF`) |
+| `RM <path>` | `OK rm /<path>`; one plain file (no read-only, hidden or system file: `MOV NOT FILE`) |
+| `RMDIR <path>` | `OK rmdir /<path>`; an empty folder only (`MOV NOT EMPTY`) |
+| `LS <path> [from]` | up to about 360 bytes of `ENT <D\|F> <size> <attr hex> <NAME>` lines, then `OK ls /<path> next=<n\|end> skipped=<k>`; send `LS <path> <n>` for the next page |
+
+Reach: `GAMES` and `POCKET` (below the folder itself), `OS/APPS` (below it), and plain files directly in
+`OS`. Anything else (`ERR MOV ZONE`) is refused: the card root, the boot, firmware, slot and control files,
+`OS/CACHE`, `OS/SAVES`. Other refusals: `MOV PATH`, `MOV MISSING`, `MOV NOT DIR`. `MOV ...` is a flow-control
+refusal (no panel ERR line); storage faults say `PUT ...` and set it. Every change unpublishes the games
+index cache first and remounts the volume after.
+
+Power-cut order: a rename inside one folder is one 32-byte directory entry write. A move to another folder
+writes the new entry, then repoints a moved folder's `..`, then marks the old entry deleted, so a cut leaves
+the item under both names (nothing lost; a disk check merges the duplicate). A delete marks the entry deleted
+first and frees the cluster chain after, so a cut leaks clusters at worst.
+
+Only 8.3 entries are addressed. Long-name entries whose name starts with a dot (macOS `._*`, `.Spotlight-V100`,
+`.fseventsd`, `.Trashes`) are skipped by `LS` and counted in `skipped=`; they never stop a listing, a move or a
+`PUTF`, and an orphaned long-name piece is ignored.
+
 ### Transfer framing and errors
 
 Commands are at most 255 printable ASCII bytes plus newline. PUTF and PUT2 reply
