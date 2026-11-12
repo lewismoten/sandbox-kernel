@@ -405,7 +405,11 @@ static const uint32_t sizes[24]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=4
    run one nested in the OS's file operation. */
 __attribute__((weak)) uint32_t card_busy;
 static int32_t sys_call_inner(const uint32_t reg[8]);
-int32_t sys_call(const uint32_t reg[8]) {card_busy++;int32_t r=sys_call_inner(reg);card_busy--;return r;}
+/* Only calls that reach the card or FAT hold it: open, read, write, seek, getdents, cache flush and
+   rename. sleep, clock, health, exit, mmap, ioctl, arena and the rest never touch the card and return at
+   once (sleep_until only sets a wake time), so GMOS idling or drawing does not hold off an install. */
+static bool card_call(uint32_t call) {return call==1||call==2||call==3||call==9||call==11||call==12||call==18||call==19||call==20;}
+int32_t sys_call(const uint32_t reg[8]) {bool c=card_call(reg[7]);if(c)card_busy++;int32_t r=sys_call_inner(reg);if(c)card_busy--;return r;}
 static int32_t sys_call_inner(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];

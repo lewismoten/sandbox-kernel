@@ -343,6 +343,16 @@ class Calls(CallsBase):
     def test_exit(self):
         self.assertEqual(self.call(16,self.hdr(24)+struct.pack('<q',-3)),1);self.assertEqual(C.c_int64.in_dll(self.c,'sys_exit_status').value,-3)
 
+class CardBusyCalls(CallsBase):
+    def busy(self):return C.c_uint32.in_dll(self.c,'card_busy').value
+    def test_a_sleeping_program_does_not_hold_the_card(self):
+        self.assertEqual(self.call(14,self.hdr(24)+struct.pack('<Q',10**12)),0)   # parked for ~17 minutes
+        self.assertEqual(self.busy(),0)                                            # installs and PUTF are not held off
+        self.assertEqual(self.call(17,self.hdr(32)+bytes(16)) in (0,-22),True);self.assertEqual(self.busy(),0)
+    def test_card_calls_release_the_card_when_they_return(self):
+        r,fd=self.open('/OS/DIAG.ELF');self.assertEqual(self.busy(),0)
+        self.call(4,self.hdr(24)+struct.pack('<Q',fd));self.assertEqual(self.busy(),0)
+
 class SupervisorBase(CallsBase):
     def frame(self): return Frame.in_dll(self.c,'os_frame')
     def svc(self,pc_after,n,rec):
