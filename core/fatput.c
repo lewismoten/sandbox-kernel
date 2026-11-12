@@ -241,7 +241,11 @@ int fatput_check(const char *path) {uint8_t d[3][11],nm[11];unsigned n;return sp
  * leaves two live names on one cluster chain, the new one marked. The first changing
  * command after boot walks the zone (/GAMES, /POCKET, /OS files, /OS/APPS, MV_MAXC
  * deep) once, keeps each marked entry, deletes the other live name with its start
- * cluster (and its long name), repoints a folder's "..", then clears the mark. */
+ * cluster (and its long name), repoints a folder's "..", then clears the mark; any failed
+ * read or malformed ".." stops it with the mark kept, to retry on the next command.
+ * The mark is a hint, not the guard: a computer's rename may drop it, so RM, RMDIR and a
+ * PUTF that replaces a file each walk the zone and never free a chain another live name
+ * starts at (that name keeps it). */
 #define MV_MAXC 6
 #define MV_MARK 0x40
 static uint32_t ecl(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
@@ -307,13 +311,17 @@ static int mv_recover(void) {
   if(!zq.found) {swept=true;break;}
   struct slot keep=zq.at; uint32_t parent=zq.parent,first=ecl(zq.e); bool isdir=zq.e[11]&0x10; uint8_t nt=zq.e[12];
   bool dup; if((r=shared_start(first,keep,&dup))) return r;
-  if(dup) { /* the cut move's old name: point the folder's ".." here, then drop the old name */
-   struct slot old=zq.at,lfn[20]; unsigned ln=zq.lfn_n; memcpy(lfn,zq.lfn,sizeof lfn);
-   if(isdir&&cluster_ok(first)&&!rd(lba_of(first,0),s)&&s[32]=='.'&&s[33]=='.') {
-    put16(s+52,parent>>16); put16(s+58,parent&0xffffu); if((r=wr(lba_of(first,0),s,0))) return r;
-   }
-   if((r=lfn_delete(lfn,ln))||(r=set_byte(old,0,0xe5))) return r;
+  struct slot gone=zq.at,lfn[20]; unsigned ln=zq.lfn_n; memcpy(lfn,zq.lfn,sizeof lfn);
+  /* A marked folder's ".." must name its parent before the old name goes or the mark clears, with or
+     without an old name left: an unreadable or malformed first sector stops here, keeping the mark
+     (and any old name) so the next changing command tries again and reports the error. */
+  if(isdir) {
+   if(!cluster_ok(first)) return fail("MOV RECOVER",5);
+   if((r=rd(lba_of(first,0),s))) return r;
+   if(s[32]!='.'||s[33]!='.'||s[34]!=' ') return fail("MOV RECOVER",5);
+   if(ecl(s+32)!=parent) {put16(s+52,parent>>16); put16(s+58,parent&0xffffu); if((r=wr(lba_of(first,0),s,0))) return r;}
   }
+  if(dup&&((r=lfn_delete(lfn,ln))||(r=set_byte(gone,0,0xe5)))) return r; /* the cut move's old name */
   if((r=set_byte(keep,12,(uint8_t)(nt&~MV_MARK)))) return r;
  }
  return swept?0:fail("MOV RECOVER",5);
@@ -361,6 +369,10 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
   uint32_t first=((uint32_t)u16(e+20)<<16)|u16(e+26);
   if((r=walk(first,u32(e+28),old,sizeof old/4,&olds))) {
    olds=0; /* malformed cache or save: replace it, but never reclaim an unvalidated chain (it leaks for fsck) */
+  }
+  if(!cache&&olds) { /* another live name in the zone on this chain (a cut move whose mark a computer dropped): keep it */
+   bool shared; if((r=shared_start(first,hit,&shared))) return r;
+   if(shared) olds=0;
   }
  } else if(!free_slot.found&&(r=grow(&free_slot))) return r;
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;

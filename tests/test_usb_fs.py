@@ -217,4 +217,78 @@ class UsbFs(ProtocolBase):
         free=self.free();self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.GAM'));self.assertEqual(self.free(),free)
         self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.assertEqual(self.read('/GAMES/OTHR/COPY.GAM'),self.DATA['GAMES/DICE/DICE.GAM'])
 
+    # --- final review (2026-11-12): the mark is a hint; a failed recovery read keeps it ---
+    def cut_move(self,line,cut,*both):
+        """A fresh card with the seeded files, line cut after `cut` writes landed, then a reboot: both names live."""
+        self.setUp();self.seed(*self.DATA);self.c.inject_failure(self.c.write_count()+cut)
+        self.assertIn('ERR',self.cmd(line));self.c.inject_failure(0xffffffff);self.c.asset_mount()
+        for p in both: self.assertTrue(self.exists(p),p)
+    def marked(self,key):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            out=[];i=m.find(key)
+            while i>=0:
+                if i%32==0 and m[i+12]&0x40: out.append(i)
+                i=m.find(key,i+1)
+            return out
+    def drop_mark(self,key):
+        """What a computer's rename does to the new name: it rewrites byte 12 without the private 0x40 bit."""
+        at=self.marked(key);self.assertEqual(len(at),1)
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m: m[at[0]+12]&=0xbf
+    def test_a_dropped_mark_never_frees_a_chain_the_other_name_uses(self):
+        src,dst='GAMES/DICE/DICE.GAM','GAMES/OTHR/DICE.GAM';data=self.DATA[src]
+        for how in ('PUTF','RM'):
+            for gone,keep in ((src,dst),(dst,src)):
+                with self.subTest(how=how,gone=gone):
+                    self.cut_move(f'MV {src} {dst}',1,'/'+src,'/'+dst);self.drop_mark(b'DICE    GAM')
+                    if how=='PUTF':
+                        self.assertEqual(self.c.fatput(gone.encode(),b'new!'*500,2000),0,text(self.c,'fatput_fail'))
+                        self.assertEqual(self.read('/'+gone),b'new!'*500)
+                    else: self.assertIn('OK rm',self.cmd('RM '+gone));self.gone('/'+gone)
+                    self.others_survive_reuse(src);self.assertEqual(self.read('/'+keep),data);self.clean()
+    def test_a_dropped_mark_on_a_folder_keeps_it_for_the_other_name(self):
+        self.cut_move('MV GAMES/DICE GAMES/OTHR/DICE',2,'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+        self.drop_mark(b'DICE       \x10')
+        self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.GAM'));self.assertIn('OK rmdir',self.cmd('RMDIR GAMES/DICE'))
+        self.others_survive_reuse('GAMES/DICE/DICE.GAM');out=self.cmd('LS GAMES/OTHR/DICE');self.assertNotIn('ERR',out);self.assertNotIn('ENT',out)
+        self.clean()   # the fill did not take the folder's cluster
+    def dir_sector(self,cluster):
+        """The image offset of a folder's first sector (its "." entry names the folder's own cluster)."""
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=m.find(b'.          \x10')
+            while i>=0:
+                if i%512==0 and (struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0])==cluster: return i
+                i=m.find(b'.          \x10',i+1)
+        self.fail('no folder sector')
+    def dir_cluster(self,name):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=m.find(name.ljust(11).encode()+b'\x10');self.assertGreater(i,0)
+            return struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0]
+    def test_a_failed_read_during_folder_recovery_keeps_the_mark_and_retries(self):
+        """Each read of the moved folder's first sector fails once in turn; recovery never retires the old
+        name or the mark past a failure, and the next command finishes with ".." naming the new parent."""
+        hit=0
+        for n in range(1,7):
+            with self.subTest(nth=n):
+                self.cut_move('MV GAMES/DICE GAMES/OTHR/DICE',1,'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+                at=self.dir_sector(self.dir_cluster('DICE'));self.c.fail_read_nth(at//512,n)
+                out=self.cmd('RM GAMES/NONE/X.GAM');self.c.fail_read_nth(at//512,0)
+                if self.exists('/GAMES/DICE/DICE.GAM'):   # the old name is retired only after ".." is right, never past a failure
+                    self.assertIn('ERR PUT READ',out);self.assertEqual(len(self.marked(b'DICE       \x10')),1);hit+=1
+                elif 'ERR PUT READ' not in out: self.assertIn('ERR MOV MISSING',out)
+                self.assertIn('ERR MOV MISSING',self.cmd('RM GAMES/NONE/X.GAM'))
+                self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+                self.assertEqual(self.marked(b'DICE       \x10'),[])
+                with open(self.disk,'rb') as f: f.seek(at+32);e=f.read(32)
+                self.assertEqual(struct.unpack_from('<H',e,20)[0]<<16|struct.unpack_from('<H',e,26)[0],self.dir_cluster('OTHR'));self.clean()
+        self.assertGreater(hit,0,'no injected read reached the repair')
+    def test_a_replace_walks_the_zone_once_with_365_archives(self):
+        """PUTF over an existing file now walks the zone for another name on its chain: one pass over folder
+        sectors, not file contents (365 one-byte ZIPs fill 23 folder sectors)."""
+        self.seed('GAMES/DICE/DICE.GAM');zips=[f'GAMES/ARCH/Z{i:03d}.ZIP' for i in range(365)]
+        for p in zips: self.assertEqual(self.c.fatput(p.encode(),b'z',1),0,text(self.c,'fatput_fail'))
+        r0=self.c.read_count();self.assertEqual(self.c.fatput(b'GAMES/DICE/NEW.GAM',b'x',1),0);fresh=self.c.read_count()-r0
+        r0=self.c.read_count();self.assertEqual(self.c.fatput(b'GAMES/DICE/DICE.GAM',b'y',1),0);again=self.c.read_count()-r0
+        print(f'\n  PUTF new file: {fresh} reads; PUTF replace: {again} reads')
+        self.assertLess(again-fresh,120)
+
 if __name__=='__main__': unittest.main()

@@ -13,6 +13,7 @@ uint32_t read_count(void);
 void probe_run_on_read(void);
 int probe_run_result(void);
 void fail_read_sector(uint32_t lba);
+void fail_read_nth(uint32_t lba,uint32_t n);
 void protocol_on_next_sd_read(void);
 const char *take_output(void);
 void feed(const void *data,unsigned n);

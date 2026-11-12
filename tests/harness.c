@@ -30,8 +30,12 @@ int probe_run_result(void) {return nested_result;}
 extern int os_start(const char *path);
 static uint32_t read_fail_lba=~0u;
 void fail_read_sector(uint32_t lba) {read_fail_lba=lba;}
+/* One transient failure: the nth read of lba from now fails, then it reads normally. */
+static uint32_t nth_lba=~0u,nth_left;
+void fail_read_nth(uint32_t lba,uint32_t n) {nth_lba=lba;nth_left=n;}
+static bool nth_fails(uint32_t lba) {return lba==nth_lba&&nth_left&&!--nth_left;}
 void protocol_on_next_sd_read(void) {pump_read=true;}
-bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&!nth_fails(lba)&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
 bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}

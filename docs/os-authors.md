@@ -638,17 +638,26 @@ refusal (no panel ERR line); storage faults say `PUT ...` and set it. Every chan
 index cache first and remounts the volume after.
 
 Power cuts: after a cut at any single write of `mv`, `rm`, `rmdir` or `putf`, no file's data is lost and no
-cluster chain still in use is freed later; at worst clusters leak until a disk check reclaims them.
+cluster chain still in use is freed later; at worst clusters leak until a disk check reclaims them. This
+assumes each 512-byte sector write lands whole and in order; SD cards do that in practice, not by guarantee.
 
 - A rename inside one folder is one 32-byte directory entry write (the old long name is removed first).
 - A move to another folder writes the new entry with bit `0x40` of its reserved byte 12 set, repoints a moved
   folder's `..`, deletes the old long name and then the old entry, and clears the bit last. A cut in between
   leaves the item under both names on one chain, the new one marked. The first changing command after the next
-  boot walks `GAMES`, `POCKET`, `OS` and `OS/APPS` once, keeps each marked entry, deletes the other live name
-  with the same start cluster (repointing a folder's `..`) and clears the mark. An empty file has no chain to
-  share and may keep both names.
-- `rm` and `rmdir` mark the entry deleted first and free the chain after. If another live entry in those folders
-  starts at the same cluster, they remove the name only and free nothing.
+  boot walks `GAMES`, `POCKET`, `OS` and `OS/APPS` once, keeps each marked entry, sets a marked folder's `..`
+  to its parent, deletes the other live name with the same start cluster and clears the mark. If a read fails
+  there, the command returns that error and nothing is deleted or cleared; the next changing command tries
+  again. A marked folder whose first sector has no `..` stops every changing command with `MOV RECOVER` until a
+  disk check. An empty file has no chain to share and may keep both names.
+- The mark is a hint, not the guard: a computer that renames the new name rewrites byte 12 and drops it. Then
+  both names stay, sharing one chain, until one is removed.
+- `rm`, `rmdir` and a `putf` that replaces a file each walk those folders first. If another live entry starts
+  at the same cluster, `rm` and `rmdir` remove the name only and `putf` leaves the old chain to that entry;
+  neither frees anything. `rm` and `rmdir` mark the entry deleted first and free the chain after. The walk reads
+  the zone's folder sectors, never file contents (36 extra sector reads per replace on a test card with 365 files
+  in one `GAMES` folder); a `putf` of a new file skips it. Nothing protects a chain from a computer that deletes one of the two names
+  itself.
 - Each FAT entry is written to copy 1, then copy 2. A changing command that meets two copies that differ sets
   both to the one that is not free (copy 1 if neither is), so a cut there leaks a cluster and never frees one.
   `ls` never writes.
