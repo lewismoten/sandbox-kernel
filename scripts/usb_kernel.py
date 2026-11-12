@@ -527,6 +527,7 @@ def collect_logs(port,out=None):
         try: data=read_card_file(port,KERNEL_LOG_DIR+name)
         except FileNotFoundError:
             print(f'{name}: unavailable (GET open refused)',file=sys.stderr);continue
+        if name in ('CEC.TXT','AUDIO.TXT','AUDIO.1','AUDIO.2'): data=data.rstrip(b'\0')   # fixed-size in-place logs end in NUL padding (docs/cec.md)
         path=folder/name;path.write_bytes(data)
         print(f'Wrote {path} ({len(data)} bytes)')
     return 0
