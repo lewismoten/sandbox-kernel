@@ -24,7 +24,7 @@ uint16_t cec_keys_map(uint8_t ui) {
     case 0x2C: return K_BACKSPACE;               /* Clear */
     case 0x30: return K_PAGEUP;                  /* Channel up */
     case 0x31: return K_PAGEDOWN;                /* Channel down */
-    case 0x44: case 0x46: case 0x61: case 0x62: return K_SPACE; /* Play, Pause, Play and Pause functions */
+    case 0x44: case 0x46: case 0x60: case 0x61: return K_SPACE; /* Play, Pause, Play Function, Pause-Play Function (not Record Function, 0x62) */
     case 0x71: return K_F1;                      /* Blue, Red, Green, Yellow */
     case 0x72: return K_F1 + 1;
     case 0x73: return K_F1 + 2;
@@ -44,6 +44,7 @@ unsigned cec_keys_pressed(struct cec_keys *k, uint8_t ui, uint32_t now_ms, struc
     uint16_t code = cec_keys_map(ui);
     unsigned n = 0;
     if (!code) return 0;
+    if (k->held && (uint32_t)(now_ms - k->last_ms) >= CEC_KEY_RELEASE_MS) n = up(k, ev, n); /* the old press timed out unseen (a long service gap): retire it before reading this one */
     if (k->held && k->held == code && k->ui == ui) {
         /* the remote's own repeat: only moves and pages repeat; Select, Back and the rest
          * act once per press, so a held Select cannot start a program twice */

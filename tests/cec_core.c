@@ -76,7 +76,16 @@ static void test_keys(void) {
     P(&k, 0x00, 0, e);
     assert(P(&k, 0x2B, 10, e) == 2 && e[0].value == 0 && e[1].value == 1 && e[1].code == 28);
     /* play and pause become Space; Select and Back do not repeat, arrows do, and a held Select still times out */
-    assert(cec_keys_map(0x44) == 57 && cec_keys_map(0x46) == 57 && cec_keys_map(0x61) == 57 && cec_keys_map(0x62) == 57);
+    assert(cec_keys_map(0x44) == 57 && cec_keys_map(0x46) == 57 && cec_keys_map(0x60) == 57 && cec_keys_map(0x61) == 57);
+    assert(cec_keys_map(0x62) == 0 && cec_keys_map(0x47) == 0); /* Record Function is not Play */
+    /* a lost Released with a long service gap: the next fresh press still acts (up, then down) */
+    cec_keys_init(&k);
+    assert(P(&k, 0x00, 100, e) == 1);
+    assert(P(&k, 0x00, 800, e) == 2 && e[0].code == 28 && e[0].value == 0 && e[1].code == 28 && e[1].value == 1);
+    assert(P(&k, 0x00, 900, e) == 0);                     /* inside the hold: still once per press */
+    cec_keys_init(&k);
+    P(&k, 0x00, 0xFFFFFF00u, e);
+    assert(P(&k, 0x00, 0x300u, e) == 2);                  /* across the clock wrap */
     cec_keys_init(&k);
     assert(P(&k, 0x00, 0, e) == 1 && P(&k, 0x00, 100, e) == 0 && P(&k, 0x00, 200, e) == 0);
     assert(cec_keys_tick(&k, 700, e) == 0 && cec_keys_tick(&k, 750, e) == 1 && e[0].code == 28 && e[0].value == 0);
