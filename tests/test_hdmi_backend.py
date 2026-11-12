@@ -108,7 +108,7 @@ int main(void) {
         # Exercise the production reader, circular builder, IRQ and task bodies.
         bodies = []
         for signature in ('static void read_pcm(', 'static void fill(', 'static void build_ring(',
-                          'void hdmi_audio_irq(', 'static void poll_completions(', 'void hdmi_audio_task('):
+                          'void hdmi_audio_irq(', 'static void poll_completions(', 'static void service('):
             start = source.index(signature)
             end = source.index('\n}', start) + 2
             bodies.append(source[start:end])
@@ -119,6 +119,6 @@ int main(void) {
             subprocess.run(['cc', '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',
                             '-Iinclude', '-I' + str(d), 'tests/hdmi_backend.c',
                             'core/audio_ring.c', 'core/audio_null.c', 'core/mixer.c',
-                            'core/iec958.c', 'core/hdmi_audio_plan.c', '-o', str(exe)],
+                            'core/iec958.c', 'core/hdmi_audio_plan.c', 'core/audio_stats.c', '-o', str(exe)],
                            cwd=ROOT, check=True)
             subprocess.run([str(exe)], check=True, timeout=60)

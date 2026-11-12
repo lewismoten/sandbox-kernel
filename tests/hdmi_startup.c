@@ -30,7 +30,8 @@ bool storage_ready = true;
 static bool card_busy;
 static char saved[AUDIO_LOG_BYTES + 80];
 static unsigned card_writes, pixel_queries;
-static bool os_on;
+static bool os_on; static unsigned os_credits;
+void os_usb_work(uint64_t b, uint64_t e) { (void)b; (void)e; os_credits++; }
 static bool protocol_busy(void) { return card_busy; }
 bool os_running(void) { return os_on; }
 static void log_line(const char *line) { (void)line; }
@@ -293,10 +294,12 @@ int main(void) {
  card_busy = true; now += 1000000; hdmi_audio_poll();
  assert(pixel_queries == 1 && card_writes == 1);
  card_busy = false; pixel_hz = 148500000; now += 200000; hdmi_audio_poll(); assert(hw.active);
- /* K8: no kernel SD save while the OS runs (a slow write would miss the OS heartbeat). */
- reset(0); pixel_hz = 0; os_on = true; assert(hdmi_audio_init() == -1);
- now += 3000000; hdmi_audio_poll(); now += 3000000; hdmi_audio_poll(); assert(card_writes == 0);
- os_on = false; now += 3000000; hdmi_audio_poll(); assert(card_writes == 1);
+ /* K8: with the OS running, saves keep coming (stat lines) but only every 30 s, and the time is credited to the OS heartbeat. */
+ reset(0); pixel_hz = 0; os_on = true; os_credits = 0; assert(hdmi_audio_init() == -1);
+ now += 3000000; hdmi_audio_poll(); assert(card_writes == 1 && os_credits == 1);
+ hdmi_audio_edid(1, (uint8_t[128]){2, 3}); now += 3000000; hdmi_audio_poll(); assert(card_writes == 1);
+ now += 30000000; hdmi_audio_poll(); assert(card_writes == 2 && os_credits == 2);
+ os_on = false;
  /* CEC's EDID reads are included in the same persisted session. */
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
  hdmi_audio_edid(1, edid); now += 1000000; hdmi_audio_poll();
@@ -307,7 +310,7 @@ int main(void) {
  for (unsigned i = 0; i < 7000; i++) {
   write_count = 0; if (i == 3) hd_regs[HD_MAI_CTL / 4] = MAI_CTL_ERRORE | MAI_CTL_EMPTY;
   else hd_regs[HD_MAI_CTL / 4] &= ~(MAI_CTL_ERRORE | MAI_CTL_DLATE | MAI_CTL_ERRORF); /* write-one-to-clear */
-  completions += (i % 8 == 0); dma_regs[3] = 0xc0200000u + (i * 384u) % 12288u; hdmi_audio_poll(); }
+  completions += (i % 8 == 0); dma_regs[3] = 0xc0200000u + (i * 384u) % 12288u; hdmi_audio_tick(); hdmi_audio_poll(); } /* the tick samples, the loop reports */
  assert(strstr(diagnostics.text, " stat rate dt_ms=") && strstr(diagnostics.text, " stat flags looks="));
  assert(strstr(diagnostics.text, "underflow=1 "));
  puts("hdmi startup ok");

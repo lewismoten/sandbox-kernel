@@ -7,6 +7,7 @@
 #include "hdmi_audio.h"
 #include "mixer.h"
 #include "iec958.h"
+#include "audio_stats.h"
 #define PERIPH 0x20000000u
 #define SEG_WORDS (HDMI_DMA_SEG_FRAMES * 2u)
 #define DMA_CONBLK 4u
@@ -105,7 +106,7 @@ int main(void) {
   for (unsigned j = 0; j < HDMI_DMA_SEGS; j++) if (j != done)
    assert(!memcmp(buf + j * SEG_WORDS, before + j * SEG_WORDS, sizeof silence));
   assert(audio_dev_write(samples, sizeof samples) == HDMI_DMA_SEG_FRAMES);
-  hdmi_audio_task();
+  service();
   assert(!memcmp(buf + done * SEG_WORDS, expected, sizeof expected));
  }
  assert(segs_played == 32 && !starved && !irq_starved && !audio0.ring.underruns);
@@ -119,16 +120,16 @@ int main(void) {
   assert(irq_starved == (tick < 8 ? 0 : tick - 7));
  }
  assert(!segs_played && irq_starved == 16); /* counted before foreground resumes */
- hdmi_audio_task();
+ service();
  assert(segs_played == 24 && !starved && audio0.ring.underruns == 24);
  for (unsigned i = 0; i < HDMI_DMA_SEGS; i++) assert(!memcmp(buf + i * SEG_WORDS, silence, sizeof silence));
  /* DMA with no progress counts once per stall; does not invent drains. */
- fake_us += 63999; hdmi_audio_task(); assert(!stalled && !starved);
- fake_us++; hdmi_audio_task(); assert(stalled && starved == 1);
- fake_us += 64000; hdmi_audio_task(); assert(starved == 1 && segs_played == 24);
+ fake_us += 63999; service(); assert(!stalled && !starved);
+ fake_us++; service(); assert(stalled && starved == 1);
+ fake_us += 64000; service(); assert(starved == 1 && segs_played == 24);
  /* Counter wrap retains full laps. */
  completions = last_completed = UINT32_MAX - 3u;
- complete(8); hdmi_audio_task();
+ complete(8); service();
  assert(completions == 4 && segs_played == 32 && !stalled);
  assert(audio0.ring.underruns == 32);
  assert((fake_cs & 1u) && ((fake_cs >> 16) & 15u) == 8u);
@@ -155,10 +156,32 @@ int main(void) {
  assert(ready[target]);
  /* IRQ never delivered: polling counts the DMA position advancing; a frozen DMA counts nothing. */
  reset_dma(); poll_mode = 1; pos_idx = 0; fake_cs = 1u | (8u << 16) | (15u << 20);
- hdmi_audio_task(); assert(!completions);
- current = 3; hdmi_audio_task(); assert(completions == 3 && pos_idx == 3);
- hdmi_audio_task(); assert(completions == 3);
- current = 1; fake_cs |= 6u; hdmi_audio_task(); assert(completions == 9 && !(fake_cs & 4u) && pos_idx == 1);
+ service(); assert(!completions);
+ current = 3; service(); assert(completions == 3 && pos_idx == 3);
+ service(); assert(completions == 3);
+ current = 1; fake_cs |= 6u; service(); assert(completions == 9 && !(fake_cs & 4u) && pos_idx == 1);
  poll_mode = 0;
+ /* The foreground stalls 400 ms (USB host work, a GMOS frame): the 10 ms timer tick alone refills,
+  * so the DMA keeps consuming 48 kHz stereo (384000 bytes/s) with no starvation. */
+ reset_dma(); poll_mode = 1; pos_idx = 0; fake_cs = 1u | (8u << 16) | (15u << 20);
+ {
+  static uint32_t loud[AUDIO_RING_FRAMES]; for (unsigned i = 0; i < AUDIO_RING_FRAMES; i++) loud[i] = sample;
+  audio_dev_close(); assert(audio_dev_open() == 0);
+  assert(audio_dev_write(loud, 4u * HDMI_DMA_SEG_FRAMES * 40u) == HDMI_DMA_SEG_FRAMES * 40u);
+  struct audio_stats st; audio_stats_begin(&st, 0, 0);
+  uint32_t ring_us = 0, done_us = 0; unsigned segs_before = segs_played;
+  for (uint32_t t = 10000; t <= 5000000u; t += 10000) { /* one timer tick every 10 ms */
+   while (done_us + 8000 <= t) { done_us += 8000; current = (current + 1u) % HDMI_DMA_SEGS; fake_cs |= 6u; }
+   fake_us = t; ring_us = t; service();
+   audio_stats_sample(&st, t, current * SEG_WORDS * 4u, sizeof buf, 0, 0, 0);
+   if (t == 100000) { /* the foreground then stalls: nothing refills the ring except the tick */ }
+  }
+  (void)ring_us;
+  assert(segs_played - segs_before >= 620 && segs_played - segs_before <= 626); /* 5 s / 8 ms = 625 */
+  assert(!irq_starved && !starved && audio0.ring.underruns <= 625u - 40u + 1u);
+  assert(st.max_gap_us == 10000u && !st.big_gaps);
+  uint32_t bps = st.bytes / 5000u * 1000u;
+  assert(bps >= 380000u && bps <= 388000u);
+ }
  return 0;
 }

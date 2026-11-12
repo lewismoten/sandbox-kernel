@@ -95,6 +95,7 @@ void irq_handler(void) {
  if(REG(PERIPH+0x3000)&8) REG(PERIPH+0x3000)=8;
  if(REG(PERIPH+0x3000)&2) { REG(PERIPH+0x3000)=2; REG(PERIPH+0x3010)=micros()+10000; ticks++; }
 #ifndef SELECTOR
+ hdmi_audio_tick();
  if(REG(PERIPH+0xb204)&0x007e0000u) { hdmi_audio_irq(); }
  if(REG(PERIPH+0xb204)&(1<<9)) { usb_irq(); }
 #endif

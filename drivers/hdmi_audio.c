@@ -16,6 +16,7 @@
 #include "bootinfo.h"
 #include "fatput.h"
 #include "os.h"
+#include "clock.h"
 
 #define DMA_BASE (PERIPH + 0x7000u)
 #define DMA_ENABLE (DMA_BASE + 0xff0u)
@@ -44,7 +45,7 @@ static int poll_mode; /* 1: completions come from polling CS/CONBLK, not the IRQ
 static const char *detect = "none";
 static uint32_t last_completed, segs_played, starved, started_us, errors, tones;
 static uint32_t last_progress_us;
-static int stalled;
+static int stalled, in_tick;
 static struct audio_stall stall_watch;
 static struct audio_stats stats;
 static uint32_t stats_look_us;
@@ -91,11 +92,15 @@ static int rot_rename(const char *from, const char *to, void *ctx) {
  return fatsave_rename("KERNEL", from, to, (uint8_t *)ctx, AUDIO_LOG_BYTES + 80);
 }
 static void save_diagnostics(void) {
- if (!diagnostics.dirty || !storage_ready || protocol_busy() || os_running() || saves >= AUDIO_SAVE_MAX) return;
+ if (!diagnostics.dirty || !storage_ready || protocol_busy() || saves >= AUDIO_SAVE_MAX) return;
  if (link_state() & 1u) display_seen = 1;
  /* A link boot (Mac attached) with no display must not replace the display boot's record. */
  if (!audio_rot_should_write(bootinfo_this(), display_seen)) return;
- if (saves && !expired(save_since, saves < 8u ? 1000000u : 30000000u)) return;
+ /* While the OS runs, only the slow 30 s cadence writes (the stat lines keep coming in
+  * keyboard mode); the write's time is credited to the OS heartbeat like USB host work. */
+ int os = os_running();
+ if (saves && !expired(save_since, saves < 8u && !os ? 1000000u : 30000000u)) return;
+ uint64_t t0 = clock_us();
  save_since = micros(); saves++;
  static uint8_t out[AUDIO_LOG_BYTES + 80];
  if (!rotated) { /* first write of this boot: keep the last three boots (AUDIO.TXT, .1, .2) */
@@ -107,6 +112,7 @@ static void save_diagnostics(void) {
  memcpy(out + n, diagnostics.text, diagnostics.len); n += diagnostics.len;
  if (fatsave_put("KERNEL", "AUDIO.TXT", out, n)) log_line("AUDIO.TXT write failed");
  else diagnostics.dirty = 0;
+ if (os) os_usb_work(t0, clock_us());
 }
 void hdmi_audio_edid(unsigned block, const uint8_t *data) {
  display_seen = 1; /* a display answered */
@@ -403,20 +409,25 @@ static void stats_look(void) {
  if (mai & (MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF))
   hd(HD_MAI_CTL, hdmi_mai_ctl_run() | MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF);
  if (dbg & 7u) dmaw(DMA_DEBUG, dbg & 7u);
- if (audio_stats_due(&stats, now)) {
-  struct audio_stats_ctx c = {completions, (uint32_t)poll_mode, audio_ring_queued(&audio0.ring),
-   (uint32_t)audio0.ring.underruns, mai, cs};
-  char a[AUDIO_LOG_LINE], b[AUDIO_LOG_LINE];
-  audio_stats_lines(&stats, now, &c, a, sizeof a, b, sizeof b);
-  audio_diag_stat(&diagnostics, timestamp(), a); audio_diag_stat(&diagnostics, timestamp(), b);
- }
+}
+/* The text half runs in the foreground; the window restart masks the tick. */
+static void stats_report(void) {
+ uint32_t now = micros();
+ if (!audio_stats_due(&stats, now)) return;
+ char a[AUDIO_LOG_LINE], b[AUDIO_LOG_LINE];
+ uint32_t flags = irq_save();
+ struct audio_stats_ctx c = {completions, (uint32_t)poll_mode, audio_ring_queued(&audio0.ring),
+  (uint32_t)audio0.ring.underruns, REG(HDMI_HD_BASE + HD_MAI_CTL), dma(DMA_CS)};
+ audio_stats_lines(&stats, now, &c, a, sizeof a, b, sizeof b);
+ irq_restore(flags);
+ audio_diag_stat(&diagnostics, timestamp(), a); audio_diag_stat(&diagnostics, timestamp(), b);
 }
 
 void hdmi_audio_poll(void) {
  if (!probed) return;
  (void)timestamp();
  save_diagnostics();
- if (hw.active) stats_look();
+ if (hw.active) stats_report();
  if (!expired(poll_since, 100000u)) return;
  poll_since = micros();
  if (hw.active) { /* DMA stopped completing segments: log it and fall back to the null drain, never wedge */
@@ -425,10 +436,11 @@ void hdmi_audio_poll(void) {
    struct audio_stall_info si = { audio_ring_queued(&audio0.ring), audio_ring_free(&audio0.ring),
     dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS), comp, observed.pixel_used, clk.n, clk.cts, observed.pixel_src };
    char sl[AUDIO_LOG_LINE]; audio_stall_line(sl, sizeof sl, &si);
+   hw.active = 0; /* first: the timer tick must not service a DMA being stopped */
    REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
    dmaw(DMA_CS, 0x80000000u);
    hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
-   hw.active = 0; audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
+   audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
    why = "DMA stalled"; window_attempts = RETRY_WINDOW; /* no retry until a link edge */
    audio_diag_line(&diagnostics, timestamp(), sl); record_decision();
    return;
@@ -440,11 +452,12 @@ void hdmi_audio_poll(void) {
  else if (expired(link_pend_since, LINK_STABLE_US) && (!link_edged || expired(link_edge_at, LINK_EDGE_GAP_US))) {
   last_link = link; link_pending = 0; link_edged = 1; link_edge_at = micros();
   if (hw.active) {
+   hw.active = 0;
    REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
    dmaw(DMA_CS, 0x80000000u);
    hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
    hc(HC_RAM_PACKET_CONFIG, REG(HDMI_CORE_BASE + HC_RAM_PACKET_CONFIG) & ~(1u << PKT_ID_AUDIO_INFO));
-   hw.active = 0; audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
+   audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
    why = "HDMI hotplug/mode changed";
    observed.hotplug = REG(HDMI_CORE_BASE + HC_HOTPLUG);
    observed.scheduler = REG(HDMI_CORE_BASE + HC_SCHEDULER_CONTROL);
@@ -461,10 +474,14 @@ void hdmi_audio_poll(void) {
   audio_diag_line(&diagnostics, timestamp(), "retry limit reached; null drain continues (each new link edge reopens a window)");
 }
 
-void hdmi_audio_task(void) {
- if (!hw.active) return;
+/* Ring service, run from the 10 ms timer tick (hdmi_audio_tick, called by
+ * irq_handler), not the foreground loop: the DMA completion IRQ never arrives on
+ * the boards seen (dma_detect=poll), and USB host work plus GMOS slices keep the
+ * foreground away for up to 416 ms, longer than the 64 ms ring. IRQ-safe: no
+ * SD, FAT or logging, only the ring, the DMA registers and the sticky counters.
+ * The mixer stays in the foreground (it also writes the ring, as a producer). */
+static void service(void) {
  if (poll_mode) poll_completions();
- if (mixer_active(&mx)) mixer_pump_dev(&mx, HDMI_DMA_SEG_FRAMES);
  /* Unsigned subtraction retains full laps and tolerates 32-bit wrap. */
  uint32_t completed = completions, adv = completed - last_completed;
  uint32_t now = micros();
@@ -483,6 +500,14 @@ void hdmi_audio_task(void) {
  for (uint32_t i = completed - refill; i != completed; i++) fill(i & (HDMI_DMA_SEGS - 1u));
  last_completed = completed;
  drain();
+}
+void hdmi_audio_tick(void) {
+ if (!hw.active || in_tick) return;
+ in_tick = 1; service(); stats_look(); in_tick = 0;
+}
+void hdmi_audio_task(void) {
+ if (!hw.active) return;
+ if (mixer_active(&mx)) mixer_pump_dev(&mx, HDMI_DMA_SEG_FRAMES);
 }
 int hdmi_audio_tone(uint32_t hz, uint32_t ms) {
  if (!hw.active) return -1;
