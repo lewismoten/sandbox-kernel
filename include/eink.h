@@ -27,4 +27,8 @@ bool eink_available(void);
 bool eink_maintenance_due(uint64_t now_us);   /* 23 h since the last full refresh: redraw even if nothing changed */
 bool eink_full_due(uint64_t now_us);          /* the next redraw should be a full refresh */
 void eink_note_refresh(bool full,uint64_t now_us);
+uint32_t eink_generation(void);               /* changes whenever the OS asked for a new picture or the kernel error text changed */
+#define EINK_REDRAW_MIN_US 10000000ull   /* the kernel status screen redraws at most this often, unless eink_generation changed */
+#define EINK_SLEEP_SHOW_US 30000000ull   /* power saving must hold this long before the panel says SLEEP */
+#define EINK_SLEEP_CLEAR_US 10000000ull  /* and be gone this long before SLEEP clears */
 bool eink_page_shown(void);                   /* test hook: is an OS page what compose draws */
