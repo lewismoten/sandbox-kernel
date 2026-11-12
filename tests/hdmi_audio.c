@@ -20,6 +20,15 @@ int main(void) {
         assert(c.mai_hz > 47900 && c.mai_hz < 48100);
     }
     uint32_t n, m;
+    { /* 48 kHz from plausible HSM rates (incl. the 147.2 MHz the board really ran): within 0.01% */
+        static const uint32_t h2[] = {163682000u, 147200000u, 150000000u, 162000000u, 200000000u, 250000000u, 108000000u};
+        for (unsigned i = 0; i < sizeof h2 / sizeof h2[0]; i++) {
+            struct hdmi_audio_clocks c;
+            assert(hdmi_audio_clocks(48000, 148500000, h2[i], &c) == 0);
+            double got = (double)h2[i] * (c.smp_m + 1) / c.smp_n;
+            assert(got > 48000.0 * 0.9999 && got < 48000.0 * 1.0001);
+        }
+    }
     assert(hdmi_rational(3, 1, 100, 10, &n, &m) == 0 && n == 3 && m == 1);
     assert(hdmi_rational(355, 113, 1000, 1000, &n, &m) == 0 && n == 355 && m == 113);
     assert(hdmi_rational(355, 113, 1000, 10, &n, &m) == 0 && n == 22 && m == 7); /* best with m <= 10 */

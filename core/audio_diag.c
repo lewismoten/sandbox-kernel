@@ -67,6 +67,8 @@ void audio_diag_decision(struct audio_diag *l, uint32_t ms,
  field(&p, " hd_m_ctl=", o->m_ctl); field(&p, " scheduler=", o->scheduler);
  field(&p, " hotplug=", o->hotplug); text(&p, (o->scheduler & 2) ? " mode=hdmi" : " mode=dvi");
  audio_diag_line(l, ms, b);
+ p = b; field(&p, "hsm_hz=", o->hsm_hz); field(&p, " smp_n=", o->smp_n); field(&p, " smp_m=", o->smp_m);
+ text(&p, " hsm_source="); text(&p, o->hsm_src ? o->hsm_src : "none"); audio_diag_line(l, ms, b);
  p = b; field(&p, "requested_rate=", o->rate); field(&p, " sample_hz=", o->sample_hz);
  text(&p, " channels=2 channel_status_source=kernel-iec958"); audio_diag_line(l, ms, b);
  p = b; text(&p, "channel_status_left="); hex(&p, o->left, 24); audio_diag_line(l, ms, b);

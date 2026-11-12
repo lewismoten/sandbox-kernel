@@ -106,9 +106,10 @@ static void delay_us(uint32_t duration) {
  if (scenario == 5) dma_regs[0] |= 4u;
  now += duration;
 }
-static uint32_t measured_hz, mode_w, mode_h;
+static uint32_t hsm_fw_hz, measured_hz, mode_w, mode_h;
 static int property(uint32_t tag, uint32_t *values, unsigned count) {
  if (tag == 0x60001) { assert(count == 1); values[0] = 1u << 2; return 1; }
+ if ((tag == 0x30047 || tag == 0x30002) && values[0] == 13) { values[1] = hsm_fw_hz; return hsm_fw_hz != 0; }
  if (tag == 0x30047) { values[0] = 9; values[1] = measured_hz; return measured_hz != 0; }
  if (tag == 0x40003) { values[0] = mode_w; values[1] = mode_h; return mode_w != 0; }
  assert(tag == 0x30002 && count == 2 && values[0] == 9);
@@ -123,7 +124,7 @@ static void reset(unsigned mode) {
  log_us = log_ms = log_rem = 0;
  probed = 0; card_writes = pixel_queries = 0; card_busy = false; storage_ready = true; saved[0] = 0;
  audio_dev_init();
- measured_hz = mode_w = mode_h = 0; scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000; pixel_reply_id = 9; pixel_query_ok = 1;
+ hsm_fw_hz = measured_hz = mode_w = mode_h = 0; scenario = mode; packet_stuck = 0; write_count = 0; now = 0; pixel_hz = 148500000; pixel_reply_id = 9; pixel_query_ok = 1;
  misc_regs[0] = 0x2d6; misc_regs[1] = 0x30e0;
  hd_regs[HD_M_CTL / 4] = 1; core_regs[HC_SCHEDULER_CONTROL / 4] = 3;
  core_regs[HC_RAM_PACKET_CONFIG / 4] = 0x02;

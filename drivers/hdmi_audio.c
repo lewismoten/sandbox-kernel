@@ -75,7 +75,7 @@ extern bool storage_ready;
 
 static void record_decision(void) {
  observed.attempt = attempts;
- observed.sample_hz = clk.mai_hz;
+ observed.sample_hz = clk.mai_hz; observed.smp_n = clk.smp_n; observed.smp_m = clk.smp_m;
  audio_diag_decision(&diagnostics, timestamp(), &observed, hw.active, why);
 }
 extern uint32_t boot_generation;
@@ -274,9 +274,24 @@ int hdmi_audio_init(void) {
  if (!property(0x60001, m, 1)) return fail("DMA channel mask unavailable");
  hw.ch = -1; for (int c = 1; c <= 6; c++) if (m[0] & (1u << c)) { hw.ch = c; break; }
  if (hw.ch < 0) return fail("no free DMA channel 1-6");
- uint32_t hsm = hdmi_hsm_hz(observed.hsm_ctl, observed.hsm_div);
+ /* The HSM clock is the MAI sample divider's input. Linux (vc4_hdmi.c, BCM2711) takes it
+  * from the firmware clock "hdmi" = id 13 (clk_get_rate), so ask the firmware first: the
+  * measured rate, then the set rate. The Clock Manager words assume PLLD_PER = 500 MHz,
+  * which gave 163.68 MHz while the strobes ran at 0.899 of that; it is the last resort. */
+ uint32_t hsm = 0; const char *hsm_src = "cm-assumed";
+ for (int t = 0; t < 2 && !hsm; t++) {
+  uint32_t r[2] = {13, 0};
+  if (property(t ? 0x30002 : 0x30047, r, 2) && r[0] == 13 && r[1] >= 50000000u && r[1] <= 600000000u) {
+   hsm = r[1]; hsm_src = t ? "firmware-clock-13" : "firmware-measured-13";
+  }
+ }
+ if (!hsm) {
+  hsm = hdmi_hsm_hz(observed.hsm_ctl, observed.hsm_div);
+  if (hsm && !(observed.hsm_ctl & 0x80u)) hsm = 0;
+ }
  sayhex("CM_HSMCTL ", observed.hsm_ctl); sayhex("CM_HSMDIV ", observed.hsm_div);
- if (!hsm || !(observed.hsm_ctl & 0x80u)) return fail("HSM clock stopped or unknown");
+ if (!hsm) return fail("HSM clock stopped or unknown");
+ observed.hsm_hz = hsm; observed.hsm_src = hsm_src;
  if (!observed.pixel_ok || pixel[0] != 9 || !hdmi_pixel_plausible(pixel[1])) {
   /* The firmware's GET_CLOCK_RATE may read 0 while HDMI runs: try the
    * measured rate (tag 0x30047), then the visible mode's standard timing. */
@@ -296,8 +311,9 @@ int hdmi_audio_init(void) {
  sayhex("SCHEDULER_CONTROL ", observed.scheduler);
  if (!(observed.scheduler & SCHEDULER_HDMI_ACTIVE)) return fail("DVI mode: set hdmi_drive=2 on the boot card");
  say("pixel clock ", pixel[1], *pixel_src ? " Hz (fallback)" : " Hz (firmware)");
- say("HSM ", hsm, " Hz (from CM)");
+ say("HSM ", hsm, " Hz");
  say("N ", clk.n, ""); say("CTS ", clk.cts, ""); say("SMP N ", clk.smp_n, ""); say("SMP M ", clk.smp_m, ""); say("sample clock ", clk.mai_hz, " Hz");
+
  prepare_audio();
  if (start_audio_infoframe()) {
   hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);

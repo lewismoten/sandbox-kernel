@@ -11,6 +11,8 @@ struct audio_diag {
 struct audio_observation {
  uint32_t attempt, pixel_ok, pixel_id, pixel_hz, pixel_used, mode_w, mode_h;
  const char *pixel_src; /* "", "firmware-measured" or "mode-table" */
+ const char *hsm_src; /* "firmware-measured-13", "firmware-clock-13" or "cm-assumed" */
+ uint32_t hsm_hz, smp_n, smp_m;
  uint32_t hsm_ctl, hsm_div, m_ctl, scheduler, hotplug, rate, sample_hz;
  uint8_t left[24], right[24];
  const char *mailbox;

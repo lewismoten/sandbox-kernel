@@ -19,6 +19,8 @@ int main(void) {
  assert(strstr(l.text, "sample_hz=48000 channels=2"));
  assert(strstr(l.text, "channel_status_left=120000000000000000000000000000000000000000000000\n"));
  assert(strstr(l.text, "channel_status_right=000000000000000000000000000000000000000000000034\n"));
+ o.hsm_hz = 147200000; o.smp_n = 3067; o.smp_m = 999; o.hsm_src = "firmware-measured-13"; audio_diag_decision(&l, 460, &o, 1, "ok");
+ assert(strstr(l.text, "hsm_hz=147200000 smp_n=3067 smp_m=999 hsm_source=firmware-measured-13\n"));
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
  audio_diag_edid(&l, 500, 1, edid);
  assert(strstr(l.text, "500 edid_block=1 cta_basic_audio=1\n"));
@@ -35,7 +37,7 @@ int main(void) {
  assert(!strncmp(l.text, "900 whole line\n", 15));
  assert(l.text[l.len - 1] == '\n');
  /* Maximal fixed fields and caller text still fit their formatting buffers. */
- memset(&o, 0xff, sizeof o); o.mailbox = big; o.pixel_src = "mode-table";
+ memset(&o, 0xff, sizeof o); o.mailbox = big; o.pixel_src = "mode-table"; o.hsm_src = "firmware-measured-13";
  audio_diag_decision(&l, UINT32_MAX, &o, 1, big);
  assert(l.len <= AUDIO_LOG_BYTES && l.text[l.len] == 0);
  return 0;
