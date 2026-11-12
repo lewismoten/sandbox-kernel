@@ -549,9 +549,14 @@ and restores the null drain before rediscovery. This retries audio discovery; it
 not program a new video mode or guarantee firmware will configure a late display.
 Physical output and HPD behavior still need a TV check.
 
+The last three boots are kept: before a boot's first write, `AUDIO.TXT` becomes `AUDIO.1` and
+`AUDIO.1` becomes `AUDIO.2` (`core/audio_rot.c`). A USB link boot with no display (no HDMI hotplug
+and no EDID seen) writes nothing, so the Mac-attached boot after a monitor test leaves that test's
+record in `AUDIO.TXT`. `logs` also fetches `AUDIO.1` and `AUDIO.2`.
+
 Every initialization decision and backend change is recorded in the bounded
 `/OS/SAVES/KERNEL/AUDIO.TXT`, including failures before the HDMI-mode check. The file
-starts with `AUDIO v1 dropped_lines=N`, followed by `<uptime_ms> <record>` lines.
+starts with `AUDIO v2 boot=N mode=<link|keyboard|...> gen=G dropped_lines=N`, followed by `<uptime_ms> <record>` lines.
 It contains backend, reason, attempt number, pixel-clock query tag `0x00030002`
 (Get clock rate) / clock ID 9 (pixel), query success, returned ID/rate and mailbox
 failure reason; raw HSM clock-control/divider, HD control, scheduler and hotplug
@@ -719,7 +724,7 @@ and one serial reader at a time.
 | `get PATH [OUT]` | read a card-root file while the OS runs: CRC-checked chunks up to 4 MiB; without OUT, printable UTF-8 text up to 64 KiB |
 | `ls PATH` | list a card-root directory using short aliases; [wire format and path limits](serial.md#reading-card-files-protocol-2-extension) |
 | `fault [--elf PROGRAM.ELF]` | explain `/OS/SAVES/KERNEL/FAULT.TXT`, decode ARM1176 FSR and optionally resolve PC/LR with a matching ELF; current records omit LR |
-| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT`, `AUDIO.TXT` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
+| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT`, `AUDIO.TXT`, `AUDIO.1`, `AUDIO.2` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
 | `ceclog [--seconds N]` | show CEC session lines for 8 s by default, including the replayed log tail |
 | `usblog` | print the saved USB bus log with newlines restored |
 | `lastboot` | print Pi name and previous/current boot decisions |

@@ -10,6 +10,8 @@
 #include "iec958.h"
 #include "mixer.h"
 #include "audio_diag.h"
+#include "audio_rot.h"
+#include "bootinfo.h"
 #include "fatput.h"
 #include "os.h"
 
@@ -50,7 +52,7 @@ static struct audio_diag diagnostics;
 static struct audio_observation observed;
 static uint32_t attempts, window_attempts, retry_since, retry_delay;
 static uint32_t poll_since, last_link, save_since, saves;
-static int probed;
+static int probed, display_seen, rotated;
 static uint32_t log_us, log_ms, log_rem;
 /* Accumulate across the 32-bit hardware timer's 71-minute wrap. Poll calls
  * this every foreground pass, even when discovery and logging are idle. */
@@ -67,21 +69,31 @@ static void record_decision(void) {
  observed.sample_hz = clk.mai_hz;
  audio_diag_decision(&diagnostics, timestamp(), &observed, hw.active, why);
 }
+extern uint32_t boot_generation;
+static uint32_t link_state(void);
+static int rot_rename(const char *from, const char *to, void *ctx) {
+ return fatsave_rename("KERNEL", from, to, (uint8_t *)ctx, AUDIO_LOG_BYTES + 80);
+}
 static void save_diagnostics(void) {
  if (!diagnostics.dirty || !storage_ready || protocol_busy() || os_running() || saves >= AUDIO_SAVE_MAX) return;
+ if (link_state() & 1u) display_seen = 1;
+ /* A link boot (Mac attached) with no display must not replace the display boot's record. */
+ if (!audio_rot_should_write(bootinfo_this(), display_seen)) return;
  if (saves && !expired(save_since, 1000000u)) return;
  save_since = micros(); saves++;
- /* A header makes the format/version and any whole-line eviction explicit. */
  static uint8_t out[AUDIO_LOG_BYTES + 80];
- char t[12]; const char *s = "AUDIO v1 dropped_lines="; uint32_t n = 0;
- while (*s) out[n++] = (uint8_t)*s++;
- number(t, diagnostics.dropped); for (char *q = t; *q;) out[n++] = (uint8_t)*q++;
+ if (!rotated) { /* first write of this boot: keep the last three boots (AUDIO.TXT, .1, .2) */
+  rotated = 1; struct audio_rot_io io = {rot_rename, out}; audio_rot_rotate(&io);
+ }
+ /* The first line names the boot number, mode and kernel generation. */
+ uint32_t n = audio_rot_header((char *)out, 80, bootinfo_this(), boot_generation, diagnostics.dropped);
  out[n++] = '\n';
  memcpy(out + n, diagnostics.text, diagnostics.len); n += diagnostics.len;
  if (fatsave_put("KERNEL", "AUDIO.TXT", out, n)) log_line("AUDIO.TXT write failed");
  else diagnostics.dirty = 0;
 }
 void hdmi_audio_edid(unsigned block, const uint8_t *data) {
+ display_seen = 1; /* a display answered */
  audio_diag_edid(&diagnostics, timestamp(), block, data);
 }
 static uint32_t link_state(void) {

@@ -39,6 +39,12 @@ static void number(char *out, uint32_t value) { snprintf(out, 12, "%u", value); 
 
 #include "hdmi-driver.h"
 
+uint32_t boot_generation = 7;
+const char *bootinfo_this(void) { return "n7,keyboard,k0"; }
+static unsigned renames;
+int fatsave_rename(const char *g, const char *f, const char *t, uint8_t *s, uint32_t c) {
+ (void)g; (void)f; (void)t; (void)s; (void)c; renames++; return 0;
+}
 int fatsave_put(const char *game, const char *name, const uint8_t *data, uint32_t bytes) {
  assert(!strcmp(game, "KERNEL") && !strcmp(name, "AUDIO.TXT"));
  assert(bytes < sizeof saved); memcpy(saved, data, bytes); saved[bytes] = 0;
@@ -198,7 +204,7 @@ int main(void) {
   * Do not install a task hook until success: null PCM consumption continues. */
  reset(0); pixel_hz = 0; pixel_query_ok = 0;
  assert(hdmi_audio_init() == -1 && pixel_queries == 1 && card_writes == 1);
- assert(strstr(saved, "AUDIO v1 dropped_lines=0\n"));
+ assert(strstr(saved, "AUDIO v2 boot=7 mode=keyboard gen=7 dropped_lines=0\n") && renames == 2);
  assert(strstr(saved, "backend=null reason=firmware pixel clock unavailable attempt=1\n"));
  assert(strstr(saved, "pixel_tag=0x00030002 clock_id=9 ok=0 reply_id=9 pixel_hz=0 mailbox=MBOX TAG\n"));
  assert(strstr(saved, "scheduler=3 hotplug=0 mode=hdmi\n"));

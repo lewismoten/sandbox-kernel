@@ -104,15 +104,15 @@ class FaultCLI(unittest.TestCase):
             usb.fault_symbols(record,'GMOS.ELF')
         self.assertIn('symbol resolution failed',self.stderr.getvalue())
     def test_logs_bytes_multiple_chunks_and_missing(self):
-        files={usb.KERNEL_LOG_DIR+n:bytes(range(256))*2+b'\r\n' for n in ('BOOT.TXT','USB.TXT','AUDIO.TXT','FAULT.TXT')}
+        files={usb.KERNEL_LOG_DIR+n:bytes(range(256))*2+b'\r\n' for n in ('BOOT.TXT','USB.TXT','AUDIO.TXT','AUDIO.1','AUDIO.2','FAULT.TXT')}
         port=Port(files)
         with tempfile.TemporaryDirectory() as directory:
             folder=pathlib.Path(directory)/'logs'
             self.assertEqual(usb.collect_logs(port,folder),0)
-            self.assertEqual(sorted(p.name for p in folder.iterdir()),['AUDIO.TXT','BOOT.TXT','FAULT.TXT','USB.TXT'])
+            self.assertEqual(sorted(p.name for p in folder.iterdir()),['AUDIO.1','AUDIO.2','AUDIO.TXT','BOOT.TXT','FAULT.TXT','USB.TXT'])
             for p in folder.iterdir():self.assertEqual(p.read_bytes(),files[usb.KERNEL_LOG_DIR+p.name])
         self.assertIn('CEC.TXT: unavailable',self.stderr.getvalue())
-        self.assertEqual(len(port.sent),13)
+        self.assertEqual(len(port.sent),19)
     def test_logs_crc_does_not_publish_bad_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError,'CRC'):
