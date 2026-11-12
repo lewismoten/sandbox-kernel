@@ -489,6 +489,9 @@ int32_t sys_call(const uint32_t reg[8]) {
    } else if(r->operation==0) {
     if(r->flags) return -EINVAL;
     return power_release(r->token);
+   } else if(r->operation==2) { /* ABI 1.12: which resources are asleep now (POWER_NO_* bits), for the app to stop its work */
+    if(r->token||r->flags) return -EINVAL;
+    r->flags=power_target(clock_us());
    } else return -EINVAL;
    break;
   }

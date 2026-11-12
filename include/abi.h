@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 11u /* 1.11: power holds/timeouts; 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
+#define K_ABI_MINOR 12u /* 1.12: power_hold query (what is asleep); 1.11: power holds/timeouts; 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};

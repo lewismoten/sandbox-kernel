@@ -1,4 +1,4 @@
-# Idle power saving (ABI 1.11)
+# Idle power saving (ABI 1.11, 1.12)
 
 The kernel parks an idle foreground loop with ARM1176 CP15 WFI. This is the
 `mcr p15,0,Rd,c7,c0,4` operation; the instruction-set WFI mnemonic is a NOP on
@@ -50,6 +50,9 @@ zero and the acquired token. Invalid flags/operations return EINVAL, stale or
 zero release tokens EBADF, a full table EMFILE, and exhausted token IDs EOVERFLOW.
 Timeouts accept 0..86400 seconds independently; zero disables that transition,
 values above 86400 return EINVAL, and a successful change resets inactivity.
+Sleep and sound (ABI 1.12): while the screen is blanked the kernel accepts and drops
+`/dev/audio` writes, and `power_hold` operation 2 returns `power_target` to the OS (see
+[os-authors.md](os-authors.md#sleep-and-sound-abi-112)).
 Holds do not pause health deadlines or absolute sleeps. Host USB task time is
 excluded from readiness/heartbeat budgets separately ([usb-host-keyboard.md](usb-host-keyboard.md#the-usb-log-usbtxt)).
 

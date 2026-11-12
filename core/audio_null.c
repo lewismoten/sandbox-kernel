@@ -4,8 +4,11 @@
 #include <string.h>
 #include "clock.h"
 struct audio_dev audio0;
-void audio_dev_init(void) { audio_ring_init(&audio0.ring); audio0.open = 0; audio0.clocked = 0; audio0.frac = 0; audio0.wrote = 0; }
+void audio_dev_init(void) { audio_ring_init(&audio0.ring); audio0.open = 0; audio0.clocked = 0; audio0.frac = 0; audio0.wrote = 0; audio0.asleep = 0; }
 uint32_t audio_dev_write(const void *src, uint32_t bytes) {
+    /* The screen is blanked (power saving): nobody is watching, so the sound is taken and dropped, never queued,
+     * and a stale 300 ms of it cannot play at wake. Not a first write, so the dry ring counts no underruns. */
+    if (audio0.asleep) { audio0.wrote = 0; return bytes / AUDIO_FRAME_BYTES; }
     uint32_t n = audio_ring_write(&audio0.ring, src, bytes);
     if (n) audio0.wrote = 1;
     return n;

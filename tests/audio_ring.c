@@ -65,6 +65,18 @@ static void pacing(void) {
 }
 /* One writer thread, one reader thread: every frame arrives once, in order. */
 #define TOTAL 2000000u
+/* The screen is blanked: writes succeed and are dropped (nothing queued, no underruns); at wake they queue again. */
+static void asleep(void) {
+    audio_dev_init(); assert(audio_dev_open() == 0);
+    uint32_t src[64]; frames(src, 0, 64);
+    audio0.asleep = 1;
+    assert(audio_dev_write(src, sizeof src) == 64);
+    assert(audio_ring_queued(&audio0.ring) == 0 && !audio0.wrote);
+    audio0.asleep = 0;
+    assert(audio_dev_write(src, sizeof src) == 64);
+    assert(audio_ring_queued(&audio0.ring) == 64 && audio0.wrote);
+    audio_dev_close(); audio_dev_init();
+}
 static void *producer_exact(void *a) {
     (void)a; uint32_t n = 0, chunk[37];
     while (n < TOTAL) {
@@ -100,4 +112,4 @@ static void producer_stops(void) {
     /* within 384 frames (8 ms) of the last real frame everything is silence */
     assert(q.silence_frames == 200u * 384u - 1000u);
 }
-int main(void) { producer_stops(); ordering(); silence(); overrun(); pacing(); spsc(); puts("audio ring ok"); return 0; }
+int main(void) { producer_stops(); ordering(); silence(); overrun(); pacing(); asleep(); spsc(); puts("audio ring ok"); return 0; }

@@ -1,7 +1,7 @@
 # sandbox-kernel SDK
 
 Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is the
-**1.11** described in [docs/design.md](../docs/design.md#system-call-abi-current-version-111);
+**1.11** described in [docs/design.md](../docs/design.md#system-call-abi-current-version-112);
 minor versions add compatible features. New to this? Read the
 [OS author's guide](../docs/os-authors.md) first: boot, the program rules, and a table of
 what each ABI minor added (the headers are now at minor 11).
@@ -49,6 +49,7 @@ what each ABI minor added (the headers are now at minor 11).
 - ABI 1.9 adds e-ink query/title/clear and page writes through `/dev/eink`;
   see [the panel contract](../docs/eink.md). ABI 1.10 adds the nonblocking
   `/dev/serial0` stream and `sbx_serial_query`; see [serial](../docs/serial.md).
+- ABI 1.12 adds `sbx_power_asleep` (call 22, operation 2): what the kernel has put to sleep now.
 - ABI 1.11 adds `sbx_power_acquire`, `sbx_power_release` (call 22) and
   `sbx_power_timeouts` (call 23). Check startup minor >= 11. Use
   `SBX_POWER_NO_BLANK | SBX_POWER_NO_SLOWDOWN` while playing long movies;

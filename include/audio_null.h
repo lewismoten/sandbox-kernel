@@ -6,7 +6,7 @@
 #pragma once
 #include <stdint.h>
 #include "audio_ring.h"
-struct audio_dev { struct audio_ring ring; uint32_t open; /* 0 or 1: one writer */ uint64_t last_us, frac; int clocked, wrote; /* wrote: first write seen since open */ };
+struct audio_dev { struct audio_ring ring; uint32_t open; /* 0 or 1: one writer */ uint64_t last_us, frac; int clocked, wrote; /* wrote: first write seen since open */ int asleep; /* the screen is blanked (drivers/power.c): writes are taken and dropped */ };
 extern struct audio_dev audio0;
 void audio_dev_init(void);
 uint32_t audio_dev_write(const void *src, uint32_t bytes); /* whole frames queued; marks the stream started */

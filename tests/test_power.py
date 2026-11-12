@@ -19,6 +19,8 @@ class Power(u.SupervisorBase):
     def hold(self, flags=3, token=0, op=1, tail=b''):
         r=self.call(22,self.hdr(40+len(tail))+struct.pack('<3Q',op,flags,token)+tail)
         return r,struct.unpack_from('<Q',u.peek(self.c,self.REC,40),32)[0]
+    def asleep(self):
+        r=self.hold(0,0,2)[0];return r,struct.unpack_from('<Q',u.peek(self.c,self.REC,40),24)[0]
     def release(self,t): return self.hold(0,t,0)[0]
     def timeouts(self,s,b):
         return self.call(23,self.hdr(32)+struct.pack('<2Q',s,b))
@@ -57,6 +59,17 @@ class Power(u.SupervisorBase):
         self.assertEqual(self.hold(tail=bytes(8))[0],0)
         for i in range(15): self.assertEqual(self.hold()[0],0)
         self.assertEqual(self.hold()[0],-24)
+    def test_query_reports_what_is_asleep(self):
+        self.assertEqual(self.timeouts(0,0),0)
+        self.assertEqual(self.asleep(),(0,0))
+        self.assertEqual(self.timeouts(10,20),0)
+        now=self.c.clock_us()
+        self.c.power_input(now-5000000);self.assertEqual(self.asleep(),(0,0))
+        self.c.power_input(now-15000000);self.assertEqual(self.asleep(),(0,2))
+        self.c.power_input(now-25000000);self.assertEqual(self.asleep(),(0,3))
+        self.assertEqual(self.hold(1,0,2)[0],-22);self.assertEqual(self.hold(0,5,2)[0],-22)
+        t=self.hold(1)[1];self.assertEqual(self.asleep(),(0,2));self.release(t)
+        self.c.power_input(now);self.assertEqual(self.asleep(),(0,0))
     def test_cleanup_revokes_tokens_and_policy(self):
         _,t=self.hold();self.timeouts(0,0)
         self.c.sys_reset()
