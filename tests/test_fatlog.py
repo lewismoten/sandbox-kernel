@@ -2,6 +2,7 @@
 """Bounded in-place logs (fatlog): one sector written per pump, text round-trips, a cut never harms the FAT."""
 import ctypes as C
 import os
+import struct
 from test_m1_user import InstallBase, fsck
 from test_cache import sparse_copy
 
@@ -130,3 +131,23 @@ class FatLog(InstallBase):
         self.set(self.lines(20, b'zzz')); res = [self.c.fatlog_pump() for _ in range(5)]
         self.assertTrue(any(r < 0 for r in res), res)
         self.assertEqual(self.read('/GAMES/DICE/DICE.BIN'), before)
+
+    def test_creation_is_given_up_after_three_failures_for_the_boot(self):
+        self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
+        for i in range(32): self.assertEqual(self.c.fatsave_put(b'KERNEL', b'N%d.TXT' % i, b'x', 1), 0)   # the folder is at its file cap
+        self.set(self.lines(20)); errors = 0
+        for _ in range(60000): errors += self.c.fatlog_pump() < 0
+        self.assertEqual(errors, 1, 'one report, then silence')
+        w = self.c.write_count(); r0 = self.c.read_count()
+        self.set(self.lines(30)); self.assertEqual(self.c.fatlog_pump(), 0)
+        self.assertEqual((self.c.write_count(), self.c.read_count()), (w, r0), 'no more card work this boot')
+
+    def test_a_chain_freed_and_reused_from_the_same_first_cluster_is_noticed(self):
+        self.set(self.lines(900)[:24000]); self.drain()
+        with open(self.disk, 'rb') as f: data = f.read()
+        marker = data.find(b'line 899'); a = data.find(b'CEC     TXT'); self.assertGreater(marker, 0)
+        first = struct.unpack('<H', data[a + 20:a + 22])[0] << 16 | struct.unpack('<H', data[a + 26:a + 28])[0]
+        for copy in (0, 1): self.patch((2048 + 32 + copy * 2048) * 512 + first * 4, struct.pack('<I', 0x0fffffff))   # chain now ends at its first cluster
+        self.set(self.lines(30, b'again')); self.drain()
+        self.assertEqual(self.read(LOG).rstrip(b'\0'), self.lines(30, b'again'))
+        with open(self.disk, 'rb') as f: self.assertEqual(f.read()[marker:marker + 8], b'line 899')   # the old later clusters were not written
