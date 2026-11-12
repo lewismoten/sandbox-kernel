@@ -212,6 +212,18 @@ Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_
 `vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);
 HDMI 1.4b and CEA-861.
 
+## A foreground or tick stall plays silence, not old audio
+
+The ring is 8 segments of 8 ms and DMA wraps forever, so a segment nobody rewrites is replayed
+(a held FM note, garble). `service()` now keeps audio only six segments ahead of DMA (48 ms) and
+writes one segment behind the one that just finished, so the segment before DMA's own is always
+silence and a wrap lands on it. A tick gap of 48 ms or more (IRQs masked by a long save) also
+zeroes every segment except DMA's current one, counts `stall_silence` on the `stat rate` line, and
+(poll mode) rebuilds whole laps from the clock, since the DMA position alone hides them. Audio
+then resumes in order from the queue (the segments that went by are dropped, as before). What
+cannot be fixed here: while IRQs stay masked, DMA still replays what is in the ring (up to 48 ms
+of old audio, then silence only once the tick runs). Tests: `tests/hdmi_backend.c` (200 ms stall).
+
 ## Periodic health lines in AUDIO.TXT
 
 While HDMI audio runs, the driver adds two `stat` lines every 5 s (`core/audio_stats.c`): `stat rate`

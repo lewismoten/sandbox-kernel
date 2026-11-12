@@ -29,6 +29,7 @@
 #define TONE_VOL 26u /* Q8: about 10% of full scale */
 #define RATE 48000u
 #define SEG_WORDS (HDMI_DMA_SEG_FRAMES * 2u)
+#define HDMI_AUDIO_DEPTH 6u /* segments of audio ahead of DMA (48 ms); the ring's other two are silence */
 
 static struct { int active, ch; uint32_t cs; } hw;
 static struct dma_cb cbs[HDMI_DMA_SEGS] __attribute__((aligned(32)));
@@ -40,6 +41,7 @@ static volatile uint32_t irq_starved; /* completed segments played without a tas
 static uint8_t stL[24], stR[24];
 static struct mixer mx;
 static volatile uint32_t completions; /* segment-complete IRQ, or poll_completions() when the IRQ never arrives */
+static uint32_t service_us, stall_silence; /* last service() time; stalls that ran the ring dry (zeroed, not replayed) */
 static uint32_t pos_idx; /* ring segment DMA was reading at the last completion */
 static int poll_mode; /* 1: completions come from polling CS/CONBLK, not the IRQ */
 static const char *detect = "none";
@@ -348,7 +350,7 @@ int hdmi_audio_init(void) {
   for (uint32_t k = 0; k < SEG_WORDS; k++) buf[i * SEG_WORDS + k] = silence[k];
   ready[i] = 1; /* initial silence is intentional */
  }
- irq_starved = 0;
+ irq_starved = 0; stall_silence = 0; service_us = micros();
  build_ring();
  drain();
  sayhex("MAI_CTL after write ", REG(HDMI_HD_BASE + HD_MAI_CTL));
@@ -421,7 +423,7 @@ static void stats_report(void) {
  char a[AUDIO_LOG_LINE], b[AUDIO_LOG_LINE];
  uint32_t flags = irq_save();
  struct audio_stats_ctx c = {completions, (uint32_t)poll_mode, audio_ring_queued(&audio0.ring),
-  (uint32_t)audio0.ring.underruns, REG(HDMI_HD_BASE + HD_MAI_CTL), dma(DMA_CS)};
+  (uint32_t)audio0.ring.underruns, REG(HDMI_HD_BASE + HD_MAI_CTL), dma(DMA_CS), stall_silence};
  audio_stats_lines(&stats, now, &c, a, sizeof a, b, sizeof b);
  irq_restore(flags);
  audio_diag_stat(&diagnostics, timestamp(), a); audio_diag_stat(&diagnostics, timestamp(), b);
@@ -486,9 +488,25 @@ void hdmi_audio_poll(void) {
  * The mixer stays in the foreground (it also writes the ring, as a producer). */
 static void service(void) {
  if (poll_mode) poll_completions();
+ /* A gap of 48 ms or more (a depth of six segments) means the ring may have
+  * wrapped: DMA replays whatever it finds, which was a held note and garble on a TV.
+  * Every segment but DMA's current one becomes silence, and the lap count is rebuilt
+  * from the clock (poll mode only knows the position, modulo one lap). */
+ uint32_t now = micros(), gap = now - service_us;
+ service_us = now;
+ if (gap >= HDMI_AUDIO_DEPTH * 8000u) {
+  uint32_t cur = dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS);
+  for (uint32_t g = 0; g < HDMI_DMA_SEGS; g++) {
+   if (g == cur) continue;
+   for (uint32_t i = 0; i < SEG_WORDS; i++) buf[g * SEG_WORDS + i] = silence[i];
+   ready[g] = 0;
+  }
+  drain();
+  stall_silence++;
+  if (poll_mode && gap / 8000u > HDMI_DMA_SEGS) completions += (gap / 8000u / HDMI_DMA_SEGS) * HDMI_DMA_SEGS; /* whole laps the position alone hides */
+ }
  /* Unsigned subtraction retains full laps and tolerates 32-bit wrap. */
  uint32_t completed = completions, adv = completed - last_completed;
- uint32_t now = micros();
  if (adv) { last_progress_us = now; stalled = 0; }
  else if (!stalled && now - last_progress_us >= HDMI_DMA_SEGS * 8000u) {
   starved++; stalled = 1; /* no completion for an entire ring duration */
@@ -499,9 +517,12 @@ static void service(void) {
   * Account for drains missed before those buffers, including their underruns,
   * then prepare the most recent completed segments. fill rechecks hardware
   * ownership after packing, since an IRQ may advance DMA during this task. */
- uint32_t refill = adv < HDMI_DMA_SEGS ? adv : HDMI_DMA_SEGS - 1u;
+ uint32_t refill = adv < HDMI_AUDIO_DEPTH - 1u ? adv : HDMI_AUDIO_DEPTH - 1u;
  for (uint32_t i = refill; i < adv; i++) read_pcm();
- for (uint32_t i = completed - refill; i != completed; i++) fill(i & (HDMI_DMA_SEGS - 1u));
+ /* Write one segment behind the one that just completed (that one stays the
+  * silence the tick left in it): audio is at most five segments ahead of DMA plus the
+  * playing one, and a wrap after a stall lands on silence. */
+ for (uint32_t i = completed - refill; i != completed; i++) fill((i - 1u) & (HDMI_DMA_SEGS - 1u));
  last_completed = completed;
  drain();
 }

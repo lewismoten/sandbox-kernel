@@ -27,7 +27,8 @@ static uint32_t last_completed, segs_played, starved, errors, fake_cs, fake_us;
 static uint32_t last_progress_us;
 static int stalled;
 static unsigned dma_writes;
-static uint32_t pos_idx;
+static uint32_t pos_idx, service_us, stall_silence;
+#define HDMI_AUDIO_DEPTH 6u
 static int poll_mode;
 static uint32_t micros(void) { return fake_us; }
 uint64_t clock_us(void) { return 0; }
@@ -59,7 +60,7 @@ static void irq_restore(uint32_t flags) { assert(!flags && irq_masked); irq_mask
 static void drain(void) {}
 static void reset_dma(void) {
  completions = last_completed = segs_played = starved = irq_starved = 0;
- fake_us = last_progress_us = 0; stalled = 0; current = 0; dma_writes = 0;
+ fake_us = last_progress_us = service_us = stall_silence = 0; stalled = 0; current = 0; dma_writes = 0;
  for (unsigned i = 0; i < HDMI_DMA_SEGS; i++) {
   memcpy(buf + i * SEG_WORDS, silence, sizeof silence); ready[i] = 1;
  }
@@ -103,7 +104,7 @@ int main(void) {
  /* Normal service: refill each completed buffer, then hear it exactly once
   * on its next lap. IRQ retirement must preserve every other DMA buffer. */
  for (unsigned tick = 0; tick < 32; tick++) {
-  assert(!memcmp(buf + current * SEG_WORDS, tick < 8 ? silence : expected, sizeof expected));
+  assert(!memcmp(buf + current * SEG_WORDS, tick < 7 ? silence : expected, sizeof expected));
   uint32_t before[HDMI_DMA_SEGS * SEG_WORDS]; memcpy(before, buf, sizeof buf);
   unsigned done = current;
   complete(1);
@@ -112,7 +113,9 @@ int main(void) {
    assert(!memcmp(buf + j * SEG_WORDS, before + j * SEG_WORDS, sizeof silence));
   assert(audio_dev_write(samples, sizeof samples) == HDMI_DMA_SEG_FRAMES);
   service();
-  assert(!memcmp(buf + done * SEG_WORDS, expected, sizeof expected));
+  /* one segment behind the one that just finished: the finished one stays silence, so a wrap hits silence */
+  assert(!memcmp(buf + ((done + HDMI_DMA_SEGS - 1u) % HDMI_DMA_SEGS) * SEG_WORDS, expected, sizeof expected));
+  assert(!memcmp(buf + done * SEG_WORDS, silence, sizeof silence));
  }
  assert(segs_played == 32 && !starved && !irq_starved && !audio0.ring.underruns);
  /* Seed all eight segments with sound; 192 ms without any task service
@@ -187,6 +190,52 @@ int main(void) {
   assert(st.max_gap_us == 10000u && !st.big_gaps);
   uint32_t bps = st.bytes / 5000u * 1000u;
   assert(bps >= 380000u && bps <= 388000u);
+ }
+ /* A 200 ms stall: the ring wraps. Steady ticks, then 200 ms with none (DMA ran 25 segments and
+  * the position aliases), then one tick: every segment but DMA's own that holds no fresh audio is
+  * silence, the event is counted, and the audio that follows is in order. */
+ reset_dma(); poll_mode = 1; pos_idx = 0; fake_cs = 1u | (8u << 16) | (15u << 20);
+ {
+  static uint32_t seq[AUDIO_RING_FRAMES], pk[SEG_WORDS];
+  for (unsigned i = 0; i < AUDIO_RING_FRAMES; i++) seq[i] = 0x10001u * (1u + i / 7u) + i;
+  audio_dev_close(); assert(audio_dev_open() == 0);
+  assert(audio_dev_write(seq, 4u * HDMI_DMA_SEG_FRAMES * 40u) == HDMI_DMA_SEG_FRAMES * 40u);
+  uint32_t done_us = 0;
+  for (uint32_t t = 10000; t <= 50000u; t += 10000) {
+   while (done_us + 8000 <= t) { done_us += 8000; current = (current + 1u) % HDMI_DMA_SEGS; fake_cs |= 6u; }
+   fake_us = t; service();
+  }
+  assert(!stall_silence);
+  /* steady state: the segment behind DMA is silence (a wrap lands on it), the next ones hold audio */
+  assert(!memcmp(buf + ((current + HDMI_DMA_SEGS - 1u) % HDMI_DMA_SEGS) * SEG_WORDS, silence, sizeof silence));
+  current = (current + 25u) % HDMI_DMA_SEGS; fake_cs |= 6u; fake_us = 300000u;
+  for (unsigned g = 0; g < HDMI_DMA_SEGS; g++) { /* old audio is what a wrap would replay */
+   if (g != current) memset(buf + g * SEG_WORDS, 0x5a, sizeof pk);
+  }
+  service();
+  assert(stall_silence == 1);
+  unsigned data = 0; int prev = -1;
+  for (unsigned k = 1; k < HDMI_DMA_SEGS; k++) { /* walk in play order after DMA's segment */
+   unsigned g = (current + k) % HDMI_DMA_SEGS;
+   if (!memcmp(buf + g * SEG_WORDS, silence, sizeof silence)) continue;
+   int found = -1;
+   for (int m = 0; m < 42 && found < 0; m++) {
+    iec958_pack(seq + m * HDMI_DMA_SEG_FRAMES, HDMI_DMA_SEG_FRAMES, 0, stL, stR, pk);
+    if (!memcmp(buf + g * SEG_WORDS, pk, sizeof pk)) found = m;
+   }
+   assert(found >= 0 && (prev < 0 || found == prev + 1)); /* fresh queued audio, consecutive, never the 0x5a fill */
+   prev = found; data++;
+  }
+  assert(data >= 1 && data <= HDMI_AUDIO_DEPTH - 1u);
+  assert(!memcmp(buf + ((current + HDMI_DMA_SEGS - 1u) % HDMI_DMA_SEGS) * SEG_WORDS, silence, sizeof silence));
+  /* resume: the next ticks refill in order (each new segment carries the next 384 samples) */
+  uint32_t pos0 = audio0.ring.played;
+  done_us = 300000u;
+  for (uint32_t t = 310000; t <= 400000u; t += 10000) {
+   while (done_us + 8000 <= t) { done_us += 8000; current = (current + 1u) % HDMI_DMA_SEGS; fake_cs |= 6u; }
+   fake_us = t; service();
+  }
+  assert(stall_silence == 1 && audio0.ring.played > pos0);
  }
  return 0;
 }
