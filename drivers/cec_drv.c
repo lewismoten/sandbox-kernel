@@ -23,11 +23,28 @@ static unsigned put_dec(char *o, unsigned n, uint32_t v) {
     while (k) o[n++] = t[--k];
     return n;
 }
+static const char *opname(unsigned op) {
+    switch (op) {
+    case 0x00: return "Feature Abort"; case 0x04: return "Image View On"; case 0x0D: return "Text View On";
+    case 0x36: return "Standby"; case 0x44: return "User Control Pressed"; case 0x45: return "User Control Released";
+    case 0x46: return "Give OSD Name"; case 0x47: return "Set OSD Name"; case 0x70: return "System Audio Mode Request";
+    case 0x72: return "Set System Audio Mode"; case 0x7E: return "System Audio Mode Status";
+    case 0x80: return "Routing Change"; case 0x81: return "Routing Information";
+    case 0x82: return "Active Source"; case 0x83: return "Give Physical Address"; case 0x84: return "Report Physical Address";
+    case 0x85: return "Request Active Source"; case 0x86: return "Set Stream Path"; case 0x87: return "Device Vendor ID";
+    case 0x89: return "Vendor Command"; case 0x8C: return "Give Device Vendor ID"; case 0x8D: return "Menu Request";
+    case 0x8E: return "Menu Status"; case 0x8F: return "Give Device Power Status"; case 0x90: return "Report Power Status";
+    case 0x9D: return "Inactive Source"; case 0x9E: return "CEC Version"; case 0x9F: return "Get CEC Version";
+    case 0xA0: return "Vendor Command With ID"; case 0xC0: return "Initiate ARC"; case 0xC1: return "Report ARC Initiated";
+    case 0xC3: return "Request ARC Initiation"; case 0xFF: return "Abort";
+    default: return "?";
+    }
+}
 /* "RX 0:4 44:01" style: initiator:dest then the bytes after the header */
 static void say_frame(struct cec_drv *d, uint32_t now, const char *tag, const struct cec_msg *m) {
     char t[CEC_LOG_LINE]; unsigned n = put_str(t, 0, tag);
     t[n++] = ' '; n = put_dec(t, n, cec_initiator(m)); t[n++] = '>'; n = put_dec(t, n, cec_dest(m));
-    if (m->len > 1) { t[n++] = ' '; n = put_hex(t, n, m->b + 1, (unsigned)m->len - 1u); }
+    if (m->len > 1) { t[n++] = ' '; n = put_hex(t, n, m->b + 1, (unsigned)m->len - 1u); n = put_str(t, n, " ("); n = put_str(t, n, opname(m->b[1])); t[n++] = ')'; }
     t[n] = 0; say(d, now, t);
 }
 
@@ -113,7 +130,7 @@ static void phys_refresh(struct cec_drv *d, uint32_t now, const char *why) {
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms) {
     struct cec_timing t; char l[CEC_LOG_LINE]; unsigned n;
     d->tx_busy = 0; d->hold = 0; d->announced = 0; d->last_ui = 0; d->ui_seen = 0; d->tx_id = 0;
-    d->bus_ok = 0; d->tx_eom_stale = d->rx_flag_bad = d->rx_flag_off = d->rx_int_prev = d->rx_pending = d->last_raw_len = 0;
+    d->bus_ok = 0; d->tx_eom_stale = d->rx_flag_bad = d->rx_flag_off = d->rx_int_prev = d->rx_pending = d->last_raw_len = d->rx_eom_prev = 0; d->rx_stale = d->flag_stuck = 0;
     d->flags_sig = d->flags_ms = d->rx_flag_ms = d->rx_via_flags = d->last_raw_ms = d->rx_dups = 0;
     d->hpd_known = 0; d->phys_want = 0; d->phys_failed = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
     d->rx_frames = d->tx_frames = d->tx_good = d->tx_bad = d->key_events = d->spurious = 0;
@@ -179,8 +196,8 @@ static void tx_done(struct cec_drv *d, uint32_t now) {
     char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, poll ? "poll " : "TX ");
     if (!poll) { n = put_dec(l, n, cec_initiator(&d->tx)); l[n++] = '>'; }
     n = put_dec(l, n, cec_dest(&d->tx));
-    if (d->tx.len > 1) { l[n++] = ' '; n = put_hex(l, n, d->tx.b + 1, (unsigned)d->tx.len - 1u); }
-    n = put_str(l, n, good ? " ack" : " nack"); l[n] = 0; say(d, now, l);
+    if (d->tx.len > 1) { l[n++] = ' '; n = put_hex(l, n, d->tx.b + 1, (unsigned)d->tx.len - 1u); n = put_str(l, n, " ("); n = put_str(l, n, opname(d->tx.b[1])); l[n++] = ')'; }
+    n = put_str(l, n, bcast ? " broadcast" : good ? " ack" : " nack"); l[n] = 0; say(d, now, l);
     /* A broadcast is acknowledged by silence, so the hardware's flag says little: never retry one. */
     cec_sm_tx_done(&d->sm, d->tx_id, (good || bcast) ? CEC_SM_TX_ACK : CEC_SM_TX_NACK);
     claimed_check(d, now);
@@ -188,10 +205,11 @@ static void tx_done(struct cec_drv *d, uint32_t now) {
 
 /* c5 bit 23 is a level that may stay high (a latched cause) after the receive is cleared, so it only counts when it rises:
  * a rise is remembered in rx_pending until a frame has been read. RX_EOM is the hardware's own end-of-frame flag. */
-static void rx_note(struct cec_drv *d, uint32_t c5) {
-    uint8_t now_hi = (c5 & CEC_C5_RX_CEC_INT) ? 1u : 0u;
+static void rx_note(struct cec_drv *d, uint32_t c5, uint32_t c1) {
+    uint8_t now_hi = (c5 & CEC_C5_RX_CEC_INT) ? 1u : 0u, eom = (c1 & CEC_C1_RX_EOM) ? 1u : 0u;
     if (now_hi && !d->rx_int_prev) d->rx_pending = 1;
-    d->rx_int_prev = now_hi;
+    if (eom && !d->rx_eom_prev) d->rx_pending = 1;       /* RX_EOM is a level too: the rise is the new frame (2026-11-12: a 3-byte frame at 20.9 s rose it and was missed) */
+    d->rx_int_prev = now_hi; d->rx_eom_prev = eom;
 }
 
 static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
@@ -206,7 +224,12 @@ static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 | CEC_C1_CLEAR_RECEIVE_OFF);   /* ready for the next frame */
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 & ~CEC_C1_CLEAR_RECEIVE_OFF);
     d->rx_pending = 0;
+    d->rx_int_prev = (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT) ? 1u : 0u;   /* the levels after the clear are the baseline: a bit that stays high is not a new frame, one that fell and rises is */
+    d->rx_eom_prev = (d->rd(d->ctx, CEC_R_CNTRL_1) & CEC_C1_RX_EOM) ? 1u : 0u;
     unsigned same = len == d->last_raw_len; for (unsigned i = 0; same && i < len; i++) if (raw[i] != d->last_raw[i]) same = 0;
+    if (same && !(c1 & CEC_C1_RX_EOM) && d->rx_frames) {   /* no end-of-frame flag and the bytes of the last frame: the buffer's old content, not a new frame */
+        d->rx_stale++; if (d->rx_stale <= 8u) say_regs(d, now, "stale receive read;"); return 1;
+    }
     if (same && (uint32_t)(now - d->last_raw_ms) < 20u) {
         d->rx_dups++; return 1;                                      /* the same frame read again within 20 ms: a stale one, not a new press (a held remote repeats every 100 ms or more) */
     }
@@ -276,8 +299,8 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         uint32_t sig = st ^ (c5 & CEC_C5_RX_CEC_INT) ^ (c1 & (CEC_C1_TX_EOM | CEC_C1_RX_EOM | CEC_C1_TX_STATUS_GOOD));
         if (sig != d->flags_sig && (uint32_t)(now - d->flags_ms) >= 250u) { d->flags_sig = sig; d->flags_ms = now; say_regs(d, now, "flags;"); }
         int tx_flag = d->tx_busy && (c1 & CEC_C1_TX_EOM) && !d->tx_eom_stale;
-        rx_note(d, c5);
-        int rx_new = d->rx_pending || (c1 & CEC_C1_RX_EOM);
+        rx_note(d, c5, c1);
+        int rx_new = d->rx_pending;
         int rx_flag = !d->rx_flag_off && !d->tx_busy && rx_new && (uint32_t)(now - d->rx_flag_ms) >= 30u;
         if (st & CEC_CPU_CEC) {
             if (rx_new && !(tx_flag && !(c1 & CEC_C1_RX_EOM))) rx_frame(d, now, "status");
@@ -289,12 +312,8 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         } else if (rx_flag) {
             d->rx_flag_ms = now; d->rx_via_flags++;
             if (d->rx_via_flags <= 5u) say_regs(d, now, "receive flag, status bit clear;");
-            if (rx_frame(d, now, "flags")) d->rx_flag_bad = 0;
-            else if (++d->rx_flag_bad >= 8u) { d->rx_flag_off = 1; say(d, now, "receive flags give no frames: flag path off"); }
-            if ((d->rd(d->ctx, CEC_R_CNTRL_1) & CEC_C1_RX_EOM) || (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT)) {
-                if (!d->rx_flag_off) say(d, now, "receive flag stays set after the clear: flag path off");
-                d->rx_flag_off = 1;
-            }
+            rx_frame(d, now, "flags");
+            if (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT) d->flag_stuck++;   /* only counted: the 2026-11-12 run switched the path off for this and never saw another frame */
         }
     }
     cec_sm_tick(&d->sm, now);
@@ -302,8 +321,8 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         d->wr(d->ctx, CEC_R_CNTRL_1, d->rd(d->ctx, CEC_R_CNTRL_1) & ~CEC_C1_START_XMIT);
         uint32_t c5 = d->rd(d->ctx, CEC_R_CNTRL_5);
         d->wr(d->ctx, CEC_R_CNTRL_5, c5 | CEC_C5_TX_SW_RESET); d->wr(d->ctx, CEC_R_CNTRL_5, c5 & ~CEC_C5_TX_SW_RESET);
-        rx_note(d, d->rd(d->ctx, CEC_R_CNTRL_5));
-        if (d->rx_pending || (d->rd(d->ctx, CEC_R_CNTRL_1) & CEC_C1_RX_EOM)) {
+        rx_note(d, d->rd(d->ctx, CEC_R_CNTRL_5), d->rd(d->ctx, CEC_R_CNTRL_1));
+        if (d->rx_pending) {
             say_regs(d, now, "receiver flagged at timeout;");
             rx_frame(d, now, "timeout");                                /* read it, as the interrupt handler would, and re-arm the receiver */
         }

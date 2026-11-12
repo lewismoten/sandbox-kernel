@@ -61,7 +61,7 @@ static const char *why = "not tried";
 static struct audio_diag diagnostics;
 static struct audio_observation observed;
 static uint32_t attempts, window_attempts, retry_since, retry_delay;
-static uint32_t poll_since, last_link, save_since, saves;
+static uint32_t poll_since, last_link, save_since, saves, saved_len, saved_dropped;
 /* A link edge counts only after the new state held for LINK_STABLE_US, and
  * accepted edges are at least LINK_EDGE_GAP_US apart: HPD is noisy or stuck
  * in USB-host boots, and one noisy sample must never close audio. */
@@ -99,9 +99,13 @@ static void save_diagnostics(void) {
  /* While the OS runs, only the slow 30 s cadence writes (the stat lines keep coming in
   * keyboard mode); the write's time is credited to the OS heartbeat like USB host work. */
  int os = os_running();
- if (saves && !expired(save_since, saves < 8u && !os ? 1000000u : 30000000u)) return;
+ /* Every save is a copy-on-write rewrite of the whole file with the main loop held (146 ms for 4.5 KB; hundreds of ms
+  * for 8 KB), and the stat lines keep the log dirty: the 2026-11-12 session's 30 s stalls grew to over a second and made the
+  * keyboard crawl. So with the OS running a save needs 2 minutes and 1 KiB of new log; without it, 30 s after the first 8. */
+ if (saves && !expired(save_since, saves < 8u && !os ? 1000000u : os ? 120000000u : 30000000u)) return;
+ if (os && saves && diagnostics.len < saved_len + 1024u && diagnostics.dropped == saved_dropped) return;
  uint64_t t0 = clock_us();
- save_since = micros(); saves++;
+ save_since = micros(); saves++; saved_len = diagnostics.len; saved_dropped = diagnostics.dropped;
  static uint8_t out[AUDIO_LOG_BYTES + 80];
  if (!rotated) { /* first write of this boot: keep the last three boots (AUDIO.TXT, .1, .2) */
   rotated = 1; struct audio_rot_io io = {rot_rename, out}; audio_rot_rotate(&io);

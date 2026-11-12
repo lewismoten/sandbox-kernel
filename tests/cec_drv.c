@@ -203,16 +203,15 @@ static void test_flags_without_status_bit(void) {
     assert(keys.n == 1 && keys.code[0] == 103 && keys.val[0] == 1 && drv.rx_via_flags == 1);
     assert(strstr(drv.log.text, "rx raw 3B 04:44:01 via flags") && strstr(drv.log.text, "receive flag, status bit clear;"));
     cec_drv_task(&drv, 1100); assert(drv.rx_frames == 1);                    /* cleared: not read twice */
-    /* a bit that never clears turns the flag path off instead of spinning */
+    /* a bit that never clears does not make it spin */
     claim4(); chip.sticky_rx = 1; inject_quiet(&chip, up, 3);
     for (uint32_t t = 1000; t < 1400; t += 40) cec_drv_task(&drv, t);
-    assert(drv.rx_flag_off && drv.rx_frames <= 2 && strstr(drv.log.text, "flag path off"));
-    /* only c5 bit 23 stays high (a latched cause), RX_EOM clears: one frame at most, no key repeats, the path goes off with one log line */
+    assert(drv.rx_frames <= 2);
+    /* only c5 bit 23 stays high (a latched cause), RX_EOM clears: one frame at most, no key repeats */
     claim4(); keys.n = 0; chip.sticky_int = 1; inject_quiet(&chip, up, 3); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;
     for (uint32_t t = 1000; t < 3000; t += 30) cec_drv_task(&drv, t);
     unsigned presses = 0; for (unsigned i = 0; i < keys.n; i++) presses += keys.val[i] == 1 || keys.val[i] == 2;
-    assert(drv.rx_frames <= 1 && presses <= 1 && drv.rx_flag_off);
-    { const char *a = strstr(drv.log.text, "flag path off"); assert(a && !strstr(a + 1, "flag path off")); }
+    assert(drv.rx_frames <= 1 && presses <= 1);
     /* a stale bit 23 beside a finished send is not a received frame, and a send that times out does not replay an old frame */
     claim4(); chip.sticky_int = 0; chip.r[CEC_R_CNTRL_5 / 4] |= CEC_C5_RX_CEC_INT; chip.r[CEC_R_CPU_STATUS / 4] |= CEC_CPU_CEC;
     { unsigned f = drv.rx_frames; for (uint32_t t = 100; t < 4000; t += 40) cec_drv_task(&drv, t); assert(drv.rx_frames <= f + 1); }
@@ -399,6 +398,32 @@ static void test_edid_retry(void) {
     assert(edid_calls == 1 && !drv.phys_want);
 }
 
+
+/* 2026-11-12 session 3 (Insignia): a poll arrives with c5 bit 23 only and the bit stays high; later frames must still be read:
+ * the TV polls us, asks for our physical address, then sends User Control Pressed and Released (keys). */
+static void test_tv_session_after_sticky_c5(void) {
+    claim4(); keys.n = 0; chip.sticky_int = 1;
+    static const uint8_t poll[] = {0x04}, gpa[] = {0x04, 0x83}, up[] = {0x04, 0x44, 0x01}, rel[] = {0x04, 0x45};
+    inject_quiet(&chip, poll, 1); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;       /* bit 23 only, as logged at 972 ms */
+    cec_drv_task(&drv, 2000);
+    assert(drv.rx_frames == 1 && strstr(drv.log.text, "rx raw 1B 04 via flags") && strstr(drv.log.text, "RX 0>4"));
+    assert(chip.r[CEC_R_CNTRL_5 / 4] & CEC_C5_RX_CEC_INT);                           /* still high after the clear */
+    for (uint32_t t = 2040; t < 2600; t += 40) cec_drv_task(&drv, t);               /* quiet: no phantom frames */
+    assert(drv.rx_frames == 1);
+    unsigned sent = chip.sent_n;
+    inject_quiet(&chip, gpa, 2); cec_drv_task(&drv, 3000);                           /* Give Physical Address (broadcast from 0) */
+    assert(drv.rx_frames == 2 && strstr(drv.log.text, "RX 0>4 83 (Give Physical Address)"));
+    cec_drv_task(&drv, 3040); assert(chip.sent_n == sent + 1 && chip.sent[sent][1] == 0x84);   /* we answer Report Physical Address */
+    finish_tx(&chip, 1); cec_drv_task(&drv, 3100);
+    inject_quiet(&chip, up, 3); cec_drv_task(&drv, 4000);                            /* the key, with c5 already high */
+    assert(keys.n == 1 && keys.code[0] == 103 && keys.val[0] == 1 && drv.rx_frames == 3);
+    inject_quiet(&chip, rel, 2); cec_drv_task(&drv, 4100);
+    assert(drv.rx_frames == 4 && keys.n == 2 && keys.val[1] == 0);
+    inject_quiet(&chip, up, 3); cec_drv_task(&drv, 4400);                            /* the same key again later is a new press */
+    assert(keys.n == 3 && keys.val[2] == 1);
+    assert(strstr(drv.log.text, "TX 4>15 84:") && strstr(drv.log.text, "(Report Physical Address) broadcast"));
+}
+
 int main(void) {
     test_power();
     test_timing_and_claim(); puts("PASS timing and claim");
@@ -411,6 +436,7 @@ int main(void) {
     test_log_keeps_head(); puts("PASS log keeps its head");
     test_edid_log_timing(); puts("PASS edid, log, timing");
     test_no_address_refresh(); puts("PASS no-address driver still refreshes the display address");
+    test_tv_session_after_sticky_c5(); puts("PASS TV session with c5 bit 23 stuck high");
     test_late_tv(); assert(!chip.lost); puts("PASS TV that appears 60 s late");
     test_capture_bounds(); puts("PASS capture is bounded");
     test_edid_retry(); puts("PASS a failed EDID read is read again");
