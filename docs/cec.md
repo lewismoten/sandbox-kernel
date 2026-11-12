@@ -39,20 +39,24 @@ announcement, received keys and replies, a stuck send, and the log bound.
 4. A poll to address 4 (then 8, then 11): ACK means occupied; NACK or a 1 s timeout
    without ACK means free under this driver's claim policy, so it is claimed (written
    to the register's address field, so the block acknowledges frames sent to it). Then, in
-   order: Report Physical Address (broadcast), Set OSD Name "Game Maker" (broadcast), Image View On to
+   order: Report Physical Address (broadcast), Set OSD Name "Game Maker" (directed to the TV; the spec has no broadcast form), Image View On to
    the TV, Active Source. The initial sequence happens at claim time, usually
    before OS autostart. Wake can queue Image View On and Active Source again;
    standby queues a directed Standby to TV address 0 ([power-saving.md](power-saving.md)).
 5. Replies: Give OSD Name, Give Physical Address, Give Device Power Status (on), Get CEC Version
-   (1.4), Menu Request (Menu Status: deactivated, since there is no TV-driven menu), Request
-   Active Source and Set Stream Path once active. Give Device Vendor ID and anything else directed
-   at us gets Feature Abort "unrecognized opcode" (Feature Abort itself is ignored);
-   no vendor ID is claimed. These messages request TV input selection; they do
+   (1.4), Menu Request (Menu Status: activated), Request
+   Active Source and Set Stream Path once active. Menu Request is answered Menu Status
+   "activated", so a TV that withholds the remote from a device with no active menu keeps
+   sending keys. Give Device Vendor ID gets a broadcast Device Vendor ID of 000000 (no vendor
+   claimed; the value is a convention, not a registered id). Anything else directed at us gets
+   Feature Abort "unrecognized opcode" (Feature Abort itself is ignored). These messages request TV input selection; they do
    not guarantee that a TV changes input.
 6. Keys: User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
    keyboard and the synthetic device use): Select and Enter are Enter, arrows are arrows, Exit is
-   Esc, 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
-   is Menu. If the USB keyboard left, `input_add()` brings the device back (host role).
+   Esc, Play and Pause are Space, 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
+   is Menu. A remote's repeat (Pressed again about every 100 to 500 ms) becomes a key repeat for
+   arrows and channel up/down only; Select, Exit and the others act once per press. No Pressed for
+   550 ms ends the press when no Released arrives. If the USB keyboard left, `input_add()` brings the device back (host role).
 7. Broadcast frames are acknowledged by silence, so the chip's "good" flag says nothing about
    them: the driver never retries a completed broadcast even if GOOD is clear.
    A software timeout or transport

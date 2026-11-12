@@ -83,3 +83,9 @@ int cec_build_menu_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t
     m->b[2] = state; m->len = 3;
     return 0;
 }
+int cec_build_device_vendor_id(struct cec_msg *m, unsigned src, uint32_t vendor) {
+    if (start(m, src, CEC_ADDR_BROADCAST, CEC_OP_DEVICE_VENDOR_ID) < 0) return -1;
+    m->b[2] = (uint8_t)(vendor >> 16); m->b[3] = (uint8_t)(vendor >> 8); m->b[4] = (uint8_t)vendor;
+    m->len = 5;
+    return 0;
+}

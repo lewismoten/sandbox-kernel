@@ -41,6 +41,7 @@
 #define CEC_POWER_ON 0u
 #define CEC_MENU_ACTIVATED 0u
 #define CEC_MENU_DEACTIVATED 1u
+#define CEC_VENDOR_UNKNOWN 0u /* 24-bit vendor id sent when asked; none is claimed */
 
 struct cec_msg {
     uint8_t len;               /* 1..16; header only = a poll */
@@ -67,5 +68,6 @@ int cec_build_image_view_on(struct cec_msg *m, unsigned src, unsigned dst);
 int cec_build_active_source(struct cec_msg *m, unsigned src, uint16_t phys);
 int cec_build_report_power_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t status);
 int cec_build_menu_status(struct cec_msg *m, unsigned src, unsigned dst, uint8_t state);
+int cec_build_device_vendor_id(struct cec_msg *m, unsigned src, uint32_t vendor); /* broadcast */
 int cec_build_cec_version(struct cec_msg *m, unsigned src, unsigned dst, uint8_t version);
 #endif

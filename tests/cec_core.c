@@ -75,6 +75,13 @@ static void test_keys(void) {
     cec_keys_init(&k);
     P(&k, 0x00, 0, e);
     assert(P(&k, 0x2B, 10, e) == 2 && e[0].value == 0 && e[1].value == 1 && e[1].code == 28);
+    /* play and pause become Space; Select and Back do not repeat, arrows do, and a held Select still times out */
+    assert(cec_keys_map(0x44) == 57 && cec_keys_map(0x46) == 57 && cec_keys_map(0x61) == 57 && cec_keys_map(0x62) == 57);
+    cec_keys_init(&k);
+    assert(P(&k, 0x00, 0, e) == 1 && P(&k, 0x00, 100, e) == 0 && P(&k, 0x00, 200, e) == 0);
+    assert(cec_keys_tick(&k, 700, e) == 0 && cec_keys_tick(&k, 750, e) == 1 && e[0].code == 28 && e[0].value == 0);
+    assert(P(&k, 0x0D, 0, e) == 1 && P(&k, 0x0D, 100, e) == 0);
+    assert(P(&k, 0x04, 200, e) == 2 && P(&k, 0x04, 300, e) == 1 && e[0].value == 2);
     /* clock wrap */
     cec_keys_init(&k);
     P(&k, 1, 0xFFFFFF00u, e);
@@ -99,7 +106,7 @@ static void test_sm(void) {
     cec_sm_tx_done(&s, last_tx_id, 0);
     assert(s.state == CEC_SM_CLAIMED && s.laddr == 4);
     assert(tx(&s, &m)); static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04}; eq(&m, rpa, 5); cec_sm_tx_done(&s, last_tx_id, 1);
-    assert(tx(&s, &m) && cec_opcode(&m) == 0x47 && cec_dest(&m) == 15); cec_sm_tx_done(&s, last_tx_id, 1);
+    assert(tx(&s, &m) && cec_opcode(&m) == 0x47 && cec_dest(&m) == 0); cec_sm_tx_done(&s, last_tx_id, 1);
     assert(!tx(&s, &m));
     /* 4 taken, 8 free */
     claim(&s, 0x1000, 1); assert(tx(&s, &m) && m.b[0] == 0x88); cec_sm_tx_done(&s, last_tx_id, 0);
@@ -122,8 +129,8 @@ static void test_sm(void) {
     assert(tx(&s, &m) && cec_dest(&m) == 0 && cec_opcode(&m) == 0x47 && m.len == 12); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ggp, 2); r.b[0] = 0x04; cec_sm_rx(&s, &r);
     assert(tx(&s, &m)); eq(&m, rpa, 5); cec_sm_tx_done(&s, last_tx_id, 1);
-    static const uint8_t vend[] = {0x04, 0x8C}, fav[] = {0x40, 0x00, 0x8C, 0x00};
-    r = mk(vend, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, fav, 4); cec_sm_tx_done(&s, last_tx_id, 1);
+    static const uint8_t vend[] = {0x04, 0x8C}, fav[] = {0x4F, 0x87, 0x00, 0x00, 0x00};
+    r = mk(vend, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, fav, 5); cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t unk[] = {0x04, 0x6B, 0x01};
     r = mk(unk, 3); cec_sm_rx(&s, &r);
     static const uint8_t fau[] = {0x40, 0x00, 0x6B, 0x00};
@@ -136,7 +143,7 @@ static void test_sm(void) {
     r = mk(pwr, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x90 && m.b[2] == 0); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ver, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[1] == 0x9E && m.b[2] == 5); cec_sm_tx_done(&s, last_tx_id, 1);
     static const uint8_t mreq[] = {0x04, 0x8D, 0x02};
-    r = mk(mreq, 3); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x8E && m.b[2] == 1); cec_sm_tx_done(&s, last_tx_id, 1);
+    r = mk(mreq, 3); cec_sm_rx(&s, &r); assert(tx(&s, &m) && m.b[0] == 0x40 && m.b[1] == 0x8E && m.b[2] == 0); cec_sm_tx_done(&s, last_tx_id, 1);
     /* user control */
     static const uint8_t ucp[] = {0x04, 0x44, 0x04}, ucr[] = {0x04, 0x45};
     r = mk(ucp, 3); assert(cec_sm_rx(&s, &r) == CEC_SM_EV_KEY_PRESSED && s.ui_code == 4 && !tx(&s, &m));

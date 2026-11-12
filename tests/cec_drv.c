@@ -74,11 +74,11 @@ static void test_timing_and_claim(void) {
     cec_drv_task(&drv, 10);
     assert(drv.sm.state == CEC_SM_CLAIMED && drv.sm.laddr == 4);
     assert(((chip.r[CEC_R_CNTRL_1 / 4] & CEC_C1_ADDR_MASK) >> CEC_C1_ADDR_SHIFT) == 4u);
-    static const uint8_t rpa[] = {0x4F, 0x84, 0x21, 0x00, 0x04}, osd[] = {0x4F, 0x47, 'G','a','m','e',' ','M','a','k','e','r'};
+    static const uint8_t rpa[] = {0x4F, 0x84, 0x21, 0x00, 0x04}, osd[] = {0x40, 0x47, 'G','a','m','e',' ','M','a','k','e','r'};
     static const uint8_t ivo[] = {0x40, 0x04}, asrc[] = {0x4F, 0x82, 0x21, 0x00};
     expect(&chip, 1, rpa, 5);
-    finish_tx(&chip, 0); cec_drv_task(&drv, 20); expect(&chip, 2, osd, 12);       /* broadcasts: the flag says nack, no retry */
-    finish_tx(&chip, 0); cec_drv_task(&drv, 30); expect(&chip, 3, ivo, 2);
+    finish_tx(&chip, 0); cec_drv_task(&drv, 20); expect(&chip, 2, osd, 12);       /* broadcast Report: the flag says nack, no retry */
+    finish_tx(&chip, 1); cec_drv_task(&drv, 30); expect(&chip, 3, ivo, 2);
     finish_tx(&chip, 1); cec_drv_task(&drv, 40); expect(&chip, 4, asrc, 4);        /* the TV acked Image View On */
     finish_tx(&chip, 0); cec_drv_task(&drv, 50);
     assert(chip.sent_n == 5 && !chip.tx_started && !drv.tx_busy);                   /* nothing resent */
@@ -148,7 +148,7 @@ static void test_rx_keys_and_replies(void) {
     unsigned before = chip.sent_n;
     static const uint8_t gosd[] = {0x04, 0x46}, gpa[] = {0x04, 0x83}, mreq[] = {0x04, 0x8D, 0x00}, gv[] = {0x04, 0x9F};
     static const uint8_t osdr[] = {0x40, 0x47, 'G','a','m','e',' ','M','a','k','e','r'};
-    static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04}, ms[] = {0x40, 0x8E, 0x01}, cv[] = {0x40, 0x9E, 0x05};
+    static const uint8_t rpa[] = {0x4F, 0x84, 0x10, 0x00, 0x04}, ms[] = {0x40, 0x8E, 0x00}, cv[] = {0x40, 0x9E, 0x05};
     inject(&chip, gosd, 2); cec_drv_task(&drv, 3000); expect(&chip, before, osdr, 12); finish_tx(&chip, 1); cec_drv_task(&drv, 3005);
     inject(&chip, gpa, 2); cec_drv_task(&drv, 3010); expect(&chip, before + 1, rpa, 5); finish_tx(&chip, 0); cec_drv_task(&drv, 3020);
     inject(&chip, mreq, 3); cec_drv_task(&drv, 3030); expect(&chip, before + 2, ms, 3); finish_tx(&chip, 1); cec_drv_task(&drv, 3040);

@@ -62,7 +62,7 @@ void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result resu
             struct cec_msg m;
             s->laddr = cands[s->cand]; s->state = CEC_SM_CLAIMED;
             report(s);
-            cec_build_set_osd_name(&m, s->laddr, CEC_ADDR_BROADCAST, CEC_SM_OSD_NAME);
+            cec_build_set_osd_name(&m, s->laddr, CEC_ADDR_TV, CEC_SM_OSD_NAME); /* directed: the spec has no broadcast */
             push(s, &m);
         } else if (s->poll_retries < CEC_SM_POLL_RETRIES) {
             s->poll_retries++;
@@ -125,8 +125,10 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
         cec_build_report_power_status(&r, s->laddr, from, CEC_POWER_ON); push(s, &r); break;
     case CEC_OP_GET_CEC_VERSION:
         cec_build_cec_version(&r, s->laddr, from, CEC_VERSION_1_4); push(s, &r); break;
-    case CEC_OP_MENU_REQUEST:                        /* we show no menu for the TV to drive */
-        cec_build_menu_status(&r, s->laddr, from, CEC_MENU_DEACTIVATED); push(s, &r); break;
+    case CEC_OP_GIVE_DEVICE_VENDOR_ID:
+        cec_build_device_vendor_id(&r, s->laddr, CEC_VENDOR_UNKNOWN); push(s, &r); break;
+    case CEC_OP_MENU_REQUEST:                        /* "activated": the TV keeps sending us the remote's keys */
+        cec_build_menu_status(&r, s->laddr, from, CEC_MENU_ACTIVATED); push(s, &r); break;
     case CEC_OP_FEATURE_ABORT: break;                /* never abort an abort */
     default:                                         /* Give Device Vendor ID and the rest */
         cec_build_feature_abort(&r, s->laddr, from, (uint8_t)op, CEC_ABORT_UNRECOGNIZED); push(s, &r);

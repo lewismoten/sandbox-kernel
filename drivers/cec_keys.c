@@ -5,7 +5,7 @@
 /* Linux input key numbers (the ABI the kernel's /dev/input uses). */
 enum { K_ESC = 1, K_1 = 2, K_9 = 10, K_0 = 11, K_BACKSPACE = 14, K_ENTER = 28,
        K_HOME = 102, K_UP = 103, K_PAGEUP = 104, K_LEFT = 105, K_RIGHT = 106,
-       K_DOWN = 108, K_PAGEDOWN = 109, K_MENU = 139, K_F1 = 59 };
+       K_DOWN = 108, K_SPACE = 57, K_PAGEDOWN = 109, K_MENU = 139, K_F1 = 59 };
 
 void cec_keys_init(struct cec_keys *k) { k->held = 0; k->ui = 0; k->last_ms = 0; }
 
@@ -24,6 +24,7 @@ uint16_t cec_keys_map(uint8_t ui) {
     case 0x2C: return K_BACKSPACE;               /* Clear */
     case 0x30: return K_PAGEUP;                  /* Channel up */
     case 0x31: return K_PAGEDOWN;                /* Channel down */
+    case 0x44: case 0x46: case 0x61: case 0x62: return K_SPACE; /* Play, Pause, Play and Pause functions */
     case 0x71: return K_F1;                      /* Blue, Red, Green, Yellow */
     case 0x72: return K_F1 + 1;
     case 0x73: return K_F1 + 2;
@@ -44,7 +45,10 @@ unsigned cec_keys_pressed(struct cec_keys *k, uint8_t ui, uint32_t now_ms, struc
     unsigned n = 0;
     if (!code) return 0;
     if (k->held && k->held == code && k->ui == ui) {
-        ev[n].code = code; ev[n].value = 2; n++;          /* remote's own repeat */
+        /* the remote's own repeat: only moves and pages repeat; Select, Back and the rest
+         * act once per press, so a held Select cannot start a program twice */
+        if (code == K_UP || code == K_DOWN || code == K_LEFT || code == K_RIGHT ||
+            code == K_PAGEUP || code == K_PAGEDOWN) { ev[n].code = code; ev[n].value = 2; n++; }
     } else {
         n = up(k, ev, n);
         ev[n].code = code; ev[n].value = 1; n++;

@@ -456,6 +456,14 @@ existing instances with `ENODEV`; close and reopen after re-add (`include/input.
 `core/input.c:25`, `core/input.c:49`, `core/input.c:67`). `INPUT_QUERY=0x30000`
 still reports SYNTHETIC even in the host build (`core/sys.c:316`).
 
+A TV remote on HDMI-CEC feeds the same queue once the kernel has claimed a CEC address
+([cec.md](cec.md)). The OS sees these Linux key codes: arrows 103/108/105/106 (Up, Down, Left,
+Right), Enter 28 (Select and Enter), Esc 1 (Exit or Back), Space 57 (Play, Pause), digits 2-11,
+Backspace 14 (Clear), Page Up/Down 104/109 (channel), Home 102 (Root menu), Menu 139 (Setup
+menu), F1-F4 59-62 (blue, red, green, yellow). Only arrows and Page Up/Down send value 2
+(repeat) while the button is held; Enter, Esc and Space come once per press. A press with no
+further CEC "pressed" for 550 ms ends with a key-up if the TV never sends "released".
+
 The default `USB_ROLE=device` build supplies `KEY`/`AXIS` input and the CDC recovery
 console. `make USB_ROLE=host all` instead links TinyUSB HID host with one hub,
 up to four downstream devices and up to four boot-keyboard interfaces sharing
