@@ -32,12 +32,21 @@ static int wr(uint32_t lba,const uint8_t *b,uint32_t fsinfo) {
 /* One cached sector from each FAT copy: a scan for free clusters reads each
    FAT sector once, not once per cluster (the watchdog allows 8 s). */
 static uint8_t fc[2][512]; static uint32_t fc_sec=~0u;
+/* A cut between the two copies of one FAT write leaves them different. Changing commands
+   heal that entry (LS never writes): to the copy that is not free, copy 0 if both are not
+   (what readers already follow), so healing can leak a cluster but never free one. */
+static bool heal;
 static int fat_get(uint32_t c,uint32_t *out) {
  uint32_t sec=c/128; int r;
  if(sec>=v.fat_size) return fail("PUT FAT RANGE",5);
  if(sec!=fc_sec) {fc_sec=~0u; if((r=rd(v.fat+sec,fc[0]))||(r=rd(v.fat+v.fat_size+sec,fc[1]))) return r; fc_sec=sec;}
- uint32_t a=u32(fc[0]+(c%128)*4)&0x0fffffffu;
- if((u32(fc[1]+(c%128)*4)&0x0fffffffu)!=a) return fail("PUT FAT MISMATCH",5);
+ uint8_t *e0=fc[0]+(c%128)*4,*e1=fc[1]+(c%128)*4; uint32_t a=u32(e0)&0x0fffffffu,b=u32(e1)&0x0fffffffu;
+ if(b!=a) {
+  if(!heal) return fail("PUT FAT MISMATCH",5);
+  uint32_t k=a?1:0; uint8_t *e=k?e1:e0; if(!a) a=b;
+  put32(e,(u32(e)&0xf0000000u)|a);
+  if((r=wr(v.fat+k*v.fat_size+sec,fc[k],0))) {fc_sec=~0u;return r;}
+ }
  *out=a; return 0;
 }
 static int fat_set(uint32_t c,uint32_t val) {
@@ -226,6 +235,89 @@ static int split(const char *path,uint8_t dirs[3][11],unsigned *ndirs,uint8_t nm
  *ndirs=d; return fatput_name(part[2],nm);
 }
 int fatput_check(const char *path) {uint8_t d[3][11],nm[11];unsigned n;return split(path,d,&n,nm);}
+/* ---- Power-cut recovery for USB MV (and the guard RM uses) ----
+ * A move to another folder writes its new entry with MV_MARK set in the reserved
+ * NT byte (12) and clears it only after the old name is gone. A cut in between
+ * leaves two live names on one cluster chain, the new one marked. The first changing
+ * command after boot walks the zone (/GAMES, /POCKET, /OS files, /OS/APPS, MV_MAXC
+ * deep) once, keeps each marked entry, deletes the other live name with its start
+ * cluster (and its long name), repoints a folder's "..", then clears the mark. */
+#define MV_MAXC 6
+#define MV_MARK 0x40
+static uint32_t ecl(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
+static bool swept; /* the zone has no marked entry left (cleared on boot and by a cut move) */
+/* What zone_walk looks for: mode 0 the first marked entry, mode 1 a live entry starting at
+   want other than skip. found: where, its folder, the entry and its long-name group. */
+static struct {uint8_t mode; uint32_t want; struct slot skip,at,lfn[20]; bool found; uint32_t parent; uint8_t e[32]; unsigned lfn_n;} zq;
+static int zone_dir(uint32_t dir,unsigned part,bool os_top) {
+ uint32_t c=dir; lfn_run_n=0; watchdog_feed();
+ for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {
+  if(!cluster_ok(c)) return fail("PUT DIR CLUSTER",5);
+  for(uint32_t i=0;i<v.spc;i++) {
+   uint32_t lba=lba_of(c,i); int r=rd(lba,s); if(r) return r;
+   for(uint32_t o=0;o<512;o+=32) {
+    const uint8_t *e=s+o;
+    if(!e[0]) return 0;
+    if(e[0]==0xe5) {lfn_run_n=0;continue;}
+    if((e[11]&0x3f)==0x0f) {
+     if(e[0]&0x40) lfn_run_n=0;
+     if(lfn_run_n<20) {lfn_run[lfn_run_n]=(struct slot){lba,o,true};lfn_run_ord[lfn_run_n]=e[0];lfn_run_sum[lfn_run_n]=e[13];lfn_run_n++;}
+     continue;
+    }
+    uint32_t x=ecl(e);
+    if(e[0]!='.'&&!(e[11]&0x08)&&(zq.mode?x&&x==zq.want&&!(lba==zq.skip.lba&&o==zq.skip.off):(e[12]&MV_MARK))) {
+     zq.found=true; zq.at=(struct slot){lba,o,true}; zq.parent=dir; memcpy(zq.e,e,32);
+     lfn_keep(e); memcpy(zq.lfn,lfn_at,sizeof zq.lfn); zq.lfn_n=lfn_n; return 0;
+    }
+    lfn_run_n=0;
+    if(e[0]!='.'&&(e[11]&0x18)==0x10&&part+1<MV_MAXC&&cluster_ok(x)&&(!os_top||!memcmp(e,"APPS       ",11))) {
+     if((r=zone_dir(x,part+1,false))||zq.found) return r;
+     if((r=rd(lba,s))) return r;
+    }
+   }
+  }
+  uint32_t n; int r=fat_get(c,&n); if(r) return r;
+  if(n>=0x0ffffff8u) return 0;
+  c=n;
+ }
+ return fail("PUT DIR LOOP",5);
+}
+static int zone_walk(void) {
+ static const char tops[3][12]={"GAMES      ","POCKET     ","OS         "};
+ zq.found=false;
+ for(unsigned t=0;t<3;t++) {
+  struct slot h,f; uint8_t e[32]; int r=scan(v.root,(const uint8_t *)tops[t],&h,&f,e); if(r) return r;
+  if(!h.found||(e[11]&0x1e)!=0x10||!cluster_ok(ecl(e))) continue;
+  if((r=zone_dir(ecl(e),1,t==2))||zq.found) return r;
+ }
+ return 0;
+}
+/* Another live name in the zone starts at first (never 0): its chain must not be freed. */
+static int shared_start(uint32_t first,struct slot self,bool *shared) {
+ *shared=false; if(!first) return 0;
+ zq.mode=1; zq.want=first; zq.skip=self; int r=zone_walk(); *shared=zq.found; return r;
+}
+static int set_byte(struct slot at,uint32_t i,uint8_t val) {
+ int r=rd(at.lba,s); if(r) return r;
+ s[at.off+i]=val; return wr(at.lba,s,0);
+}
+static int mv_recover(void) {
+ for(unsigned round=0;!swept&&round<8;round++) {
+  zq.mode=0; int r=zone_walk(); if(r) return r;
+  if(!zq.found) {swept=true;break;}
+  struct slot keep=zq.at; uint32_t parent=zq.parent,first=ecl(zq.e); bool isdir=zq.e[11]&0x10; uint8_t nt=zq.e[12];
+  bool dup; if((r=shared_start(first,keep,&dup))) return r;
+  if(dup) { /* the cut move's old name: point the folder's ".." here, then drop the old name */
+   struct slot old=zq.at,lfn[20]; unsigned ln=zq.lfn_n; memcpy(lfn,zq.lfn,sizeof lfn);
+   if(isdir&&cluster_ok(first)&&!rd(lba_of(first,0),s)&&s[32]=='.'&&s[33]=='.') {
+    put16(s+52,parent>>16); put16(s+58,parent&0xffffu); if((r=wr(lba_of(first,0),s,0))) return r;
+   }
+   if((r=lfn_delete(lfn,ln))||(r=set_byte(old,0,0xe5))) return r;
+  }
+  if((r=set_byte(keep,12,(uint8_t)(nt&~MV_MARK)))) return r;
+ }
+ return swept?0:fail("MOV RECOVER",5);
+}
 /* game: NULL for the cache; else a save folder /OS/SAVES/<game> (strict: no read-only files, no unvalidated chains). */
 /* A save folder name: 1 to 8 of A-Z 0-9 _ -, no dot. */
 static int save_dir_name(const char *game,uint8_t out[11]) {
@@ -243,7 +335,8 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  } else if((r=split(path,dirs,&ndirs,nm))) return r;
  if(bytes>FATPUT_MAX) return fail("PUT SIZE",27);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
- taken=0; fc_sec=~0u;
+ taken=0; fc_sec=~0u; heal=true;
+ if(!cache&&(r=mv_recover())) return r; /* a replaced file's chain must not be shared with a cut move's other name */
  if((r=rd(v.base,s))) return r;
  if(u16(s+48)&&u16(s+48)!=0xffff&&u16(s+48)>=v.fat-v.base)return fail("PUT FSINFO RANGE",5);
  uint32_t fsinfo=v.base+u16(s+48); if(u16(s+48)==0||u16(s+48)==0xffff) fsinfo=0;
@@ -304,7 +397,7 @@ int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes) {
 /* Find an existing cache directory, never create it during removal. */
 static int cache_dir(uint32_t *dir,const char *game) {
  int r=asset_volume(&v);if(r)return r;
- fc_sec=~0u;*dir=v.root;
+ fc_sec=~0u;heal=true;*dir=v.root;
  uint8_t gm[11];
  if(game&&(r=save_dir_name(game,gm)))return r;
  const uint8_t *names[3]={(const uint8_t *)"OS         ",(const uint8_t *)(game?"SAVES      ":"CACHE      "),gm};
@@ -397,11 +490,10 @@ int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scr
  * slot or control files, /OS/CACHE or /OS/SAVES, and never the top folders
  * themselves. Power-cut order: a rename inside one folder is a single 32-byte
  * directory entry write (a sector write); a move to another folder writes the
- * new entry first, repoints a moved folder's ".." second and marks the old
- * entry deleted last, so a cut leaves the item under both names (nothing is
- * lost; a disk check merges the duplicate); a delete marks the entry deleted
- * first and frees the chain after, so a cut leaks clusters at worst. */
-#define MV_MAXC 6
+ * new entry first (marked, see mv_recover), repoints a moved folder's "..",
+ * deletes the old name and clears the mark last; a delete marks the entry
+ * deleted first and frees the chain after (unless another live name shares
+ * it), so a cut leaks clusters at worst. */
 struct mpath {char p[MV_MAXC][13]; uint8_t c[MV_MAXC][11]; unsigned n;};
 static int mv_fail(const char *w,int e) {return fail(w,e);}
 static int mpath_parse(const char *path,struct mpath *m) {
@@ -426,7 +518,6 @@ static int mv_zone(const struct mpath *m,bool *file_only) {
  if(m->n>=3&&!strcmp(m->p[0],"OS")&&!strcmp(m->p[1],"APPS")) return 0;
  return mv_fail("MOV ZONE",13);
 }
-static uint32_t ecl(const uint8_t *e) {return ((uint32_t)u16(e+20)<<16)|u16(e+26);}
 /* The directory reached through the first count parts of m. */
 static int mv_dirs(const struct mpath *m,unsigned count,uint32_t *dir) {
  *dir=v.root;
@@ -441,7 +532,7 @@ static int mv_dirs(const struct mpath *m,unsigned count,uint32_t *dir) {
 static int mv_start(void) {
  int r=fatcache_invalidate(); if(r&&r!=-2) return r; /* the games index is stale after any change */
  if(asset_volume(&v)) return fail("PUT UNMOUNTED",19);
- fc_sec=~0u; return 0;
+ fc_sec=~0u; heal=true; return mv_recover();
 }
 static int fsinfo_free(uint32_t n) {
  int r=rd(v.base,s); if(r||!n) return r;
@@ -493,16 +584,16 @@ int fatfs_mv(const char *from,const char *to) {
   if(s[32]!='.'||s[33]!='.') return fail("PUT DIR CLUSTER",5);
  }
  if(!f2.found) {if((r=grow(&f2))||(r=fsinfo_used(1))) return r;}
+ swept=false; e2[12]|=MV_MARK; /* the new name is marked until the old one is gone (mv_recover) */
  if((r=rd(f2.lba,s))) return r;
  memcpy(s+f2.off,e2,32); if((r=wr(f2.lba,s,0))) return r;
  if(isdir) {
   if((r=rd(lba_of(first,0),s))) return r;
   put16(s+52,pb>>16); put16(s+58,pb&0xffffu); if((r=wr(lba_of(first,0),s,0))) return r;
  }
- if((r=rd(hit.lba,s))) return r;
- s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r;
- if((r=lfn_delete(own,own_n))) return r; /* a cut before this leaves orphan long-name slots, which readers ignore */
- fatput_fail="none"; return asset_mount();
+ if((r=lfn_delete(own,own_n))||(r=set_byte(hit,0,0xe5))) return r; /* long name first: a cut leaves a plain short name */
+ if((r=set_byte(f2,12,(uint8_t)(e2[12]&~MV_MARK)))) return r;
+ swept=true; fatput_fail="none"; return asset_mount();
 }
 /* The chain from first is sound before it is freed: every cluster in range (not free, bad or
    reserved), the same in both FATs, no cluster twice, and a file's length matching its size. */
@@ -536,11 +627,12 @@ static int fatfs_remove(const char *path,bool want_dir) {
   if(n) return mv_fail("MOV NOT EMPTY",39);
  }
  if((r=chain_check(first,want_dir?0:u32(e+28),want_dir))) return r; /* a damaged chain is never freed */
+ bool shared; if((r=shared_start(first,hit,&shared))) return r; /* another live name keeps it: take the name only */
  if((r=lfn_delete(own,own_n))) return r;
  if((r=rd(hit.lba,s))) return r;
  s[hit.off]=0xe5; if((r=wr(hit.lba,s,0))) return r; /* unpublished: now the chain may be freed */
  uint32_t freed=0,c=first;
- while(cluster_ok(c)&&freed<=v.clusters) {
+ while(!shared&&cluster_ok(c)&&freed<=v.clusters) {
   uint32_t nx; if((r=fat_get(c,&nx))||(r=fat_set(c,0))) return r;
   freed++; if(!(freed&0xff)) watchdog_feed();
   if(nx>=0x0ffffff8u||!nx) break;
@@ -560,7 +652,7 @@ int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *nex
  *next=~0u;*skipped=0; out[0]=0;
  if((r=mpath_parse(path,&m))) return r;
  if(asset_volume(&v)) return fail("PUT UNMOUNTED",19);
- fc_sec=~0u;
+ fc_sec=~0u; heal=false; /* listing never writes */
  if((r=mv_dirs(&m,m.n,&dir))) return r;
  uint32_t c=dir;
  for(uint32_t hop=0;hop<65536/(v.spc*16)+1;hop++) {

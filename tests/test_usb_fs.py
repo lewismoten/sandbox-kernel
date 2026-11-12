@@ -160,4 +160,61 @@ class UsbFs(ProtocolBase):
         ok='/'.join(['ABCDEFGH.XY']*5);self.assertEqual(len(ok),59);self.assertEqual(usb_kernel.fs_path(ok),ok)
         self.assertIn('ERR command',self.cmd('LS '+'ABCDEFGH.XYZ/'*4+'ABCDEFGH.XYZ'))
 
+    # --- power cuts (2026-11-12): a cut after any single write of MV or RM loses nothing ---
+    DATA={p:p.encode()*300 for p in ('GAMES/DICE/DICE.GAM','GAMES/OTHR/X.GAM','GAMES/KEEP/K.GAM')}
+    def exists(self,path):
+        h=self.c.asset_open(path.encode(),len(path),0)
+        if h>=0: self.c.asset_close(h)
+        return h>=0
+    def no_cross_links(self):
+        r=fsck(self.disk,self.work);self.assertNotRegex(r.stdout+r.stderr,'(?i)cross|linked at',r.stdout)
+    def cut_each_write(self,setup,line,check):
+        """Run line once to count its card writes, then again on a fresh card once per write, the card dying
+        right after that many writes landed; then the next boot and its first changing command."""
+        self.setUp();setup();n0=self.c.write_count();self.assertIn('OK',self.cmd(line));total=self.c.write_count()-n0
+        self.assertGreater(total,1)
+        for cut in range(total):
+            with self.subTest(line=line,cut=cut,of=total):
+                self.setUp();setup();self.c.inject_failure(self.c.write_count()+cut)
+                self.assertIn('ERR',self.cmd(line));self.c.inject_failure(0xffffffff);self.c.asset_mount()
+                self.assertIn('ERR MOV MISSING',self.cmd('RM GAMES/NONE/X.GAM'))   # the first change after boot settles a cut move
+                check(cut)
+    def survivor(self,data,*paths):
+        have=[p for p in paths if self.exists(p)];self.assertEqual(len(have),1,f'one name, not {have}')
+        self.assertEqual(self.read(have[0]),data);return have[0]
+    def others_survive_reuse(self,*skip):
+        """Fill freed clusters with a new file; every other seeded file still reads back unchanged."""
+        self.assertEqual(self.c.fatput(b'GAMES/KEEP/FILL.GAM',bytes([0x5a])*60000,60000),0,text(self.c,'fatput_fail'))
+        for p,d in self.DATA.items():
+            if p not in skip and self.exists('/'+p): self.assertEqual(self.read('/'+p),d)
+    def test_power_cut_during_a_file_move(self):
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE.GAM');self.clean()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.clean()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'MV GAMES/DICE/DICE.GAM GAMES/OTHR/DICE.GAM',check)
+    def test_power_cut_during_a_folder_move(self):
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM');self.clean()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.assertIn('OK rmdir',self.cmd('RMDIR '+got[1:-9]))
+            self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.clean()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'MV GAMES/DICE GAMES/OTHR/DICE',check)
+    def test_power_cut_during_a_move_that_grows_the_folder(self):
+        full=[f'GAMES/OTHR/F{i:02d}.GAM' for i in range(13)]
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE.GAM');self.no_cross_links()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.no_cross_links()
+        self.cut_each_write(lambda:self.seed(*self.DATA,*full),'MV GAMES/DICE/DICE.GAM GAMES/OTHR/DICE.GAM',check)
+    def test_power_cut_during_rm(self):
+        def check(cut):
+            if self.exists('/GAMES/DICE/DICE.GAM'): self.assertEqual(self.read('/GAMES/DICE/DICE.GAM'),self.DATA['GAMES/DICE/DICE.GAM'])
+            self.others_survive_reuse();self.no_cross_links()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'RM GAMES/DICE/DICE.GAM',check)
+    def test_rm_never_frees_a_chain_another_name_uses(self):
+        """Two live names on one chain (a cut move from an older build, or another computer): RM takes the name only."""
+        self.seed(*self.DATA,'GAMES/OTHR/COPY.GAM')
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            d,c=self.entry_at(m,'DICE'),self.entry_at(m,'COPY');m[c+20:c+22]=m[d+20:d+22];m[c+26:c+32]=m[d+26:d+32]
+        free=self.free();self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.GAM'));self.assertEqual(self.free(),free)
+        self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.assertEqual(self.read('/GAMES/OTHR/COPY.GAM'),self.DATA['GAMES/DICE/DICE.GAM'])
+
 if __name__=='__main__': unittest.main()
