@@ -793,6 +793,56 @@ the GameMaker repo) reads `INFO` as a generic map and never authorizes updates.
 first**, then install, then `run`. If you are fast, you can also install during the first
 10 s after boot, before autostart. Install a new `JS.ELF` or `GMOS.ELF` the same way.
 
+### Move, delete and list over USB (`MV`, `RM`, `RMDIR`, `LS`)
+
+Each is one line, answered like `PUTF`: refused with `ERR not-ready` unless an `INFO` session is open,
+no update is pending and no OS is running. Paths are real card paths without a leading slash, upper-case
+8.3 parts, at most 6 deep (`core/fatput.c`, `fatfs_*`); LS also takes `/`.
+
+| Command | Reply |
+| --- | --- |
+| `MV <src> <dst>` | `OK mv /<src> /<dst>`; refuses an existing `<dst>` (`ERR MOV EXISTS`), moving a folder into itself (`MOV SELF`) |
+| `RM <path>` | `OK rm /<path>`; one plain file (no read-only, hidden or system file: `MOV NOT FILE`) |
+| `RMDIR <path>` | `OK rmdir /<path>`; an empty folder only (`MOV NOT EMPTY`) |
+| `LS <path> [from]` | up to about 360 bytes of `ENT <D\|F> <size> <attr hex> <NAME>` lines, then `OK ls /<path> next=<n\|end> skipped=<k>`; send `LS <path> <n>` for the next page |
+
+Reach: `GAMES` and `POCKET` (below the folder itself), `OS/APPS` (below it), and plain files directly in
+`OS`. Anything else (`ERR MOV ZONE`) is refused: the card root, the boot, firmware, slot and control files,
+`OS/CACHE`, `OS/SAVES`. Other refusals: `MOV PATH`, `MOV MISSING`, `MOV NOT DIR`. `MOV ...` is a flow-control
+refusal (no panel ERR line); storage faults say `PUT ...` and set it. Every change unpublishes the games
+index cache first and remounts the volume after.
+
+Power cuts: after a cut at any single write of `mv`, `rm`, `rmdir` or `putf`, no file's data is lost and no
+cluster chain still in use is freed later; at worst clusters leak until a disk check reclaims them. This
+assumes each 512-byte sector write lands whole and in order; SD cards do that in practice, not by guarantee.
+
+- A rename inside one folder is one 32-byte directory entry write (the old long name is removed first).
+- A move to another folder writes the new entry with bit `0x40` of its reserved byte 12 set, repoints a moved
+  folder's `..`, deletes the old long name and then the old entry, and clears the bit last. A cut in between
+  leaves the item under both names on one chain, the new one marked. The first changing command after the next
+  boot walks `GAMES`, `POCKET`, `OS` and `OS/APPS` once, keeps each marked entry, sets a marked folder's `..`
+  to its parent, deletes the other live name with the same start cluster and clears the mark. If a read fails
+  there, the command returns that error and nothing is deleted or cleared; the next changing command tries
+  again. A marked folder whose first sector has no `..` stops every changing command with `MOV RECOVER` until a
+  disk check. An empty file has no chain to share and may keep both names.
+- The mark is a hint, not the guard: a computer that renames the new name rewrites byte 12 and drops it. Then
+  both names stay, sharing one chain, until one is removed.
+- `rm`, `rmdir` and a `putf` that replaces a file each walk those folders first. If another live entry starts
+  at the same cluster, `rm` and `rmdir` remove the name only and `putf` leaves the old chain to that entry;
+  neither frees anything. `rm` and `rmdir` mark the entry deleted first and free the chain after. The walk reads
+  the zone's folder sectors, never file contents (36 extra sector reads per replace on a test card with 365 files
+  in one `GAMES` folder); a `putf` of a new file skips it. Nothing protects a chain from a computer that deletes one of the two names
+  itself.
+- Each FAT entry is written to copy 1, then copy 2. A changing command that meets two copies that differ sets
+  both to the one that is not free (copy 1 if neither is), so a cut there leaks a cluster and never frees one.
+  `ls` never writes.
+- The FSInfo free count is a hint: nothing here chooses clusters by it, so a cut that leaves it stale only
+  misreports free space until a disk check.
+
+Only 8.3 entries are addressed. Long-name entries whose name starts with a dot (macOS `._*`, `.Spotlight-V100`,
+`.fseventsd`, `.Trashes`) are skipped by `LS` and counted in `skipped=`; they never stop a listing, a move or a
+`PUTF`, and an orphaned long-name piece is ignored.
+
 ### Transfer framing and errors
 
 Commands are at most 255 printable ASCII bytes plus newline. PUTF and PUT2 reply

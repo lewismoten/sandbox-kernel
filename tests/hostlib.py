@@ -11,6 +11,6 @@ def build(out, supervisor_probe=False, panel_probe=False):
     link = ['-Wl,-Bsymbolic'] if sys.platform.startswith('linux') else []
     sources=[{'core/os.c':'tests/supervisor_probe.c','core/uspace.c':'tests/uspace_probe.c'}.get(s,s) if supervisor_probe else s for s in SOURCES]
     if panel_probe: sources.append("tests/panel_probe.c")
-    subprocess.run(['cc','-shared','-fPIC','-O1','-fno-builtin','-DHOST_TEST','-D_FORTIFY_SOURCE=0','-Wall','-Wextra','-Werror',
+    subprocess.run(['cc','-shared','-fPIC','-O1','-fno-builtin','-DHOST_TEST','-D_FORTIFY_SOURCE=0','-Wall','-Wextra','-Werror','-Wmisleading-indentation',
                     *(['-DPANEL_PROBE'] if panel_probe else []),*link,'-I'+str(ROOT/'tests/stubs'),'-I'+str(ROOT/'include'),*[str(ROOT/s) for s in sources],'-o',str(out)],check=True)
     return out

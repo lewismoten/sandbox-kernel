@@ -1,0 +1,294 @@
+# SPDX-License-Identifier: MIT
+"""USB MV, RM, RMDIR and LS on a real FAT image (core/fatput.c), plus macOS dot-file entries."""
+import mmap, struct, unittest
+from test_m1_user import ProtocolBase, fsck, text
+
+def lfn_dot(name_first=b'.\0'):
+    e=bytearray(32);e[0]=0x41;e[11]=0x0f;e[1:3]=name_first;e[3:11]=b'S\0p\0o\0t\0';return bytes(e)
+
+class UsbFs(ProtocolBase):
+    def cmd(self,line):
+        self.c.feed(b'INFO\n',5);self.run_protocol(3);self.c.take_output()
+        b=line.encode()+b'\n';self.c.feed(b,len(b));out=self.run_protocol(50)
+        return out
+    def seed(self,*paths):
+        for p in paths: self.assertEqual(self.c.fatput(p.encode(),p.encode()*300,len(p)*300),0,text(self.c,'fatput_fail'))
+    def clean(self):
+        r=fsck(self.disk,self.work);self.assertEqual(r.returncode,0,r.stdout+r.stderr);self.assertNotIn('Fix',r.stdout,r.stdout)
+    def gone(self,path): self.assertEqual(self.c.asset_open(path.encode(),len(path),0),-2)
+
+    def test_rename_in_folder(self):
+        self.seed('GAMES/DICE/DICE.GAM','GAMES/DICE/DICE.PAL');free=self.free()
+        self.assertIn('OK mv /GAMES/DICE/DICE.PAL /GAMES/DICE/DICE2.PAL',self.cmd('MV GAMES/DICE/DICE.PAL GAMES/DICE/DICE2.PAL'))
+        self.assertEqual(self.read('/GAMES/DICE/DICE2.PAL'),b'GAMES/DICE/DICE.PAL'*300);self.gone('/GAMES/DICE/DICE.PAL')
+        self.assertEqual(self.free(),free);self.clean();self.untouched()
+    def test_move_file_between_folders(self):
+        self.seed('GAMES/DICE/DICE.GAM','GAMES/OTHR/X.GAM');free=self.free()
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE/DICE.GAM GAMES/OTHR/DICE.GAM'))
+        self.assertEqual(self.read('/GAMES/OTHR/DICE.GAM'),b'GAMES/DICE/DICE.GAM'*300);self.gone('/GAMES/DICE/DICE.GAM')
+        self.assertEqual(self.free(),free);self.clean();self.untouched()
+    def test_move_folder_fixes_dotdot(self):
+        self.seed('GAMES/DICE/DICE.GAM','APPS/HELLO/MAIN.JS')
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE OS/APPS/DICE'))
+        self.assertEqual(self.read('/OS/APPS/DICE/DICE.GAM'),b'GAMES/DICE/DICE.GAM'*300);self.gone('/GAMES/DICE/DICE.GAM')
+        self.clean();self.assertIn('OK mv',self.cmd('MV OS/APPS/DICE GAMES/BACK'));self.clean()
+        self.assertEqual(self.read('/GAMES/BACK/DICE.GAM'),b'GAMES/DICE/DICE.GAM'*300);self.untouched()
+    def test_rm_file_and_rmdir(self):
+        free=self.free();self.seed('GAMES/DICE/DICE.GAM','GAMES/DICE/DICE.PAL')
+        self.assertIn('ERR MOV NOT EMPTY',self.cmd('RMDIR GAMES/DICE'))
+        self.assertIn('ERR MOV NOT FILE',self.cmd('RM GAMES/DICE'))
+        self.assertIn('OK rm /GAMES/DICE/DICE.GAM',self.cmd('RM GAMES/DICE/DICE.GAM'));self.gone('/GAMES/DICE/DICE.GAM')
+        self.assertIn('ERR MOV MISSING',self.cmd('RM GAMES/DICE/DICE.GAM'))
+        self.assertIn('ERR MOV NOT DIR',self.cmd('RMDIR GAMES/DICE/DICE.PAL'))
+        self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.PAL'))
+        self.assertIn('OK rmdir /GAMES/DICE',self.cmd('RMDIR GAMES/DICE'))
+        self.clean();self.assertEqual(self.free(),free-1)   # only /OS... the GAMES folder itself stays
+        self.untouched()
+    def test_refusals_touch_nothing(self):
+        self.seed('GAMES/DICE/DICE.GAM','GAMES/OTHR/X.GAM','OS.ELF')
+        for line,err in (('RM KERNA.BIN','MOV ZONE'),('RM BOOTCT0.BIN','MOV ZONE'),('MV KERNA.BIN GAMES/K.BIN','MOV ZONE'),
+                         ('MV GAMES/DICE/DICE.GAM KERNA.BIN','MOV ZONE'),('RM OS/CACHE/GAMES.IDX','MOV ZONE'),('RM OS/SAVES/X/Y','MOV ZONE'),
+                         ('RMDIR GAMES','MOV ZONE'),('RMDIR OS/APPS','MOV'),('RM OS','MOV ZONE'),('RMDIR OS/SAVES','MOV NOT DIR'),
+                         ('RM ../KERNA.BIN','MOV PATH'),('RM /GAMES/X','MOV PATH'),('RM games/dice','MOV PATH'),('RM GAMES//X','MOV PATH'),
+                         ('MV GAMES/DICE GAMES/DICE/SUB','MOV SELF'),('MV GAMES/DICE GAMES/DICE','MOV SELF'),
+                         ('MV GAMES/DICE/DICE.GAM GAMES/OTHR/X.GAM','MOV EXISTS'),('MV GAMES/NONE/A GAMES/B','MOV MISSING'),
+                         ('MV GAMES/DICE/DICE.GAM GAMES/NONE/A','MOV MISSING'),('MV GAMES/DICE OS/DICE','MOV NOT FILE'),
+                         ('RM GAMES/A.B.C','MOV PATH'),('MV GAMES/DICE','command'),('RM','command')):
+            with self.subTest(line): self.assertIn('ERR '+err,self.cmd(line))
+        self.assertEqual(self.read('/GAMES/DICE/DICE.GAM'),b'GAMES/DICE/DICE.GAM'*300);self.assertEqual(self.read('/OS/OS.ELF'),b'OS.ELF'*300)
+        self.untouched();self.clean()
+    def test_not_while_os_runs_or_without_info(self):
+        self.seed('GAMES/DICE/DICE.GAM')
+        b=b'RM GAMES/DICE/DICE.GAM\n';self.c.feed(b,len(b));self.assertIn('ERR not-ready',self.run_protocol(50))
+        self.assertEqual(self.read('/GAMES/DICE/DICE.GAM'),b'GAMES/DICE/DICE.GAM'*300)
+    def test_ls_pages_and_root(self):
+        self.seed('OS.ELF',*[f'GAMES/DICE/F{i:02d}.GAM' for i in range(40)])
+        names=[];at=0
+        for _ in range(20):
+            out=self.cmd(f'LS GAMES/DICE {at}');names+=[l.split()[4] for l in out.splitlines() if l.startswith('ENT ')]
+            tail=out.strip().splitlines()[-1];self.assertTrue(tail.startswith('OK ls /GAMES/DICE next='),out)
+            nxt=tail.split('next=')[1].split()[0]
+            if nxt=='end': break
+            at=int(nxt)
+        self.assertEqual(names,[f'F{i:02d}.GAM' for i in range(40)])
+        root=self.cmd('LS /');self.assertIn('ENT F ',root);self.assertIn('KERNA.BIN',root);self.assertIn('ENT D 0 10 OS',root)
+        self.assertIn('ERR MOV MISSING',self.cmd('LS GAMES/NOPE'))
+    def mac_card(self):
+        """GAMES/DICE: a dot-named long-name entry before a hidden/system file, an orphan long-name entry, and real files."""
+        self.seed('GAMES/DICE/ALFN.GAM','GAMES/DICE/SPOT.GAM','GAMES/DICE/ORPH.GAM','GAMES/DICE/REAL.GAM')
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            def at(name): i=m.find(name.ljust(8).encode()+b'GAM\x20');assert i>0;return i
+            a,sp,o=at('ALFN'),at('SPOT'),at('ORPH')
+            m[a:a+32]=lfn_dot();m[sp+11]=0x06                       # SPOT: ".Spot" long name, hidden+system
+            m[o:o+32]=bytes([0x41,0x78,0,0x79,0,0,0,0,0,0,0,0x0f])+bytes(20)  # orphan long-name piece, "xy"
+    def test_mac_dot_entries_listed_skipped_and_never_break_writes(self):
+        self.mac_card()
+        out=self.cmd('LS GAMES/DICE');self.assertIn('skipped=1',out);self.assertNotIn('SPOT.GAM',out);self.assertIn('REAL.GAM',out)
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE/REAL.GAM GAMES/DICE/REAL2.GAM'))
+        self.assertIn('ERR MOV NOT FILE',self.cmd('RM GAMES/DICE/SPOT.GAM'))      # hidden/system: never removed
+        self.assertIn('ERR MOV NOT EMPTY',self.cmd('RMDIR GAMES/DICE'))
+        self.assertEqual(self.c.fatput(b'GAMES/DICE/NEW.GAM',b'new',3),0,text(self.c,'fatput_fail'))
+        self.assertEqual(self.read('/GAMES/DICE/NEW.GAM'),b'new')
+        self.assertIn('OK rm',self.cmd('RM GAMES/DICE/REAL2.GAM'))
+        self.assertIn('skipped=1',self.cmd('LS GAMES/DICE'))
+    def test_a_dot_folder_in_the_root_and_dot_files_in_games(self):
+        """A hidden+system folder entry with a dot long name in the root must not stop PUTF, MV or LS."""
+        self.seed('GAMES/DICE/DICE.GAM')
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            i=m.find(b'GAMES      \x10');self.assertGreater(i,0)
+            m[i-32:i]=lfn_dot(b'.\0')                              # long-name piece ".Spot" right before GAMES
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE/DICE.GAM GAMES/DICE/DICE2.GAM'))
+        self.assertEqual(self.c.fatput(b'GAMES/DICE/A.GAM',b'a',1),0,text(self.c,'fatput_fail'))
+        root=self.cmd('LS /');self.assertIn('skipped=1',root);self.assertNotIn(' GAMES',root)   # the dot-named entry is skipped, not an error
+
+    # --- review fixes (2026-11-12): long names, damaged chains, FSInfo, path length ---
+    FAT0=(2048+32)*512
+    def entry_at(self,m,name,ext='GAM'):
+        i=m.find(name.ljust(8).encode()+ext.encode()+b'\x20');self.assertGreater(i,0);return i
+    def lfn_before(self,name,slots):
+        """Put a valid checksummed long-name group of `slots` entries right before NAME.GAM (a file of its own
+        takes each slot first, then is removed so the slot is free to overwrite)."""
+        pads=[f'GAMES/DICE/P{i}.GAM' for i in range(slots)]
+        self.seed(*pads,'GAMES/DICE/'+name+'.GAM')
+        for p in pads: self.assertIn('OK rm',self.cmd('RM '+p))
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            i=self.entry_at(m,name);sfn=bytes(m[i:i+11]);x=0
+            for c in sfn: x=(((x&1)<<7)+(x>>1)+c)&0xff
+            offs=[]
+            for k in range(slots):                       # slot k sits (k+1) entries before the short entry
+                o=i-32*(slots-k);e=bytearray(32);e[0]=(slots-k)|(0x40 if k==0 else 0);e[1:3]=b'L\0';e[11]=0x0f;e[13]=x
+                self.assertEqual(m[o],0xe5);m[o:o+32]=e;offs.append(o)
+        return offs
+    def live_lfn(self,offs):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m: return [m[o]!=0xe5 for o in offs]
+    def test_short_alias_changes_take_the_long_name_with_them(self):
+        for slots in (1,2):
+            for how in ('rename','move','rm'):
+                with self.subTest(slots=slots,how=how):
+                    self.setUp();self.seed('GAMES/OTHR/Z.GAM')
+                    offs=self.lfn_before('LNAM',slots);self.assertEqual(self.live_lfn(offs),[True]*slots)
+                    line={'rename':'MV GAMES/DICE/LNAM.GAM GAMES/DICE/NEWN.GAM','move':'MV GAMES/DICE/LNAM.GAM GAMES/OTHR/LNAM.GAM','rm':'RM GAMES/DICE/LNAM.GAM'}[how]
+                    self.assertIn('OK',self.cmd(line));self.assertEqual(self.live_lfn(offs),[False]*slots);self.clean()
+    def test_unrelated_orphan_long_name_slot_is_kept(self):
+        offs=self.lfn_before('LNAM',1)
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m: m[offs[0]+13]^=0xff     # checksum no longer matches
+        self.assertIn('OK',self.cmd('RM GAMES/DICE/LNAM.GAM'));self.assertEqual(self.live_lfn(offs),[True])
+    def head_of(self,name):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=self.entry_at(m,name);return struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0]
+    def set_fat(self,c,val):
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            for copy in (0,1): struct.pack_into('<I',m,self.FAT0+copy*2048*512+c*4,val)
+    def test_a_damaged_chain_is_refused_and_nothing_is_freed(self):
+        for label in ('bad marker','self loop','free next','too short'):
+            with self.subTest(label):
+                self.setUp();self.seed('GAMES/DICE/X.GAM','GAMES/DICE/Y.GAM');h=self.head_of('X');free=self.free()
+                self.set_fat(h,{'bad marker':0x0ffffff7,'self loop':h,'free next':0,'too short':0x0fffffff}[label])
+                before=self.free();self.assertIn('ERR PUT OLD CHAIN',self.cmd('RM GAMES/DICE/X.GAM'));self.assertEqual(self.free(),before)
+                self.assertEqual(self.read('/GAMES/DICE/Y.GAM'),b'GAMES/DICE/Y.GAM'*300)
+    def test_fsinfo_follows_a_move_that_grows_the_folder(self):
+        self.seed(*[f'GAMES/OTHR/F{i:02d}.GAM' for i in range(14)],'GAMES/DICE/X.GAM')
+        def fsinfo():
+            with open(self.disk,'rb') as f: f.seek((2048+1)*512+488);return struct.unpack('<I',f.read(4))[0]
+        free,info=self.free(),fsinfo()
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE/X.GAM GAMES/OTHR/X.GAM'))
+        self.assertEqual(self.free(),free-1,'the folder must have grown for this test to mean anything');self.assertEqual(fsinfo(),info-1);self.clean()
+    def test_host_paths_over_the_kernel_limit_are_refused(self):
+        import sys,pathlib;sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'scripts'));import usb_kernel
+        six='/'.join(['ABCDEFGH.XYZ']*6);self.assertGreater(len(six),63)
+        with self.assertRaises(ValueError): usb_kernel.fs_path('GAMES/'+six[:len(six)-13])
+        ok='/'.join(['ABCDEFGH.XY']*5);self.assertEqual(len(ok),59);self.assertEqual(usb_kernel.fs_path(ok),ok)
+        self.assertIn('ERR command',self.cmd('LS '+'ABCDEFGH.XYZ/'*4+'ABCDEFGH.XYZ'))
+
+    # --- power cuts (2026-11-12): a cut after any single write of MV or RM loses nothing ---
+    DATA={p:p.encode()*300 for p in ('GAMES/DICE/DICE.GAM','GAMES/OTHR/X.GAM','GAMES/KEEP/K.GAM')}
+    def exists(self,path):
+        h=self.c.asset_open(path.encode(),len(path),0)
+        if h>=0: self.c.asset_close(h)
+        return h>=0
+    def no_cross_links(self):
+        r=fsck(self.disk,self.work);self.assertNotRegex(r.stdout+r.stderr,'(?i)cross|linked at',r.stdout)
+    def cut_each_write(self,setup,line,check):
+        """Run line once to count its card writes, then again on a fresh card once per write, the card dying
+        right after that many writes landed; then the next boot and its first changing command."""
+        self.setUp();setup();n0=self.c.write_count();self.assertIn('OK',self.cmd(line));total=self.c.write_count()-n0
+        self.assertGreater(total,1)
+        for cut in range(total):
+            with self.subTest(line=line,cut=cut,of=total):
+                self.setUp();setup();self.c.inject_failure(self.c.write_count()+cut)
+                self.assertIn('ERR',self.cmd(line));self.c.inject_failure(0xffffffff);self.c.asset_mount()
+                self.assertIn('ERR MOV MISSING',self.cmd('RM GAMES/NONE/X.GAM'))   # the first change after boot settles a cut move
+                check(cut)
+    def survivor(self,data,*paths):
+        have=[p for p in paths if self.exists(p)];self.assertEqual(len(have),1,f'one name, not {have}')
+        self.assertEqual(self.read(have[0]),data);return have[0]
+    def others_survive_reuse(self,*skip):
+        """Fill freed clusters with a new file; every other seeded file still reads back unchanged."""
+        self.assertEqual(self.c.fatput(b'GAMES/KEEP/FILL.GAM',bytes([0x5a])*60000,60000),0,text(self.c,'fatput_fail'))
+        for p,d in self.DATA.items():
+            if p not in skip and self.exists('/'+p): self.assertEqual(self.read('/'+p),d)
+    def test_power_cut_during_a_file_move(self):
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE.GAM');self.clean()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.clean()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'MV GAMES/DICE/DICE.GAM GAMES/OTHR/DICE.GAM',check)
+    def test_power_cut_during_a_folder_move(self):
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM');self.clean()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.assertIn('OK rmdir',self.cmd('RMDIR '+got[1:-9]))
+            self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.clean()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'MV GAMES/DICE GAMES/OTHR/DICE',check)
+    def test_power_cut_during_a_move_that_grows_the_folder(self):
+        full=[f'GAMES/OTHR/F{i:02d}.GAM' for i in range(13)]
+        def check(cut):
+            got=self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE.GAM');self.no_cross_links()
+            self.assertIn('OK rm',self.cmd('RM '+got[1:]));self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.no_cross_links()
+        self.cut_each_write(lambda:self.seed(*self.DATA,*full),'MV GAMES/DICE/DICE.GAM GAMES/OTHR/DICE.GAM',check)
+    def test_power_cut_during_rm(self):
+        def check(cut):
+            if self.exists('/GAMES/DICE/DICE.GAM'): self.assertEqual(self.read('/GAMES/DICE/DICE.GAM'),self.DATA['GAMES/DICE/DICE.GAM'])
+            self.others_survive_reuse();self.no_cross_links()
+        self.cut_each_write(lambda:self.seed(*self.DATA),'RM GAMES/DICE/DICE.GAM',check)
+    def test_rm_never_frees_a_chain_another_name_uses(self):
+        """Two live names on one chain (a cut move from an older build, or another computer): RM takes the name only."""
+        self.seed(*self.DATA,'GAMES/OTHR/COPY.GAM')
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            d,c=self.entry_at(m,'DICE'),self.entry_at(m,'COPY');m[c+20:c+22]=m[d+20:d+22];m[c+26:c+32]=m[d+26:d+32]
+        free=self.free();self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.GAM'));self.assertEqual(self.free(),free)
+        self.others_survive_reuse('GAMES/DICE/DICE.GAM');self.assertEqual(self.read('/GAMES/OTHR/COPY.GAM'),self.DATA['GAMES/DICE/DICE.GAM'])
+
+    # --- final review (2026-11-12): the mark is a hint; a failed recovery read keeps it ---
+    def cut_move(self,line,cut,*both):
+        """A fresh card with the seeded files, line cut after `cut` writes landed, then a reboot: both names live."""
+        self.setUp();self.seed(*self.DATA);self.c.inject_failure(self.c.write_count()+cut)
+        self.assertIn('ERR',self.cmd(line));self.c.inject_failure(0xffffffff);self.c.asset_mount()
+        for p in both: self.assertTrue(self.exists(p),p)
+    def marked(self,key):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            out=[];i=m.find(key)
+            while i>=0:
+                if i%32==0 and m[i+12]&0x40: out.append(i)
+                i=m.find(key,i+1)
+            return out
+    def drop_mark(self,key):
+        """What a computer's rename does to the new name: it rewrites byte 12 without the private 0x40 bit."""
+        at=self.marked(key);self.assertEqual(len(at),1)
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m: m[at[0]+12]&=0xbf
+    def test_a_dropped_mark_never_frees_a_chain_the_other_name_uses(self):
+        src,dst='GAMES/DICE/DICE.GAM','GAMES/OTHR/DICE.GAM';data=self.DATA[src]
+        for how in ('PUTF','RM'):
+            for gone,keep in ((src,dst),(dst,src)):
+                with self.subTest(how=how,gone=gone):
+                    self.cut_move(f'MV {src} {dst}',1,'/'+src,'/'+dst);self.drop_mark(b'DICE    GAM')
+                    if how=='PUTF':
+                        self.assertEqual(self.c.fatput(gone.encode(),b'new!'*500,2000),0,text(self.c,'fatput_fail'))
+                        self.assertEqual(self.read('/'+gone),b'new!'*500)
+                    else: self.assertIn('OK rm',self.cmd('RM '+gone));self.gone('/'+gone)
+                    self.others_survive_reuse(src);self.assertEqual(self.read('/'+keep),data);self.clean()
+    def test_a_dropped_mark_on_a_folder_keeps_it_for_the_other_name(self):
+        self.cut_move('MV GAMES/DICE GAMES/OTHR/DICE',2,'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+        self.drop_mark(b'DICE       \x10')
+        self.assertIn('OK rm',self.cmd('RM GAMES/DICE/DICE.GAM'));self.assertIn('OK rmdir',self.cmd('RMDIR GAMES/DICE'))
+        self.others_survive_reuse('GAMES/DICE/DICE.GAM');out=self.cmd('LS GAMES/OTHR/DICE');self.assertNotIn('ERR',out);self.assertNotIn('ENT',out)
+        self.clean()   # the fill did not take the folder's cluster
+    def dir_sector(self,cluster):
+        """The image offset of a folder's first sector (its "." entry names the folder's own cluster)."""
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=m.find(b'.          \x10')
+            while i>=0:
+                if i%512==0 and (struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0])==cluster: return i
+                i=m.find(b'.          \x10',i+1)
+        self.fail('no folder sector')
+    def dir_cluster(self,name):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=m.find(name.ljust(11).encode()+b'\x10');self.assertGreater(i,0)
+            return struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0]
+    def test_a_failed_read_during_folder_recovery_keeps_the_mark_and_retries(self):
+        """Each read of the moved folder's first sector fails once in turn; recovery never retires the old
+        name or the mark past a failure, and the next command finishes with ".." naming the new parent."""
+        hit=0
+        for n in range(1,7):
+            with self.subTest(nth=n):
+                self.cut_move('MV GAMES/DICE GAMES/OTHR/DICE',1,'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+                at=self.dir_sector(self.dir_cluster('DICE'));self.c.fail_read_nth(at//512,n)
+                out=self.cmd('RM GAMES/NONE/X.GAM');self.c.fail_read_nth(at//512,0)
+                if self.exists('/GAMES/DICE/DICE.GAM'):   # the old name is retired only after ".." is right, never past a failure
+                    self.assertIn('ERR PUT READ',out);self.assertEqual(len(self.marked(b'DICE       \x10')),1);hit+=1
+                elif 'ERR PUT READ' not in out: self.assertIn('ERR MOV MISSING',out)
+                self.assertIn('ERR MOV MISSING',self.cmd('RM GAMES/NONE/X.GAM'))
+                self.survivor(self.DATA['GAMES/DICE/DICE.GAM'],'/GAMES/DICE/DICE.GAM','/GAMES/OTHR/DICE/DICE.GAM')
+                self.assertEqual(self.marked(b'DICE       \x10'),[])
+                with open(self.disk,'rb') as f: f.seek(at+32);e=f.read(32)
+                self.assertEqual(struct.unpack_from('<H',e,20)[0]<<16|struct.unpack_from('<H',e,26)[0],self.dir_cluster('OTHR'));self.clean()
+        self.assertGreater(hit,0,'no injected read reached the repair')
+    def test_a_replace_walks_the_zone_once_with_365_archives(self):
+        """PUTF over an existing file now walks the zone for another name on its chain: one pass over folder
+        sectors, not file contents (365 one-byte ZIPs fill 23 folder sectors)."""
+        self.seed('GAMES/DICE/DICE.GAM');zips=[f'GAMES/ARCH/Z{i:03d}.ZIP' for i in range(365)]
+        for p in zips: self.assertEqual(self.c.fatput(p.encode(),b'z',1),0,text(self.c,'fatput_fail'))
+        r0=self.c.read_count();self.assertEqual(self.c.fatput(b'GAMES/DICE/NEW.GAM',b'x',1),0);fresh=self.c.read_count()-r0
+        r0=self.c.read_count();self.assertEqual(self.c.fatput(b'GAMES/DICE/DICE.GAM',b'y',1),0);again=self.c.read_count()-r0
+        print(f'\n  PUTF new file: {fresh} reads; PUTF replace: {again} reads')
+        self.assertLess(again-fresh,120)
+
+if __name__=='__main__': unittest.main()

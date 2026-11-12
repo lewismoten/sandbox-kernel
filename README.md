@@ -54,5 +54,13 @@ framebuffer, read-only FAT32 assets and the first [SDK](sdk/README.md) headers. 
 The selector is `build/kernel.img`; send `build/runtime.ski` with the stdlib Mac
 tool in `scripts/usb_kernel.py`. M0 uses preallocated A/B files on FAT32.
 
+USB file commands (`python3 scripts/usb_kernel.py <port> <command>`): `put`, `putgame`, `putapp` install
+files; `ls [path]` lists a folder (macOS dot items such as `.Spotlight-V100` and `._*` are skipped);
+`mv <src> <dst>` moves or renames a file or folder; `rm <path>` deletes a file; `rmdir <path>` deletes an
+empty folder. Paths are real card paths in upper-case 8.3 (`GAMES/DICE/DICE.GAM`). Changes reach only
+`GAMES`, `POCKET`, `OS/APPS` and plain files in `OS`, never the boot, firmware, slot or control files,
+`OS/CACHE` or `OS/SAVES`. A power cut between any two of their sector writes loses no data (a cut move is
+settled on the next boot's first change), as long as each 512-byte write lands whole. Wire format and power-cut order are in [os-authors](docs/os-authors.md).
+
 A separate Circle-based prototype supplied hardware observations recorded in the
 [milestones](docs/milestones.md); its sources were not consulted for this implementation.
