@@ -125,6 +125,7 @@ def fs_path(p,allow_root=False):
     (LS also takes the root). The kernel decides which folders a changing command may reach."""
     p=p[1:] if p.startswith('/') else p
     if allow_root and p=='': return '/'
+    if len(p)>63: raise ValueError(f'{p!r} is longer than the 63 bytes the kernel takes for a path')
     if not re.fullmatch(r'[A-Z0-9_-]{1,8}(\.[A-Z0-9_-]{1,3})?(/[A-Z0-9_-]{1,8}(\.[A-Z0-9_-]{1,3})?){0,5}',p): raise ValueError(f'{p!r} is not an upper-case 8.3 card path (e.g. GAMES/DICE/DICE.GAM)')
     return p
 

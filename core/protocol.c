@@ -106,7 +106,8 @@ static void fs_command(char kind,const char *p) { /* kind: 'm' MV, 'r' RM, 'd' R
  usb_reply("\n");
  char t[160]="Card ";unsigned k=5;const char *w=kind=='m'?"move ":kind=='r'?"remove ":"rmdir ";
  memcpy(t+k,w,strlen(w));k+=(unsigned)strlen(w);
- for(const char *c=a;*c&&k<150;c++)t[k++]=*c;t[k]=0;log_line(t);
+ for(const char *c=a;*c&&k<150;c++) {t[k++]=*c;}
+ t[k]=0;log_line(t);
 }
 static void run_command(const char *p) {
  char name[13],path[20]="/OS/";
