@@ -35,6 +35,11 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   `overruns` and its refused frames to `overrun_frames`. The app sees the short count.
 - **Close** (or the program ending, or `sys_reset`): the queue is dropped, not
   played, and the device is free.
+- **Blanked screen (ABI 1.12):** while the kernel has the screen blanked, `/dev/audio`
+  writes still succeed (full frame count) but are dropped: nothing is queued, so
+  AUDIO_QUERY `played` and `queued` stay flat, no stale tail plays at wake, and the
+  HDMI backend sends silence without counting underruns. The first write after wake queues
+  normally. See [sleep and sound](os-authors.md#sleep-and-sound-abi-112).
 - **Ring:** `core/audio_ring.c`, lock-free single producer (the write path)
   and single consumer (the backend), free-running 32-bit frame indices with
   acquire/release ordering. `audio_ring_flush` and `init` move the consumer's
