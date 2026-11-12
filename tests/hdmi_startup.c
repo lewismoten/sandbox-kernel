@@ -115,12 +115,14 @@ static int property(uint32_t tag, uint32_t *values, unsigned count) {
  assert(tag == 0x30002 && count == 2 && values[0] == 9);
  pixel_queries++; values[0] = pixel_reply_id; values[1] = pixel_hz; return pixel_query_ok;
 }
+/* Poll n times, step us apart, as a live DMA would complete segments. */
+static void spin(unsigned n, unsigned step) { while (n--) { write_count = 0; completions++; now += step; hdmi_audio_poll(); } }
 static void reset(unsigned mode) {
  memset(hd_regs, 0, sizeof hd_regs); memset(core_regs, 0, sizeof core_regs);
  memset(misc_regs, 0, sizeof misc_regs); memset(dma_regs, 0, sizeof dma_regs);
  memset(&hw, 0, sizeof hw); memset(&audio_hw, 0, sizeof audio_hw);
  memset(&diagnostics, 0, sizeof diagnostics); memset(&observed, 0, sizeof observed);
- attempts = window_attempts = retry_since = retry_delay = poll_since = last_link = save_since = saves = 0;
+ link_pending = link_edged = 0; link_pend = link_pend_since = link_edge_at = 0; attempts = window_attempts = retry_since = retry_delay = poll_since = last_link = save_since = saves = 0;
  log_us = log_ms = log_rem = 0;
  probed = 0; card_writes = pixel_queries = 0; card_busy = false; storage_ready = true; saved[0] = 0;
  audio_dev_init();
@@ -246,14 +248,32 @@ int main(void) {
  now += 1000000; hdmi_audio_poll(); assert(pixel_queries == previous_queries);
  core_regs[HC_HOTPLUG / 4] = HOTPLUG_CONNECTED; now += 200000; hdmi_audio_poll();
  assert(pixel_queries == previous_queries); /* settle the new connection first */
- pixel_hz = 148500000; now += 400000; hdmi_audio_poll();
+ pixel_hz = 148500000; now += 1200000; hdmi_audio_poll(); now += 600000; hdmi_audio_poll();
  assert(hw.active && pixel_queries == previous_queries + 1);
  /* Disconnect disables the old DMA/IRQ/hooks before any new clock query. */
- core_regs[HC_HOTPLUG / 4] = 0; now += 200000; hdmi_audio_poll();
+ core_regs[HC_HOTPLUG / 4] = 0; spin(2, 100000);
+ assert(hw.active); /* one low sample is not an unplug */
+ for (unsigned i = 0; i < 60 && hw.active; i++) spin(1, 100000);
  assert(!hw.active && !audio_hw.task && !audio_hw.tone);
  assert(!(hd_regs[HD_MAI_CTL / 4] & MAI_CTL_ENABLE));
  assert(!(core_regs[HC_RAM_PACKET_CONFIG / 4] & (1u << PKT_ID_AUDIO_INFO)));
  assert(strstr(diagnostics.text, "backend=null reason=HDMI hotplug/mode changed"));
+ /* Noisy HPD (flipping every poll) never closes audio and logs no edge. */
+ reset(0); assert(hdmi_audio_init() == 0 && hw.active);
+ for (unsigned i = 0; i < 200; i++) { core_regs[HC_HOTPLUG / 4] = i & 1; spin(1, 100000); }
+ assert(hw.active && !strstr(diagnostics.text, "HDMI link changed") && attempts == 1);
+ /* Real unplug closes once; replug reopens once; edges are logged once each. */
+ core_regs[HC_HOTPLUG / 4] = HOTPLUG_CONNECTED; spin(30, 100000);
+ core_regs[HC_HOTPLUG / 4] = 0; spin(60, 100000);
+ assert(attempts > 1 || !hw.active);
+ core_regs[HC_HOTPLUG / 4] = HOTPLUG_CONNECTED; spin(80, 100000);
+ assert(hw.active);
+ { unsigned n = 0; const char *p = diagnostics.text; while ((p = strstr(p, "HDMI link changed")) != NULL) { n++; p += 5; } assert(n <= 3); }
+ /* Mode change (scheduler drops) closes after it holds, then reopens. */
+ reset(0); assert(hdmi_audio_init() == 0 && hw.active);
+ core_regs[HC_SCHEDULER_CONTROL / 4] = 1; now += 200000; hdmi_audio_poll(); assert(hw.active);
+ spin(15, 100000);
+ assert(strstr(diagnostics.text, "reason=HDMI hotplug/mode changed"));
  /* Reject a response for the wrong clock even if its rate looks usable. */
  reset(0); pixel_reply_id = 3;
  assert(hdmi_audio_init() == -1 && !hw.active && !write_count);

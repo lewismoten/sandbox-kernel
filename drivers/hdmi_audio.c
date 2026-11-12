@@ -61,6 +61,13 @@ static struct audio_diag diagnostics;
 static struct audio_observation observed;
 static uint32_t attempts, window_attempts, retry_since, retry_delay;
 static uint32_t poll_since, last_link, save_since, saves;
+/* A link edge counts only after the new state held for LINK_STABLE_US, and
+ * accepted edges are at least LINK_EDGE_GAP_US apart: HPD is noisy or stuck
+ * in USB-host boots, and one noisy sample must never close audio. */
+#define LINK_STABLE_US 1000000u
+#define LINK_EDGE_GAP_US 3000000u
+static uint32_t link_pend, link_pend_since, link_edge_at;
+static int link_pending, link_edged;
 static int probed, display_seen, rotated;
 static uint32_t log_us, log_ms, log_rem;
 /* Accumulate across the 32-bit hardware timer's 71-minute wrap. Poll calls
@@ -368,7 +375,7 @@ int hdmi_audio_init(void) {
   if (cs & 0x100u) return fail("DMA error");
   return fail(conblk != bus(cbs) || (cs & 4u) ? "DMA advanced but no completion IRQ (check IRQ routing)" : "DMA is not draining (DREQ or MAI not running)");
  }
- hw.active = 1; why = "ok";
+ hw.active = 1; why = "ok"; last_link = link_state(); link_pending = 0; /* baseline after our own M_CTL/scheduler writes */
  audio_diag_line(&diagnostics, timestamp(), poll_mode ? "dma_detect=poll (IRQ not seen; DMA position advancing)" : "dma_detect=irq");
  audio0.clocked = 0; /* discard the null backend's elapsed-time anchor */
  audio_hw.task = hdmi_audio_task; audio_hw.tone = hdmi_audio_tone;
@@ -428,8 +435,10 @@ void hdmi_audio_poll(void) {
   }
  } else audio_stall_reset(&stall_watch);
  uint32_t link = link_state();
- if (link != last_link) {
-  last_link = link;
+ if (link == last_link) link_pending = 0;
+ else if (!link_pending || link != link_pend) { link_pending = 1; link_pend = link; link_pend_since = micros(); }
+ else if (expired(link_pend_since, LINK_STABLE_US) && (!link_edged || expired(link_edge_at, LINK_EDGE_GAP_US))) {
+  last_link = link; link_pending = 0; link_edged = 1; link_edge_at = micros();
   if (hw.active) {
    REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
    dmaw(DMA_CS, 0x80000000u);
