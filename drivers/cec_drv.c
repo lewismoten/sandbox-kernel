@@ -121,7 +121,7 @@ void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t no
     n = put_str(l, 0, "init phys "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(phys >> 8), (uint8_t)phys}, 2);
     n = put_str(l, n, " hsm "); n = put_dec(l, n, hsm_hz); l[n] = 0; say(d, now_ms, l);
     if (cec_regs_timing(hsm_hz, &t)) {
-        say(d, now_ms, "no clock divider: CEC off");
+        say(d, now_ms, "no clock divider: CEC off"); d->t.div = 0;
         cec_sm_init(&d->sm, CEC_PHYS_UNKNOWN, now_ms); d->last_state = d->sm.state; return;
     }
     n = put_str(l, 0, "divider "); n = put_dec(l, n, t.div); l[n] = 0; say(d, now_ms, l);
@@ -246,10 +246,27 @@ static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
     return 1;
 }
 
+/* Hotplug tracking and the display-address refresh. Also runs while no logical address is claimed (all polls
+ * answered, a transport error, or no physical address at init): a display that rises or changes address later
+ * must still restart the claim, so the early return in cec_drv_task does not skip it. */
+static void hotplug_phys(struct cec_drv *d, uint32_t now) {
+    {   uint8_t h = (d->rd(d->ctx, CEC_R_HOTPLUG) & CEC_HOTPLUG_CONNECTED) ? 1u : 0u;
+        if (!d->hpd_known) { d->hpd_known = 1; d->hpd = h; }
+        else if (h != d->hpd) {
+            say(d, now, h ? "hotplug rose" : "hotplug fell"); d->hpd = h;
+            if (h) { d->hpd_rises++; d->phys_want = 1; d->phys_failed = 0; }
+            else { d->phys_want = 0; d->phys_failed = 0; }
+        }
+    }
+    if (d->phys && ((d->phys_want && (!d->phys_failed || (uint32_t)(now - d->phys_try_ms) >= 3000u)) || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
+        phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
+}
+
 void cec_drv_task(struct cec_drv *d, uint32_t now) {
     struct cec_key_event ev[CEC_KEYS_MAX_EVENTS];
     if (d->sm.state == CEC_SM_NO_ADDRESS && d->last_state == CEC_SM_NO_ADDRESS && !d->sm.inflight && !d->tx_busy) {
-        emit(d, ev, cec_keys_tick(&d->keys, now, ev)); return;       /* nothing to run */
+        if (d->t.div && !d->tx_busy) hotplug_phys(d, now);           /* but a display that appears or changes must still be noticed */
+        emit(d, ev, cec_keys_tick(&d->keys, now, ev)); return;       /* nothing else to run */
     }
     /* Consume a latched ACK/NACK before expiring the transfer: main-loop work can
      * delay servicing an event past the software deadline. The CPU status bit is the normal sign;
@@ -304,16 +321,7 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         claimed_check(d, now);
     }
     check_regs(d, now);
-    {   uint8_t h = (d->rd(d->ctx, CEC_R_HOTPLUG) & CEC_HOTPLUG_CONNECTED) ? 1u : 0u;
-        if (!d->hpd_known) { d->hpd_known = 1; d->hpd = h; }
-        else if (h != d->hpd) {
-            say(d, now, h ? "hotplug rose" : "hotplug fell"); d->hpd = h;
-            if (h) { d->hpd_rises++; d->phys_want = 1; d->phys_failed = 0; }
-            else { d->phys_want = 0; d->phys_failed = 0; }
-        }
-    }
-    if (d->phys && ((d->phys_want && (!d->phys_failed || (uint32_t)(now - d->phys_try_ms) >= 3000u)) || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
-        phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
+    hotplug_phys(d, now);
     if (d->sm.phys != CEC_PHYS_UNKNOWN && d->sm.state != CEC_SM_NO_ADDRESS && !d->tx_busy && !d->sm.inflight) {
         if (d->bus_ok && d->sm.state == CEC_SM_CLAIMED && d->sm.tentative)
             restart_claim(d, now, "bus answers now: checking the address again", d->sm.phys);

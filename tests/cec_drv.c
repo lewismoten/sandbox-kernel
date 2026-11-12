@@ -327,6 +327,19 @@ static int sent_has(const uint8_t *e, unsigned n) {
     for (unsigned i = 0; i < chip.sent_n; i++) if (chip.sent_len[i] == n && !memcmp(chip.sent[i], e, n)) return 1;
     return 0;
 }
+static int rise_phys(void *c) { (void)c; return 0x2100; }
+/* No logical address (all polls answered): a display that rises or changes address must still restart the claim. */
+static void test_no_address_refresh(void) {
+    start(CEC_PHYS_UNKNOWN); drv.phys = rise_phys;
+    cec_drv_task(&drv, 1); assert(drv.sm.state == CEC_SM_NO_ADDRESS && chip.sent_n == 0);
+    chip.r[CEC_R_HOTPLUG / 4] = 1; cec_drv_task(&drv, 20); cec_drv_task(&drv, 40);
+    assert(drv.sm.phys == 0x2100 && drv.hpd_rises == 1 && drv.restarts == 1 && drv.sm.state == CEC_SM_POLL);
+    start(0x2100); drv.phys = rise_phys;                                        /* all three polls answered */
+    cec_drv_task(&drv, 1); finish_tx(&chip, 1); cec_drv_task(&drv, 2); finish_tx(&chip, 1); cec_drv_task(&drv, 3); finish_tx(&chip, 1); cec_drv_task(&drv, 4);
+    assert(drv.sm.state == CEC_SM_NO_ADDRESS && !drv.tx_busy);
+    unsigned sent = chip.sent_n; chip.r[CEC_R_HOTPLUG / 4] = 0; cec_drv_task(&drv, 100); chip.r[CEC_R_HOTPLUG / 4] = 1; cec_drv_task(&drv, 200);
+    assert(drv.hpd_rises == 1 && sent == chip.sent_n);                          /* same address: still silent, but the rise was seen */
+}
 static void test_late_tv(void) {
     start(0x1000); drv.phys = late_phys; drv.phys_assumed = 1; tv_phys_calls = 0;
     unsigned before_up = 0, claimed_ms = 0;
@@ -397,6 +410,7 @@ int main(void) {
     test_reset_keeps_receiver(); puts("PASS reset keeps the receiver");
     test_log_keeps_head(); puts("PASS log keeps its head");
     test_edid_log_timing(); puts("PASS edid, log, timing");
+    test_no_address_refresh(); puts("PASS no-address driver still refreshes the display address");
     test_late_tv(); assert(!chip.lost); puts("PASS TV that appears 60 s late");
     test_capture_bounds(); puts("PASS capture is bounded");
     test_edid_retry(); puts("PASS a failed EDID read is read again");
