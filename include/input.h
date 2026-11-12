@@ -41,3 +41,6 @@ int input_state(uint32_t instance,uint64_t keys[INPUT_KEYS/64],int64_t axes[INPU
 extern uint32_t input_dropped; /* overflow count since boot */
 
 extern uint32_t input_activity; /* accepted changes, even without a reader */
+/* Key downs and repeats, oldest first, for the kernel's own screens; separate from the OS's event queue. */
+bool input_key_pop(uint16_t *code);
+void input_key_flush(void);

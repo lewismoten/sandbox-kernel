@@ -92,7 +92,7 @@ int os_app_arena(uint32_t va,struct k_app_arena *r,uint32_t bytes) {
 int os_start(const char *path) {
  if(!os_can_start()) return -16;
  size_t n=strlen(path); if(n>=sizeof(os_path)) return -36;
- memcpy(os_path,path,n+1);
+ memcpy(os_path,path,n+1);os_exit_clean=false;
  owner.state=AA_LAUNCHING; /* gate nested SD/protocol RUN before any I/O */
  int h=asset_open(path,(uint32_t)n,0); if(h<0) return reject(asset_fail,h);
  uint32_t size=0; asset_size(h,&size);
@@ -134,8 +134,9 @@ static void save_fault(const char *kind,int64_t status) {
  for(unsigned i=SYS_RECENT;i--;) {const char *l=sys_recent_log(i);if(*l) {append(&p,"> ");append(&p,l);append(&p,"\n");}}
  if(fatsave_put("KERNEL","FAULT.TXT",(const uint8_t *)rec,(uint32_t)(p-rec))) log_line("Fault record not saved");
 }
+bool os_exit_clean;
 static void stop(bool fault,const char *why,int64_t status) {
- running=false;os_stops++;
+ running=false;os_stops++;os_exit_clean=!fault;
  if(fault) {if(!why) {last_pc=os_frame.pc;last_fsr=last_far=0;} save_fault(why,status);}
  memset(&os_frame,0,sizeof os_frame);
  int teardown=us_quiesce(&owner,&cleanup);

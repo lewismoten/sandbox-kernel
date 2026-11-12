@@ -121,6 +121,18 @@ In order:
 2. `/OS/GMOS.ELF`, if present.
 3. `/OS/DIAG.ELF`, the diagnostics program.
 
+### The idle screen and program list (`core/launcher.c`, `core/launcher_task.c`)
+
+When your program exits with status 0 (or no program autostarts), the kernel puts up a
+960x540 screen on HDMI titled "Game-Maker OS stopped" (for GMOS.ELF; another program's name
+otherwise, "Programs" when none ran). It lists every file in `/OS` whose name ends in `.ELF`
+and is not empty, GMOS.ELF first and then by name, up to 16. Up/Down (USB keyboard, CEC
+remote or the USB `KEY` command) choose; Enter (or the remote's OK) starts the choice the
+way USB `RUN` does: a fresh restart budget, no DIAG.ELF fallback. The card is read once when
+the screen comes up and again only on Enter with an empty list, always from the main loop,
+never from an interrupt. A fault, a USB `RUN` or `STOP` keeps the recovery console instead.
+The e-ink panel's USB line reads "OS STOPPED-ENTER" meanwhile.
+
 There is no user unlink call. To go back to the default order, replace `AUTORUN.TXT`
 with a first line of `GMOS.ELF` (or a blank one, which is ignored).
 

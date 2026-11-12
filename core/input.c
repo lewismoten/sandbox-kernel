@@ -22,6 +22,11 @@ static bool down(unsigned code) {return (keys[code/64]>>(code%64))&1u;}
 static void put(uint64_t ns,uint16_t type,uint16_t code,int32_t value) {
  queue[(head+count)%INPUT_QUEUE]=(struct input_event_rec){ns,type,code,value};count++;
 }
+/* Key downs and repeats for the kernel's own screens (the launcher), kept whether or not an OS reads. */
+#define KEYQ 16u
+static volatile uint16_t kq[KEYQ];static volatile unsigned kq_h,kq_t;
+bool input_key_pop(uint16_t *code) {if(kq_t==kq_h) return false;*code=kq[kq_t];kq_t=(kq_t+1)%KEYQ;return true;}
+void input_key_flush(void) {kq_t=kq_h;}
 int input_frame(const struct input_change *c,unsigned n) {
  if(!present) return -ENODEV;
  if(!n||n>INPUT_FRAME_MAX) return -EINVAL;
@@ -45,6 +50,7 @@ int input_frame(const struct input_change *c,unsigned n) {
   kept[k++]=c[i];
  }
  if(k) input_activity++;
+ for(unsigned i=0;i<k;i++) if(kept[i].type==EV_KEY&&kept[i].value) {unsigned n=(kq_h+1)%KEYQ;if(n!=kq_t) {kq[kq_h]=kept[i].code;kq_h=n;}}
  if(!k||!reading) return 0;
  uint64_t ns=clock_us()*1000u;
  if(count+k+1>INPUT_QUEUE) {head=count=0;put(ns,EV_SYN,SYN_DROPPED,0);input_dropped++;return 0;}

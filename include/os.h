@@ -44,3 +44,4 @@ struct os_policy {uint32_t faults; uint64_t first_us;};
 bool os_policy_restart(struct os_policy *p,uint64_t now_us);
 extern struct os_policy os_policy_state;
 extern uint32_t os_starts,os_stops;
+extern bool os_exit_clean; /* the last stop was a clean exit 0 (not a fault, not a USB stop) */

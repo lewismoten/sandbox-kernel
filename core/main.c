@@ -3,6 +3,7 @@
 #include "fb.h"
 #include "os.h"
 #include "autostart.h"
+#include "launcher.h"
 #include "clock.h"
 #include "power.h"
 #include "sys.h"
@@ -133,9 +134,11 @@ void kernel_main(void) {
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
    autostart_launch();
+   if(!os_running()&&!os_cleanup_pending()) launcher_request(NULL); /* nothing started: the program list instead of a bare console */
   }
   uint32_t now=micros(),delta=now-last;last=now;remainder+=delta;while(remainder>=1000000) {seconds++;remainder-=1000000;}
-  panel_task(usb_state(),seconds);fb_recovery_task();
+  launcher_task(storage_ready,boot_generation,BUILD_ID);
+  {const char *ls=launcher_eink_state();panel_task(ls?ls:usb_state(),seconds);}fb_recovery_task();
   if(expired(start,100000)) {
    if(ticks==old_ticks) {error("Timer progress lost");for(;;) {service_io();if(storage_ready)protocol_card_task();} /* ditto: only the timer failed */}
    old_ticks=ticks;start=micros();watchdog_feed();
