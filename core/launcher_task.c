@@ -11,19 +11,21 @@
 #include "fb.h"
 #include "eink.h"
 static bool want;
-static uint32_t seen_stops;
+static uint32_t seen_stops,seen_recoveries;
 static const char *stopped_path;
 static bool before(const char *a,const char *b) {int ra=!strcmp(a,"GMOS.ELF")?0:1,rb=!strcmp(b,"GMOS.ELF")?0:1;return ra!=rb?ra<rb:strcmp(a,b)<0;}
-/* The .ELF files in /OS, the files os_start accepts: GMOS.ELF first, then by name. */
+/* The .ELF files in /OS, the files os_start accepts: GMOS.ELF first, then by name; the whole directory is
+ * read and the first LAUNCHER_MAX in that order are kept, so a late GMOS.ELF is never dropped. */
 static unsigned list_os(char names[LAUNCHER_MAX][LAUNCHER_NAME]) {
  unsigned n=0;int h=asset_open("/OS/",4,0);if(h<0) return 0;
  struct asset_dirent d;
- while(n<LAUNCHER_MAX&&asset_readdir(h,&d)==1) {
+ while(asset_readdir(h,&d)==1) {
   unsigned len=(unsigned)strlen(d.name);
   if(d.is_dir||len<5||len>12||memcmp(d.name+len-4,".ELF",4)||!d.size) continue;
-  unsigned at=n;
+  if(n==LAUNCHER_MAX&&!before(d.name,names[n-1])) continue; /* sorts after all 16 kept */
+  unsigned at=n<LAUNCHER_MAX?n:LAUNCHER_MAX-1; /* a full list drops its last to make room */
   while(at&&before(d.name,names[at-1])) {memcpy(names[at],names[at-1],LAUNCHER_NAME);at--;}
-  memcpy(names[at],d.name,len+1);n++;
+  memcpy(names[at],d.name,len+1);if(n<LAUNCHER_MAX) n++;
  }
  asset_close(h);return n;
 }
@@ -38,8 +40,17 @@ void launcher_request(const char *stopped) {want=true;stopped_path=stopped;}
 const char *launcher_eink_state(void) {return launcher_active()?"OS STOPPED-ENTER":NULL;}
 void launcher_task(bool storage_ready,uint32_t generation,const char *build_id) {
  if(os_stops!=seen_stops) {seen_stops=os_stops;want=os_exit_clean;stopped_path=os_path;}
+ if(os_recoveries!=seen_recoveries) { /* USB STOP took the screen and keys, even when nothing was running: it cancels the launcher and any wish to reopen it */
+  seen_recoveries=os_recoveries;want=false;if(launcher_active()) launcher_close();
+ }
  bool idle=!os_running()&&!os_cleanup_pending()&&!os_stop_pending();
- if(!idle) {if(os_running()) want=false;if(launcher_active()) launcher_close();return;} /* USB RUN or STOP took over; a cleanup in progress keeps the wish */
+ if(!idle) {
+  if(os_running()) want=false;
+  /* USB RUN or STOP took over; a cleanup in progress keeps the wish. A launch we started that was refused
+   * drains its cleanup in several quanta: the error screen and its retry stay up meanwhile. */
+  if(launcher_active()&&(os_running()||os_stop_pending())) launcher_close();
+  return;
+ }
  if(!launcher_active()) {
   if(!want||!storage_ready||!fb_pixels) return;
   want=false;

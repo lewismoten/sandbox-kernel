@@ -20,7 +20,7 @@ struct uframe os_frame;
 const char *os_fail="none";
 char os_path[32];
 struct os_policy os_policy_state;
-uint32_t os_starts,os_stops;
+uint32_t os_starts,os_stops,os_recoveries;
 extern uint32_t boot_generation,boot_trial;
 static bool running;
 static bool stop_requested;
@@ -256,7 +256,7 @@ void os_task(void) {
   uint32_t intent=cleanup.disposition;cleanup.disposition=0;
   if(stop_requested) {
    log_line(stop_result?"OS stopped by USB; recovery console":"OS already idle; recovery console");
-   fb_recovery();
+   fb_recovery();os_recoveries++;
    stop_requested=false;return;
   }
   if(intent==RESTART) {
