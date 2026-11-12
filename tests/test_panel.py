@@ -118,6 +118,38 @@ class Panel(SupervisorBase):
         self.assertEqual(a, self.glass())
         self.assertEqual(b, self.glass())
 
+    def test_power_saving_freezes_uptime_with_sleep(self):
+        self.c.power_timeouts.restype = C.c_int
+        self.c.power_input.restype = None
+        self.boot()
+        self.pump(8000)
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(20), C.c_uint64(0), C.c_uint64(self.c.clock_us())), 0)
+        self.pump(18000)  # awake: the seconds still tick
+        before = self.glass()
+        self.pump(4000)  # the 20 s idle mark passes: one redraw showing SLEEP
+        entered = self.glass()
+        self.assertNotEqual(entered, before)
+        self.c.render_status_sleep(True)
+        drawn = []
+        for sec in range(20, 60):  # the frozen uptime is one of these: the plane must be the SLEEP screen
+            plane = C.create_string_buffer(4000)
+            self.c.render_status(plane, b'PANEL TEST', b'reader', b'none', C.c_uint32(sec))
+            drawn.append(plane.raw)
+        self.c.render_status_sleep(False)
+        self.assertIn(entered, drawn)
+        n1 = self.c.panel_probe_partial_count()
+        self.pump(5000)
+        self.assertEqual(self.c.panel_probe_partial_count(), n1)  # no redraw while asleep
+        self.assertEqual(self.glass(), entered)
+        self.c.power_input(C.c_uint64(self.c.clock_us()))  # input wakes it
+        self.pump(3000)
+        self.assertGreater(self.c.panel_probe_partial_count(), n1)  # woke: redrawn with the live uptime
+        self.assertNotEqual(self.glass(), entered)
+        self.pump(3000)
+        n2 = self.c.panel_probe_partial_count()
+        self.pump(3000)
+        self.assertGreater(self.c.panel_probe_partial_count(), n2)  # seconds tick again
+
     def test_capture_tracks_trigger_not_scheduled_or_failed_plane(self):
         self.c.panel_snapshot.restype = C.c_bool
         plane = C.create_string_buffer(4000)

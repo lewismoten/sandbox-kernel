@@ -109,3 +109,7 @@ do not set it. Screen/file-read refusals also leave the sticky error unchanged; 
 - Hardware check: the ghost-clearing full refresh after boot uses the boot sequence's full
   path (`panel.c`, phase 7 and 8) and has only been run on the host. VERIFY on the board.
 - No grayscale, no fast-refresh mode, and no per-region update for the OS: it always sends a whole page. Inside the driver a partial refresh writes only the rectangle of RAM that changed (0x44/0x45 window, 0x4e/0x4f counters), to both 0x24 and 0x26, so 0x26 always equals the glass; the panel still refreshes whole, but only changed pixels are driven.
+
+## Power saving
+
+While the kernel is in power saving (`power_target` names slowdown or blank), the status screen draws once with `SLEEP` after the uptime (for example `9h 2m SLEEP`, which still fits 16 characters), freezes that uptime, and is not redrawn again; leaving power saving redraws once with the live uptime. The 24-hour full refresh still runs. An OS page is unaffected.

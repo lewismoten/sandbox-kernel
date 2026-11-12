@@ -5,6 +5,7 @@
 #include "eink.h"
 #include "clock.h"
 #include "shot.h"
+#include "power.h"
 #ifndef PANEL_ROTATE_180
 #define PANEL_ROTATE_180 1
 #endif
@@ -17,7 +18,8 @@ static uint8_t frame[4000],desired[4000],shown[4000];
 static unsigned phase,pos,total;
 static uint8_t wx0,wx1=15; static unsigned wy0,wy1=249; /* RAM window: byte columns and rows being written; a partial update narrows it to what changed */
 static uint32_t since,delay;
-static bool full=true,disabled;
+static bool full=true,disabled,asleep;
+static uint32_t frozen; /* uptime when power saving began: while asleep the screen stays as it was */
 static void disable(const char *reason) {disabled=true;eink_set_available(false);error(reason);}
 static bool byte(uint8_t b) {
  if(disabled)return false;
@@ -84,7 +86,8 @@ void panel_task(const char *state,uint32_t seconds) {
  default:break;
  }
  if(phase)return;
- eink_compose(desired,BUILD_ID,state,last_error,seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
+ {bool now_asleep=power_target(clock_us())!=0;if(now_asleep&&!asleep) frozen=seconds;asleep=now_asleep;render_status_sleep(asleep);}
+ eink_compose(desired,BUILD_ID,state,last_error,asleep?frozen:seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
  {uint64_t now=clock_us();if(!memcmp(desired,shown,4000)&&!(eink_maintenance_due(now)&&eink_full_due(now)))return;full=eink_full_due(now);} /* ghost-clearing full refresh: VERIFY on the board */
  memcpy(frame,desired,4000);
  if(full) whole_window(); else changed_window(); /* a partial writes (and syncs 0x26 for) only the rectangle that changed */

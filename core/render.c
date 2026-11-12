@@ -47,11 +47,13 @@ void render_starting(uint8_t *p) {
  plain(p,112,24,"SANDBOX",7); plain(p,112,42,"KERNEL",6); plain(p,112,77,"STARTING...",11);
 }
 /* title/mark: the running OS's own name and 40x40 mark (ABI 1.9), or NULL for the kernel's. */
+static bool sleeping;
+void render_status_sleep(bool on) {sleeping=on;} /* power saving: the UP value reads "9h 2m SLEEP" */
 void render_status_ex(uint8_t *p,const char *title,const uint8_t *mark,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  memset(p,255,4000);
  if(mark) {struct logo l={40,40,5,mark};blit(p,4,2,&l);} else blit(p,4,2,&logo_small);
  plain(p,54,6,title?title:"SANDBOX KERNEL",16); plain(p,54,24,build_id,16);
- char up[32]; uptime(up,seconds);
+ char up[32]; uptime(up,seconds); if(sleeping) {unsigned n=0;while(up[n])n++;memcpy(up+n," SLEEP",7);}
  plain(p,4,48,"UP:",3); plain(p,54,48,up,16);
  plain(p,4,70,"USB:",4); plain(p,54,70,usb,16);
  plain(p,4,92,"ERR:",4); plain(p,54,92,error,16);
