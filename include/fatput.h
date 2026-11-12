@@ -5,6 +5,7 @@
  * ones that create /OS or /GAMES, no directory entry outside those folders. */
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
 #define FATPUT_MAX (1024u*1024u) /* the ELF loader's file limit */
 extern const char *fatput_fail;
 /* 0 if name is a plain 8.3 name (A-Z 0-9 _ -, upper case), else -EINVAL. */
@@ -37,3 +38,17 @@ int fatfs_rmdir(const char *path);
 /* ENT lines into out (NUL-terminated, under cap bytes) from raw slot `from`; *next resumes (~0u at the end);
    dot-named (macOS) entries are skipped and counted in *skipped. Returns the line count or a negative errno. */
 int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *next,uint32_t *skipped);
+
+/* Bounded in-place logs in /OS/SAVES/KERNEL (see fatput.c): the file is a fixed size, text then NUL padding. fatlog_set
+   copies the text (no card access); fatlog_pump, called once per main-loop pass, creates the file if it is missing, then
+   writes at most ONE changed 512-byte sector per call. Returns 1 for a sector written, 0 for nothing to do, <0 on error. */
+#define FATLOG_CEC 0u
+#define FATLOG_AUDIO 1u
+#define FATLOG_SLOTS 2u
+#define FATLOG_CEC_CAP 24576u
+#define FATLOG_AUDIO_CAP 8704u /* 17 sectors: AUDIO_LOG_BYTES plus the header line */
+#define FATLOG_MAXSEC (FATLOG_CEC_CAP/512u)
+int fatlog_set(unsigned id,const uint8_t *data,uint32_t bytes);
+int fatlog_pump(void);
+bool fatlog_pending(unsigned id);
+uint32_t fatlog_writes(void);

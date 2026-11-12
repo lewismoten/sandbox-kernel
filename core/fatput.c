@@ -378,7 +378,7 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  uint32_t cb=v.spc*512,n=(bytes+cb-1)/cb;
  if((r=alloc(n))) return r;
  for(uint32_t i=0;i<n;i++) for(uint32_t j=0;j<v.spc;j++) {
-  uint32_t at=i*cb+j*512; memset(s,0,512); if(at<bytes) memcpy(s,data+at,bytes-at<512?bytes-at:512);
+  uint32_t at=i*cb+j*512; memset(s,0,512); if(data&&at<bytes) memcpy(s,data+at,bytes-at<512?bytes-at:512);
   uint8_t copy[512]; memcpy(copy,s,512); if((r=wr(lba_of(chain[i],j),copy,0))) return r;
   if(!(j&15)) watchdog_feed();
  }
@@ -479,11 +479,13 @@ int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t b
  if(asset_cache_readers())return -16;
  return put_file(name,data,bytes,true,game);
 }
-int fatsave_remove(const char *game,const char *name) {return remove_cache(name,false,game);}
+static void log_forget(void); /* a removed or renamed file may be a log: look it up again */
+int fatsave_remove(const char *game,const char *name) {log_forget();return remove_cache(name,false,game);}
 int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
  uint8_t a[11],b[11],g[11];int r=fatput_name(from,a);if(r)return r;
  if((r=fatput_name(to,b)))return r;
  if((r=save_dir_name(game,g)))return r;
+ log_forget();
  if(!memcmp(a,b,11))return -22;
  char path[40]="/OS/SAVES/";size_t gl=strlen(game),n=strlen(from);
  memcpy(path+10,game,gl);path[10+gl]='/';memcpy(path+11+gl,from,n+1);
@@ -699,4 +701,76 @@ int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *nex
   c=n;
  }
  return fail("PUT DIR LOOP",5);
+}
+
+/* ---- bounded in-place logs (CEC.TXT, AUDIO.TXT) ----
+ * A log is a fixed-size file in /OS/SAVES/KERNEL: created once (copy-on-write, zero filled) at its capacity, then only its
+ * changed 512-byte sectors are rewritten in place, ONE per fatlog_pump() call (the main loop calls it once a pass), so a
+ * save no longer holds the loop for a whole-file rewrite. The FAT and the directory are not touched after creation, so a
+ * power cut can tear at most the sector being written (a few lines of the log), never the FAT or another file. The file
+ * is plain text followed by NUL padding up to its capacity; readers strip the trailing NULs. fatlog_set only copies the
+ * text into RAM (no card access); sectors whose content hash equals what was last written are skipped. */
+struct fatlog {uint8_t *buf; uint32_t cap,nsec,cur,base,lba[FATLOG_MAXSEC],hash[FATLOG_MAXSEC]; bool open,pending,known[FATLOG_MAXSEC]; unsigned fails;};
+static uint8_t lbuf0[FATLOG_CEC_CAP],lbuf1[FATLOG_AUDIO_CAP];
+static struct fatlog logs[FATLOG_SLOTS]={{lbuf0,FATLOG_CEC_CAP,0,0,0,{0},{0},false,false,{false},0},{lbuf1,FATLOG_AUDIO_CAP,0,0,0,{0},{0},false,false,{false},0}};
+static const char *const log_name[FATLOG_SLOTS]={"CEC.TXT","AUDIO.TXT"};
+static void log_forget(void) {for(unsigned i=0;i<FATLOG_SLOTS;i++) logs[i].open=false;}
+static unsigned log_turn; static uint32_t log_writes;
+uint32_t fatlog_writes(void) {return log_writes;}
+static uint32_t fnv(const uint8_t *p) {uint32_t h=2166136261u; for(unsigned i=0;i<512;i++) h=(h^p[i])*16777619u; return h;}
+static int log_resolve(struct fatlog *l,const char *name,bool *found) {
+ uint8_t nm[11],dn[3][11],e[32]; struct slot hit,fr; int r; *found=false;
+ if((r=fatput_name(name,nm))) return r;
+ memcpy(dn[0],"OS         ",11); memcpy(dn[1],"SAVES      ",11); memcpy(dn[2],"KERNEL     ",11);
+ if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
+ taken=0; fc_sec=~0u; heal=true;
+ uint32_t dir=v.root;
+ for(unsigned i=0;i<3;i++) {if((r=scan(dir,dn[i],&hit,&fr,e))) return r; if(!hit.found||!(e[11]&0x10)) return 0; dir=ecl(e);}
+ if((r=scan(dir,nm,&hit,&fr,e))) return r;
+ if(!hit.found||(e[11]&0x1f)||u32(e+28)!=l->cap) return 0;
+ uint32_t cn=0,cb=v.spc*512; if((r=walk(ecl(e),l->cap,old,sizeof old/4,&cn))) return 0; /* a bad chain is replaced */
+ if(cn*cb<l->cap||cn*v.spc>FATLOG_MAXSEC+v.spc) return 0;
+ l->nsec=l->cap/512; for(uint32_t i=0;i<l->nsec;i++) l->lba[i]=lba_of(old[i/v.spc],i%v.spc);
+ l->base=v.base; *found=true; return 0;
+}
+static int log_open(unsigned id) {
+ struct fatlog *l=&logs[id]; bool found; int r=log_resolve(l,log_name[id],&found); if(r) return r;
+ if(!found) {
+  if((r=put_file(log_name[id],0,l->cap,true,"KERNEL"))) return r;
+  if((r=log_resolve(l,log_name[id],&found))) return r;
+  if(!found) return fail("PUT LOG",5);
+ }
+ for(uint32_t i=0;i<l->nsec;i++) l->known[i]=false;
+ l->cur=0; l->open=true; return 0;
+}
+int fatlog_set(unsigned id,const uint8_t *data,uint32_t bytes) {
+ if(id>=FATLOG_SLOTS) return -22;
+ struct fatlog *l=&logs[id]; if(bytes>l->cap) return -27;
+ memcpy(l->buf,data,bytes); memset(l->buf+bytes,0,l->cap-bytes);
+ l->pending=true; l->fails=0;
+ return 0;
+}
+bool fatlog_pending(unsigned id) {return id<FATLOG_SLOTS&&logs[id].pending;}
+int fatlog_pump(void) {
+ for(unsigned k=0;k<FATLOG_SLOTS;k++) {
+  unsigned id=(log_turn+k)%FATLOG_SLOTS; struct fatlog *l=&logs[id];
+  if(!l->pending) continue;
+  if(asset_cache_readers()) return 0; /* an app has a save open: try again next pass */
+  int r=0;
+  if(!l->open) r=log_open(id); else if((r=asset_volume(&v))||v.base!=l->base) {l->open=false;r=r?r:-5;}
+  if(!r) {
+   for(uint32_t j=0;j<l->nsec;j++) {
+    uint32_t i=(l->cur+j)%l->nsec,h=fnv(l->buf+i*512);
+    if(l->known[i]&&l->hash[i]==h) continue;
+    uint8_t copy[512]; memcpy(copy,l->buf+i*512,512);
+    if((r=wr(l->lba[i],copy,0))) break;
+    l->known[i]=true; l->hash[i]=h; l->cur=i+1; log_writes++; log_turn=id+1;
+    return 1;
+   }
+   if(!r) {l->pending=false; continue;} /* every sector is on the card */
+  }
+  l->open=false; if(++l->fails>=3) l->pending=false; /* give up until the next fatlog_set */
+  return r;
+ }
+ return 0;
 }

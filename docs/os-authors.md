@@ -588,6 +588,8 @@ and restores the null drain before rediscovery. This retries audio discovery; it
 not program a new video mode or guarantee firmware will configure a late display.
 Physical output and HPD behavior still need a TV check.
 
+**How these logs are written.** `CEC.TXT` (24 KiB) and `AUDIO.TXT` (8704 bytes) are fixed-size files in `/OS/SAVES/KERNEL`: created once at full size, then only their changed 512-byte sectors are rewritten in place, one sector per main-loop pass (`fatlog_set` copies the text, `fatlog_pump` writes; `core/fatput.c`). Nothing else on the card is touched after creation, so a power cut can lose a few lines, never the FAT or another file. The file is the log text followed by NUL padding up to its size; `usb_kernel.py logs` strips the trailing NULs, and a program reading it should too.
+
 The last three boots are kept: before a boot's first write, `AUDIO.TXT` becomes `AUDIO.1` and
 `AUDIO.1` becomes `AUDIO.2` (`core/audio_rot.c`). A USB link boot with no display (no HDMI hotplug
 and no EDID seen) writes nothing, so the Mac-attached boot after a monitor test leaves that test's

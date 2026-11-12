@@ -80,6 +80,8 @@ received frame that is not a held key, each new key press (`UI 01 key 103`, or `
 for a code the map ignores), send timeouts and the claim result. Each line starts with
 milliseconds since the first CEC clock call during initialization.
 
+**How these logs are written.** `CEC.TXT` (24 KiB) and `AUDIO.TXT` (8704 bytes) are fixed-size files in `/OS/SAVES/KERNEL`: created once at full size, then only their changed 512-byte sectors are rewritten in place, one sector per main-loop pass (`fatlog_set` copies the text, `fatlog_pump` writes; `core/fatput.c`). Nothing else on the card is touched after creation, so a power cut can lose a few lines, never the FAT or another file. The file is the log text followed by NUL padding up to its size; `usb_kernel.py logs` strips the trailing NULs, and a program reading it should too.
+
 Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lines (the kernel
 replays them to a new reader about a second after it connects), so a session can be read afterward
 without pulling the card.

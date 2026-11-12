@@ -15,6 +15,7 @@
 #include "usbrole.h"
 #include "assets.h"
 #include "bootrec.h"
+#include "fatput.h"
 #include "usblog.h"
 #if USB_ROLE_HOST
 #include "usbkbd.h"
@@ -116,6 +117,7 @@ void kernel_main(void) {
   clock_us();looptrace0.passes++;
 #define PHASE(i,call) {uint32_t t0_=micros();call;looptrace_note(i,(uint32_t)(micros()-t0_));}
   PHASE(0,audio_null_task());PHASE(1,usb_task());PHASE(2,protocol_task());PHASE(3,protocol_card_task());PHASE(4,os_task());PHASE(5,cec_hw_task());PHASE(6,hdmi_audio_poll());
+  PHASE(7,if(storage_ready&&!protocol_busy()&&fatlog_pump()<0)log_line("Log write failed"));
 #if USB_ROLE_HOST
   /* the keyboards found, saved once the count has held for 2 s (a hub enumerates one device at a time) */
   if(usbkbd_count()!=kbd_seen) {kbd_seen=usbkbd_count();kbd_since=micros();}

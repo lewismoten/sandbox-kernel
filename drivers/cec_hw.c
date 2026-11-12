@@ -104,8 +104,8 @@ static void save_log(uint32_t now) {
     if (saves > 1u && drv.log.lines + drv.log.dropped < saved_total + 6u && now - last_save_ms < 600000u) return;   /* little new: wait */
     drv.log.dirty = 0; last_save_ms = now; saves++; saved_total = drv.log.lines + drv.log.dropped;
     uint32_t t0 = micros(), bytes = drv.log.len;
-    if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");
-    if (saves <= 5u) {   /* how long the main loop was held, for the first saves (a save writes the whole log, up to 24 KiB): read it in the next CEC.TXT */
+    if (fatlog_set(FATLOG_CEC, (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");   /* copied to RAM; the main loop writes it a sector at a time (fatlog_pump) */
+    if (saves <= 5u) {   /* how long taking the snapshot took (the card write is spread over main-loop passes, one sector each): read it in the next CEC.TXT */
         char b[40]; unsigned n = 0, k; uint32_t v = (uint32_t)(micros() - t0) / 1000u; char d[11];
         for (const char *h = "save took "; *h; h++) b[n++] = *h;
         k = 0; do { d[k++] = (char)('0' + v % 10u); v /= 10u; } while (v && k < 10u); while (k) b[n++] = d[--k];
