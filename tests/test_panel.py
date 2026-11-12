@@ -123,32 +123,122 @@ class Panel(SupervisorBase):
         self.c.power_input.restype = None
         self.boot()
         self.pump(8000)
-        self.assertEqual(self.c.power_timeouts(C.c_uint64(20), C.c_uint64(0), C.c_uint64(self.c.clock_us())), 0)
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(0), C.c_uint64(20), C.c_uint64(self.c.clock_us())), 0)
         self.pump(18000)  # awake: the seconds still tick
         before = self.glass()
-        self.pump(4000)  # the 20 s idle mark passes: one redraw showing SLEEP
+        self.pump(34000)  # the 20 s idle mark passes, then 30 s more of holding: one redraw showing SLEEP
         entered = self.glass()
         self.assertNotEqual(entered, before)
         self.c.render_status_sleep(True)
         drawn = []
-        for sec in range(20, 60):  # the frozen uptime is one of these: the plane must be the SLEEP screen
+        for sec in range(20, 100):  # the frozen uptime is one of these: the plane must be the SLEEP screen
             plane = C.create_string_buffer(4000)
             self.c.render_status(plane, b'PANEL TEST', b'reader', b'none', C.c_uint32(sec))
             drawn.append(plane.raw)
         self.c.render_status_sleep(False)
         self.assertIn(entered, drawn)
         n1 = self.c.panel_probe_partial_count()
-        self.pump(5000)
+        self.pump(15000)
         self.assertEqual(self.c.panel_probe_partial_count(), n1)  # no redraw while asleep
         self.assertEqual(self.glass(), entered)
-        self.c.power_input(C.c_uint64(self.c.clock_us()))  # input wakes it
-        self.pump(3000)
+        self.c.power_input(C.c_uint64(self.c.clock_us()))  # input wakes it, shown after 10 s awake
+        self.pump(11000)
         self.assertGreater(self.c.panel_probe_partial_count(), n1)  # woke: redrawn with the live uptime
         self.assertNotEqual(self.glass(), entered)
-        self.pump(3000)
+        self.pump(11000)
         n2 = self.c.panel_probe_partial_count()
+        self.pump(11000)
+        self.assertGreater(self.c.panel_probe_partial_count(), n2)  # the uptime still advances, no faster than every 10 s
+
+    def partials_and_fulls(self):
+        return self.c.panel_probe_partial_count() + self.c.panel_probe_full_count()
+
+    def test_flapping_activity_does_not_flap_the_panel(self):
+        # Activity every 2 s for 2 minutes (a bus that keeps waking the kernel): a handful of redraws, never SLEEP.
+        self.c.power_timeouts.restype = C.c_int
+        self.c.power_input.restype = None
+        self.boot()
+        self.pump(8000)
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(0), C.c_uint64(1), C.c_uint64(self.c.clock_us())), 0)
+        n0 = self.partials_and_fulls()
+        seen = set()
+        for _ in range(60):
+            self.c.power_input(C.c_uint64(self.c.clock_us()))
+            self.pump(2000)
+            seen.add(self.glass())
+        redraws = self.partials_and_fulls() - n0
+        print('flapping activity: %d redraws in 120 s' % redraws)
+        self.assertLessEqual(redraws, 13)  # 10 s apart at most
+        self.assertLessEqual(len(seen), 13)
+
+    def test_slow_flap_between_sleep_and_awake_redraws_once_each_way(self):
+        # Idle 1 s timeout; a blip of activity every 25 s: the 30 s hold is never met, so SLEEP never shows.
+        self.c.power_timeouts.restype = C.c_int
+        self.c.power_input.restype = None
+        self.boot()
+        self.pump(8000)
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(0), C.c_uint64(1), C.c_uint64(self.c.clock_us())), 0)
+        asleep = C.create_string_buffer(4000)
+        self.c.render_status_sleep(True)
+        self.c.render_status(asleep, b'PANEL TEST', b'reader', b'none', C.c_uint32(0))
+        self.c.render_status_sleep(False)
+        n0 = self.partials_and_fulls()
+        for _ in range(5):
+            self.pump(25000)
+            self.c.power_input(C.c_uint64(self.c.clock_us()))
+        print('blip every 25 s: %d redraws in 125 s' % (self.partials_and_fulls() - n0))
+        self.assertLessEqual(self.partials_and_fulls() - n0, 13)
+        # Now let it hold: SLEEP shows once, with no more redraws while it stays idle.
+        self.pump(45000)
+        n1 = self.partials_and_fulls()
+        self.pump(60000)
+        self.assertEqual(self.partials_and_fulls(), n1)
+
+    def test_slowdown_alone_never_shows_sleep(self):
+        self.c.power_timeouts.restype = C.c_int
+        self.c.power_input.restype = None
+        self.boot()
+        self.pump(8000)
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(5), C.c_uint64(0), C.c_uint64(self.c.clock_us())), 0)
+        n0 = self.partials_and_fulls()
+        self.pump(120000)  # 2 minutes slowed down and lit: the uptime screen, one redraw per 10 s at most
+        print('slowdown only: %d redraws in 120 s' % (self.partials_and_fulls() - n0))
+        self.assertLessEqual(self.partials_and_fulls() - n0, 13)
+        self.c.render_status_sleep(True)
+        for sec in range(0, 400):  # no uptime the panel could have drawn is a SLEEP screen
+            plane = C.create_string_buffer(4000)
+            self.c.render_status(plane, b'PANEL TEST', b'reader', b'none', C.c_uint32(sec))
+            self.assertNotEqual(self.glass(), plane.raw)
+        self.c.render_status_sleep(False)
+        # blank joins in: SLEEP shows once after 30 s, wake returns to uptime once
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(5), C.c_uint64(20), C.c_uint64(self.c.clock_us())), 0)
+        before = self.glass()
+        self.pump(55000)
+        n1 = self.partials_and_fulls()
+        sleeping = self.glass()
+        self.assertNotEqual(sleeping, before)
+        self.pump(40000)
+        self.assertEqual(self.partials_and_fulls(), n1)
+        self.c.power_input(C.c_uint64(self.c.clock_us()))
+        self.pump(14000)
+        self.assertEqual(self.partials_and_fulls(), n1 + 1)
+        self.assertNotEqual(self.glass(), sleeping)
+
+    def test_os_title_keeps_the_panel_while_flapping(self):
+        self.boot()
         self.pump(3000)
-        self.assertGreater(self.c.panel_probe_partial_count(), n2)  # seconds tick again
+        self.jump(self.c.clock_us()+3_000_000)
+        self.assertEqual(self.c.eink_title(b'GAME MAKER OS', 13, None, b'BUILD', 5, C.c_uint64(self.c.clock_us())), 0)
+        self.pump(3000)
+        n0 = self.partials_and_fulls()
+        self.c.power_input.restype = None
+        self.c.power_timeouts.restype = C.c_int
+        self.assertEqual(self.c.power_timeouts(C.c_uint64(0), C.c_uint64(1), C.c_uint64(self.c.clock_us())), 0)
+        for _ in range(30):
+            self.c.power_input(C.c_uint64(self.c.clock_us()))
+            self.pump(2000)
+        self.assertLessEqual(self.partials_and_fulls() - n0, 7)  # only the uptime line moves, 10 s apart; the title stays
+        self.assertTrue(self.c.eink_available())
 
     def test_capture_tracks_trigger_not_scheduled_or_failed_plane(self):
         self.c.panel_snapshot.restype = C.c_bool
