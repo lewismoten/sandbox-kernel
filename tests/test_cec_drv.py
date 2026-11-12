@@ -15,7 +15,7 @@ class CecDrvTests(unittest.TestCase):
                             'drivers/cec_edid.c', 'drivers/cec_log.c', 'drivers/cec_drv.c',
                             'tests/cec_drv.c', '-o', exe], cwd=ROOT, check=True)
             out = subprocess.run([exe], cwd=ROOT, check=True, timeout=30, capture_output=True, text=True).stdout
-            self.assertEqual(out.count('PASS'), 10)
+            self.assertEqual(out.count('PASS'), 12)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -100,7 +100,16 @@ static void save_log(uint32_t now) {
     if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || os_running() || saves >= SAVE_MAX) return;
     if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS))) return;
     drv.log.dirty = 0; last_save_ms = now; saves++;
+    uint32_t t0 = micros(), bytes = drv.log.len;
     if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");
+    if (saves <= 5u) {   /* how long the main loop was held, for the first saves (a save writes the whole log, up to 24 KiB): read it in the next CEC.TXT */
+        char b[40]; unsigned n = 0, k; uint32_t v = (uint32_t)(micros() - t0) / 1000u; char d[11];
+        for (const char *h = "save took "; *h; h++) b[n++] = *h;
+        k = 0; do { d[k++] = (char)('0' + v % 10u); v /= 10u; } while (v && k < 10u); while (k) b[n++] = d[--k];
+        for (const char *h = " ms for "; *h; h++) b[n++] = *h;
+        v = bytes; k = 0; do { d[k++] = (char)('0' + v % 10u); v /= 10u; } while (v && k < 10u); while (k) b[n++] = d[--k];
+        b[n++] = 'B'; b[n] = 0; cec_log_line(&drv.log, now_ms(), b);
+    }
 }
 
 static void power_task(void);
