@@ -31,7 +31,7 @@ struct cec_drv {
     uint32_t alive_ms;            /* last heartbeat line */
     uint32_t check_ms;            /* last register check */
     uint8_t bus_ok;               /* some transfer has completed (ACK, NACK or a received frame) since the last claim */
-    uint8_t hpd, hpd_known, phys_assumed, phys_want, retry_armed;
+    uint8_t hpd, hpd_known, phys_assumed, phys_want, phys_failed, retry_armed;
     uint32_t backoff_ms, retry_ms, phys_try_ms, restarts, hpd_rises;
     uint8_t tx_eom_stale, rx_flag_bad, rx_flag_off;  /* flag-based completion/receive detection (see cec_drv.c) */
     uint32_t flags_sig, flags_ms, rx_flag_ms, rx_via_flags;

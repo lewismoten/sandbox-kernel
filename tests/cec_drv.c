@@ -8,11 +8,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#define CAP 256u   /* captured frames; the late-TV case needs 57. More is counted in `lost`, never written. */
 struct chip {
     uint32_t r[0x400 / 4];
     int tx_started, c5_resets, rx_resets, clear_pulses;
     uint8_t tx[16]; unsigned tx_len;
-    int sticky_rx; uint8_t sent[128][16]; unsigned sent_len[128]; unsigned sent_n;
+    int sticky_rx; uint8_t sent[CAP][16]; unsigned sent_len[CAP]; unsigned sent_n, lost;
 };
 static uint32_t crd(void *c, uint32_t o) { return ((struct chip *)c)->r[o / 4]; }
 static void cwr(void *c, uint32_t o, uint32_t v) {
@@ -23,7 +24,8 @@ static void cwr(void *c, uint32_t o, uint32_t v) {
         if ((v & CEC_C1_START_XMIT) && !(old & CEC_C1_START_XMIT)) {
             h->tx_started = 1; h->tx_len = ((v & CEC_C1_LEN_MASK) >> CEC_C1_LEN_SHIFT) + 1u;
             for (unsigned i = 0; i < h->tx_len; i++) h->tx[i] = (uint8_t)(h->r[CEC_R_TX_DATA / 4 + i / 4] >> (8 * (i % 4)));
-            memcpy(h->sent[h->sent_n % 128], h->tx, h->tx_len); h->sent_len[h->sent_n++ % 128] = h->tx_len;
+            if (h->sent_n >= CAP) h->lost++;
+            else { memcpy(h->sent[h->sent_n], h->tx, h->tx_len); h->sent_len[h->sent_n++] = h->tx_len; }
         }
         if ((v & CEC_C1_START_XMIT) && !(old & CEC_C1_START_XMIT)) old &= ~CEC_C1_TX_EOM;   /* a new send clears the end flag */
         if ((v & CEC_C1_CLEAR_RECEIVE_OFF) && !(old & CEC_C1_CLEAR_RECEIVE_OFF)) {          /* the receiver is re-armed */
@@ -50,12 +52,12 @@ static void inject(struct chip *h, const uint8_t *b, unsigned n) {
 /* the same frame with the CPU status bit never rising (what the Insignia log suggests happened) */
 static void inject_quiet(struct chip *h, const uint8_t *b, unsigned n) { inject(h, b, n); h->r[CEC_R_CPU_STATUS / 4] &= ~CEC_CPU_CEC; }
 
-static struct { uint16_t code[16]; uint8_t val[16]; unsigned n; } keys;
-static void ksink(void *c, uint16_t code, uint8_t v) { (void)c; keys.code[keys.n] = code; keys.val[keys.n++] = v; }
+static struct { uint16_t code[16]; uint8_t val[16]; unsigned n, lost; } keys;
+static void ksink(void *c, uint16_t code, uint8_t v) { (void)c; if (keys.n >= 16) { keys.lost++; return; } keys.code[keys.n] = code; keys.val[keys.n++] = v; }
 
 static struct chip chip; static struct cec_drv drv;
 static void start(uint16_t phys) {
-    memset(&chip, 0, sizeof chip); memset(&drv, 0, sizeof drv); keys.n = 0;
+    memset(&chip, 0, sizeof chip); memset(&drv, 0, sizeof drv); keys.n = 0; keys.lost = 0;
     drv.rd = crd; drv.wr = cwr; drv.key = ksink; drv.ctx = &chip;
     cec_drv_init(&drv, phys, 163682864u, 0);
 }
@@ -324,6 +326,39 @@ static void test_late_tv(void) {
     assert(chip.sent_n >= n + 2 && chip.sent_len[n] == 4 && chip.sent[n][1] == 0x82);
 }
 
+/* The capture is bounded: more frames than it holds are counted as lost, nothing is written past the arrays. */
+static void test_capture_bounds(void) {
+    start(0x1000);
+    for (unsigned i = 0; i < CAP + 40u; i++) {
+        chip.r[CEC_R_TX_DATA / 4] = 0x4Fu;
+        cwr(&chip, CEC_R_CNTRL_1, 0); cwr(&chip, CEC_R_CNTRL_1, CEC_C1_START_XMIT);
+    }
+    assert(chip.sent_n == CAP && chip.lost == 40u);
+    for (unsigned i = 0; i < 40u; i++) ksink(0, 103, 1);
+    assert(keys.n == 16u && keys.lost == 24u);
+    chip.lost = 0; keys.lost = 0;
+}
+
+/* The display's address read fails after an HPD rise (the TV is still starting): it is read again, never given up. */
+static unsigned edid_fail_left, edid_calls; static uint32_t cur_ms, call_ms[8];
+static int flaky_phys(void *c) { (void)c; if (edid_calls < 8) call_ms[edid_calls] = cur_ms; edid_calls++; return edid_fail_left ? (edid_fail_left--, -1) : 0x2100; }
+static void step(uint32_t t) { cur_ms = t; cec_drv_task(&drv, t); if (chip.tx_started) finish_tx(&chip, chip.tx_len > 1); }
+static void test_edid_retry(void) {
+    start(0x1000); drv.phys = flaky_phys; drv.phys_assumed = 0; edid_fail_left = 2; edid_calls = 0;
+    chip.r[CEC_R_HOTPLUG / 4] = 0; step(10);
+    chip.r[CEC_R_HOTPLUG / 4] = CEC_HOTPLUG_CONNECTED;
+    for (uint32_t t = 20; t < 20000u; t += 20) step(t);
+    /* two failed reads, each retried (at least 3 s apart), then the third succeeds and stops the reads */
+    assert(edid_calls == 3 && drv.sm.phys == 0x2100 && !drv.phys_want && !drv.phys_failed && drv.hpd_rises == 1);
+    assert(call_ms[1] - call_ms[0] >= 3000u && call_ms[2] - call_ms[1] >= 3000u && call_ms[2] < 12000u);
+    /* a fall of the display's HPD cancels a pending retry */
+    start(0x1000); drv.phys = flaky_phys; edid_fail_left = 99; edid_calls = 0;
+    step(10); chip.r[CEC_R_HOTPLUG / 4] = CEC_HOTPLUG_CONNECTED; step(20);
+    chip.r[CEC_R_HOTPLUG / 4] = 0; step(40);
+    for (uint32_t t = 60; t < 9000; t += 20) step(t);
+    assert(edid_calls == 1 && !drv.phys_want);
+}
+
 int main(void) {
     test_power();
     test_timing_and_claim(); puts("PASS timing and claim");
@@ -335,6 +370,8 @@ int main(void) {
     test_reset_keeps_receiver(); puts("PASS reset keeps the receiver");
     test_log_keeps_head(); puts("PASS log keeps its head");
     test_edid_log_timing(); puts("PASS edid, log, timing");
-    test_late_tv(); puts("PASS TV that appears 60 s late");
+    test_late_tv(); assert(!chip.lost); puts("PASS TV that appears 60 s late");
+    test_capture_bounds(); puts("PASS capture is bounded");
+    test_edid_retry(); puts("PASS a failed EDID read is read again");
     return 0;
 }

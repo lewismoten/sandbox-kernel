@@ -97,8 +97,12 @@ static void restart_claim(struct cec_drv *d, uint32_t now, const char *why, uint
 static void phys_refresh(struct cec_drv *d, uint32_t now, const char *why) {
     char l[CEC_LOG_LINE]; unsigned n;
     int p = d->phys ? d->phys(d->ctx) : -1;
-    d->phys_try_ms = now; d->phys_want = 0;
-    if (p < 0) return;
+    d->phys_try_ms = now;
+    if (p < 0) {                                  /* a read that fails (the display still starting) is tried again, every 3 s while it is connected */
+        if (d->phys_want || d->phys_failed) { d->phys_want = 1; d->phys_failed = 1; }
+        return;
+    }
+    d->phys_want = 0; d->phys_failed = 0;
     if ((uint16_t)p == d->sm.phys && !d->phys_assumed) return;
     n = put_str(l, 0, "physical address now "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(p >> 8), (uint8_t)p}, 2);
     n = put_str(l, n, " ("); n = put_str(l, n, why); l[n++] = ')'; l[n] = 0;
@@ -109,7 +113,7 @@ static void phys_refresh(struct cec_drv *d, uint32_t now, const char *why) {
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms) {
     struct cec_timing t; char l[CEC_LOG_LINE]; unsigned n;
     d->tx_busy = 0; d->hold = 0; d->announced = 0; d->last_ui = 0; d->ui_seen = 0; d->tx_id = 0;
-    d->bus_ok = 0; d->hpd_known = 0; d->phys_want = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
+    d->bus_ok = 0; d->hpd_known = 0; d->phys_want = 0; d->phys_failed = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
     d->rx_frames = d->tx_frames = d->tx_good = d->tx_bad = d->key_events = d->spurious = 0;
     cec_log_init(&d->log); cec_keys_init(&d->keys);
     n = put_str(l, 0, "init phys "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(phys >> 8), (uint8_t)phys}, 2);
@@ -281,10 +285,11 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         if (!d->hpd_known) { d->hpd_known = 1; d->hpd = h; }
         else if (h != d->hpd) {
             say(d, now, h ? "hotplug rose" : "hotplug fell"); d->hpd = h;
-            if (h) { d->hpd_rises++; d->phys_want = 1; }
+            if (h) { d->hpd_rises++; d->phys_want = 1; d->phys_failed = 0; }
+            else { d->phys_want = 0; d->phys_failed = 0; }
         }
     }
-    if (d->phys && (d->phys_want || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
+    if (d->phys && ((d->phys_want && (!d->phys_failed || (uint32_t)(now - d->phys_try_ms) >= 3000u)) || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
         phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
     if (d->sm.phys != CEC_PHYS_UNKNOWN && d->sm.state != CEC_SM_NO_ADDRESS && !d->tx_busy && !d->sm.inflight) {
         if (d->bus_ok && d->sm.state == CEC_SM_CLAIMED && d->sm.tentative)
