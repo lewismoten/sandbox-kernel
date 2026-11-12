@@ -21,7 +21,7 @@ class HostHotplug(unittest.TestCase):
                 '#include "tusb.h"\n#include "usbkbd.h"\n#include "usblog.h"\n#include "usbhost_hooks.h"\n#include "usbhost_work.h"\n#include "host/hcd.h"',
                 'uint32_t micros(void);uint64_t clock_us(void);void log_line(const char *s);bool usb_wait_failed(void);',
                 'static bool initialized=true;static void watchdog(void) {}static void os_usb_work(uint64_t b,uint64_t e) {(void)b;(void)e;}',
-                between('static void lg(', 'void usb_irq(void)'),       # log helper, device and configuration callbacks
+                between('static void now_us64(', 'void usb_irq(void)'),       # log helper, device and configuration callbacks
                 between('void tuh_mount_cb', 'bool usb_mounted('),      # mount/unmount, HID callbacks, arm
                 between('void tuh_control_retry_cb', 'void usb_task('), # retry and enumeration log callbacks
                 task]))
