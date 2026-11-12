@@ -50,7 +50,7 @@ void panel_task(const char *state,uint32_t seconds) {
  case 7:case 8:case 10: {
   unsigned stop=pos+128;if(stop>4000)stop=4000;while(pos<stop&&!disabled)datum(frame[pos++]);if(pos<4000)return;
   if(phase==7&&full) {window();cmd(0x26);pos=0;phase=8;return;}
-  if(phase==10) {memcpy(shown,frame,4000);full=false;wait_phase(11,10000);return;}
+  if(phase==10) {memcpy(shown,frame,4000);full=false;cmd(0x10);datum(1);wait_phase(11,10000);return;}
   cmd(0x22);datum(full?0xf7:0xff);cmd(0x20);
   /* Count boot and later refreshes at the successful command trigger, never at scheduling. */
   if(!disabled)eink_note_refresh(full,clock_us());
