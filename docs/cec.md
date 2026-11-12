@@ -106,6 +106,25 @@ What the real block did, read from `ceclog` of a trial boot:
 - Never exercised on this bench: any received frame (`rx 0`), so the RX path (read of the RX words, receive
   clear) and the key events are tested only against the fake chip until a TV is connected.
 
+## A TV that starts late (2026-11-12, Insignia Fire TV)
+
+A Fire TV takes a long time to boot; the Pi is ready at once. On that TV every send in the first 11 s ended with
+no completion at all (`CPU_STATUS` bit 6 never rose, `st 00000002` is only the ignored bit 1), not an ACK or a NACK.
+The driver now never gives up:
+
+- A poll that times out claims the address only tentatively (`cec_sm.tentative`): the register takes it so frames to us are
+  answered, but the claim is checked again (a fresh poll) as soon as any transfer completes. A real NACK is the only proof it is free.
+- While nothing has ever completed (`bus_ok` 0), the whole claim starts again after 2 s, 4 s, 8 s ... up to 30 s apart (registers
+  written again, queue cleared, poll, announce). It stops backing off the moment a frame completes.
+- HPD (HDMI core HOTPLUG, bit 0) is read every pass: a rising edge reads the EDID again (`physical address now ...` and a restart
+  if it changed). If the boot EDID was unreadable, it is retried every 3 s. HPD is only logged and used as a trigger, never as a gate:
+  AUDIO.TXT read hotplug=0 with a working EDID, so the bit's meaning is unverified.
+- A Report Power Status "on" or "standby to on" from the TV while we are the active source repeats Active Source and Menu Status.
+  Request Active Source, Give Physical Address, Give OSD Name and Give Device Power Status were already answered whenever they arrive.
+- CEC.TXT: a `session boot <boot id> hpd N` line, `hotplug rose/fell`, `hpd` on every register line, and a raw `done; c1 c5 st hpd`
+  line for each of the first 16 completed sends. CEC.TXT holds one boot (the file is replaced each save), times are ms since boot.
+  Seconds 600 and later in a log with no TV are the 10-minute idle Standby (`power.c`), not a retry.
+
 ## Limits and things the TV session decides
 
 - The chip is polled from the main loop, not by interrupt. A long SD write or USB install can delay

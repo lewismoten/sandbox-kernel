@@ -14,6 +14,7 @@
 #include "input.h"
 #include "fatput.h"
 #include "os.h"
+#include "bootinfo.h"
 
 #define CM_HSMCTL (PERIPH + 0x101000u + 0x088u) /* same clock manager words hdmi_audio.c reads */
 #define CM_HSMDIV (PERIPH + 0x101000u + 0x08cu)
@@ -69,6 +70,7 @@ static int find_phys(void) {
     return -1;
 }
 
+static int hw_phys(void *c) { (void)c; return find_phys(); }
 static void wake(void *ctx) {(void)ctx;power_input(clock_us());}
 
 void cec_hw_init(void) {
@@ -76,10 +78,18 @@ void cec_hw_init(void) {
     bool hsm_assumed = !hsm;
     if (hsm_assumed) hsm = ASSUMED_HSM_HZ;
     int p = find_phys();
-    drv.rd = hrd; drv.wr = hwr; drv.key = sink; drv.ctx = 0; drv.wake = wake;
+    drv.rd = hrd; drv.wr = hwr; drv.key = sink; drv.ctx = 0; drv.wake = wake; drv.phys = hw_phys;
     cec_drv_init(&drv, (uint16_t)(p >= 0 ? (unsigned)p : ASSUMED_PHYS), hsm, now_ms());
     if (hsm_assumed) cec_log_line(&drv.log, now_ms(), "HSM clock unreadable: assumed 163682000 Hz");
     cec_log_line(&drv.log, now_ms(), p >= 0 ? "physical address from the EDID" : "EDID unreadable: assumed physical address 1.0.0.0");
+    drv.phys_assumed = p < 0; drv.phys_try_ms = now_ms();
+    {   char b[90]; unsigned n = 0; const char *k = "session boot ", *v = bootinfo_this();
+        while (*k) b[n++] = *k++;
+        for (unsigned i = 0; v && v[i] && n < 70; i++) b[n++] = v[i];
+        const char *h = (REG(HDMI_CORE_BASE + CEC_R_HOTPLUG) & CEC_HOTPLUG_CONNECTED) ? " hpd 1" : " hpd 0";
+        while (*h) b[n++] = *h++;
+        b[n] = 0; cec_log_line(&drv.log, now_ms(), b);
+    }
     up = true;
     boot_note("CEC started (CEC.TXT after a TV session; docs/cec.md)");
 }

@@ -14,6 +14,8 @@
 #define CEC_R_CNTRL_5 0x0f8u    /* start-bit thresholds, resets, RX interrupt flag */
 #define CEC_R_TX_DATA 0x0fcu    /* four words: frame byte i is bits 8*(i%4) of word i/4 */
 #define CEC_R_RX_DATA 0x10cu    /* same packing */
+#define CEC_R_HOTPLUG 0x00cu    /* HDMI core HOTPLUG: bit 0 = display connected (unverified on silicon; AUDIO.TXT read 0 with a working EDID) */
+#define CEC_HOTPLUG_CONNECTED 1u
 #define CEC_R_CPU_STATUS 0x340u /* bit 6: a CEC event (TX done or RX frame) */
 #define CEC_R_CPU_CLEAR 0x348u  /* write the bit to clear it */
 #define CEC_R_CPU_MASK_SET 0x350u

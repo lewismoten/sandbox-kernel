@@ -39,6 +39,7 @@ static void say_regs(struct cec_drv *d, uint32_t now, const char *tag) {
         uint32_t v = d->rd(d->ctx, offs[i]); n = put_str(t, n, nm[i]);
         for (int k = 7; k >= 0; k--) t[n++] = hexd[(v >> (4 * k)) & 15u];
     }
+    n = put_str(t, n, " hpd "); t[n++] = (d->rd(d->ctx, CEC_R_HOTPLUG) & CEC_HOTPLUG_CONNECTED) ? '1' : '0';
     t[n] = 0; say(d, now, t);
 }
 
@@ -77,9 +78,33 @@ static void check_regs(struct cec_drv *d, uint32_t now) {
     say(d, now, "registers programmed again");
 }
 
+/* Start the claim over (the registers written again, the queue cleared, a fresh poll). Used when the bus
+ * did not answer, the display's address changed, or an unverified claim can be checked. Never gives up. */
+static void restart_claim(struct cec_drv *d, uint32_t now, const char *why, uint16_t phys) {
+    say(d, now, why);
+    program(d, CEC_ADDR_BROADCAST);
+    d->tx_busy = 0; d->hold = 0; d->tx_id = 0; d->announced = 0; d->bus_ok = 0; d->retry_armed = 0; d->restarts++;
+    cec_sm_init(&d->sm, phys, now);
+    d->last_state = d->sm.state;
+}
+
+/* The display's address may not have been readable at boot (a TV that is still starting), or may change. */
+static void phys_refresh(struct cec_drv *d, uint32_t now, const char *why) {
+    char l[CEC_LOG_LINE]; unsigned n;
+    int p = d->phys ? d->phys(d->ctx) : -1;
+    d->phys_try_ms = now; d->phys_want = 0;
+    if (p < 0) return;
+    if ((uint16_t)p == d->sm.phys && !d->phys_assumed) return;
+    n = put_str(l, 0, "physical address now "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(p >> 8), (uint8_t)p}, 2);
+    n = put_str(l, n, " ("); n = put_str(l, n, why); l[n++] = ')'; l[n] = 0;
+    d->phys_assumed = 0;
+    restart_claim(d, now, l, (uint16_t)p);
+}
+
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms) {
     struct cec_timing t; char l[CEC_LOG_LINE]; unsigned n;
     d->tx_busy = 0; d->hold = 0; d->announced = 0; d->last_ui = 0; d->ui_seen = 0; d->tx_id = 0;
+    d->bus_ok = 0; d->hpd_known = 0; d->phys_want = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
     d->rx_frames = d->tx_frames = d->tx_good = d->tx_bad = d->key_events = d->spurious = 0;
     cec_log_init(&d->log); cec_keys_init(&d->keys);
     n = put_str(l, 0, "init phys "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(phys >> 8), (uint8_t)phys}, 2);
@@ -136,7 +161,8 @@ static void tx_done(struct cec_drv *d, uint32_t now) {
     int poll = d->tx.len == 1, bcast = cec_dest(&d->tx) == CEC_ADDR_BROADCAST && !poll;
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 & ~CEC_C1_START_XMIT);
     if (!good && !poll && !bcast) { clear_rx_off(d); d->hold = 1; d->hold_until_ms = now + CEC_DRV_HOLD_MS; }
-    d->tx_busy = 0; d->tx_frames++;
+    d->tx_busy = 0; d->tx_frames++; d->bus_ok = 1; d->backoff_ms = 0; d->retry_armed = 0;
+    if (d->tx_frames <= 16u) say_regs(d, now, "done;");   /* the raw status of the first sends, to tell a wire problem from a software one */
     if (good) d->tx_good++; else d->tx_bad++;
     char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, poll ? "poll " : "TX ");
     if (!poll) { n = put_dec(l, n, cec_initiator(&d->tx)); l[n++] = '>'; }
@@ -158,7 +184,7 @@ static void rx_frame(struct cec_drv *d, uint32_t now) {
     }
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 | CEC_C1_CLEAR_RECEIVE_OFF);   /* ready for the next frame */
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 & ~CEC_C1_CLEAR_RECEIVE_OFF);
-    d->rx_frames++;
+    d->rx_frames++; d->bus_ok = 1; d->backoff_ms = 0; d->retry_armed = 0;
     if (cec_parse(&m, raw, len)) { say(d, now, "RX bad frame"); return; }
     int op = cec_opcode(&m);
     if(d->wake && d->sm.state==CEC_SM_CLAIMED && cec_initiator(&m)!=CEC_ADDR_BROADCAST) {
@@ -213,10 +239,32 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
             n = put_dec(l, n, cec_dest(&d->tx)); n = put_str(l, n, " timeout"); l[n] = 0; say(d, now, l);
         } else say_regs(d, now, "send timed out;");
         d->tx_busy = 0; d->hold = 1; d->hold_until_ms = now + CEC_DRV_HOLD_MS;
+        if (!d->bus_ok && !d->retry_armed) {                          /* nothing has ever completed: try again later, longer each time */
+            d->backoff_ms = d->backoff_ms ? (d->backoff_ms >= 15000u ? 30000u : d->backoff_ms * 2u) : 2000u;
+            d->retry_ms = now + d->backoff_ms; d->retry_armed = 1;
+        }
         if (!cec_is_poll(&d->tx)) say(d, now, "transmitter reset");
         claimed_check(d, now);
     }
     check_regs(d, now);
+    {   uint8_t h = (d->rd(d->ctx, CEC_R_HOTPLUG) & CEC_HOTPLUG_CONNECTED) ? 1u : 0u;
+        if (!d->hpd_known) { d->hpd_known = 1; d->hpd = h; }
+        else if (h != d->hpd) {
+            say(d, now, h ? "hotplug rose" : "hotplug fell"); d->hpd = h;
+            if (h) { d->hpd_rises++; d->phys_want = 1; }
+        }
+    }
+    if (d->phys && (d->phys_want || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
+        phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
+    if (d->sm.phys != CEC_PHYS_UNKNOWN && d->sm.state != CEC_SM_NO_ADDRESS && !d->tx_busy && !d->sm.inflight) {
+        if (d->bus_ok && d->sm.state == CEC_SM_CLAIMED && d->sm.tentative)
+            restart_claim(d, now, "bus answers now: checking the address again", d->sm.phys);
+        else if (d->retry_armed && !d->bus_ok && !d->sm.qn && (int32_t)(now - d->retry_ms) >= 0) {
+            uint32_t before = d->restarts;
+            if (d->phys) phys_refresh(d, now, "retry");                /* a changed address restarts the claim itself */
+            if (d->restarts == before) restart_claim(d, now, "no answer from the bus: starting again", d->sm.phys);
+        }
+    }
     if ((uint32_t)(now - d->alive_ms) >= CEC_DRV_ALIVE_MS && (d->tx_frames != d->hb_tx || d->rx_frames != d->hb_rx)) {              /* proves in the log that the task is being run */
         char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, "alive tx "); n = put_dec(l, n, d->tx_good); l[n++] = '/'; n = put_dec(l, n, d->tx_frames);
         n = put_str(l, n, " rx "); n = put_dec(l, n, d->rx_frames); l[n] = 0; say(d, now, l); d->hb_tx = d->tx_frames; d->hb_rx = d->rx_frames;
