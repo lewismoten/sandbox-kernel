@@ -33,7 +33,7 @@ struct cec_drv {
     uint8_t bus_ok;               /* some transfer has completed (ACK, NACK or a received frame) since the last claim */
     uint8_t hpd, hpd_known, phys_assumed, phys_want, phys_failed, retry_armed;
     uint32_t backoff_ms, retry_ms, phys_try_ms, restarts, hpd_rises;
-    uint8_t tx_eom_stale, rx_flag_bad, rx_flag_off;  /* flag-based completion/receive detection (see cec_drv.c) */
+    uint8_t tx_eom_stale, rx_flag_bad, rx_flag_off, rx_int_prev, rx_pending, last_raw_len; uint8_t last_raw[16]; uint32_t last_raw_ms, rx_dups;  /* flag-based completion/receive detection (see cec_drv.c) */
     uint32_t flags_sig, flags_ms, rx_flag_ms, rx_via_flags;
     uint32_t reprogrammed;        /* times the registers were found changed and written again */
 };

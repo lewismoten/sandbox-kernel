@@ -13,7 +13,7 @@ struct chip {
     uint32_t r[0x400 / 4];
     int tx_started, c5_resets, rx_resets, clear_pulses;
     uint8_t tx[16]; unsigned tx_len;
-    int sticky_rx; uint8_t sent[CAP][16]; unsigned sent_len[CAP]; unsigned sent_n, lost;
+    int sticky_rx, sticky_int; uint8_t sent[CAP][16]; unsigned sent_len[CAP]; unsigned sent_n, lost;
 };
 static uint32_t crd(void *c, uint32_t o) { return ((struct chip *)c)->r[o / 4]; }
 static void cwr(void *c, uint32_t o, uint32_t v) {
@@ -29,7 +29,7 @@ static void cwr(void *c, uint32_t o, uint32_t v) {
         }
         if ((v & CEC_C1_START_XMIT) && !(old & CEC_C1_START_XMIT)) old &= ~CEC_C1_TX_EOM;   /* a new send clears the end flag */
         if ((v & CEC_C1_CLEAR_RECEIVE_OFF) && !(old & CEC_C1_CLEAR_RECEIVE_OFF)) {          /* the receiver is re-armed */
-            h->clear_pulses++; if (!h->sticky_rx) { old &= ~CEC_C1_RX_EOM; h->r[CEC_R_CNTRL_5 / 4] &= ~CEC_C5_RX_CEC_INT; }
+            h->clear_pulses++; if (!h->sticky_rx) { old &= ~CEC_C1_RX_EOM; if (!h->sticky_int) h->r[CEC_R_CNTRL_5 / 4] &= ~CEC_C5_RX_CEC_INT; }
         }
         h->r[o / 4] = (v & ~ro) | (old & ro); return;
     }
@@ -130,6 +130,16 @@ static void test_timeout(void) {
         assert(drv.sm.state == (good ? CEC_SM_POLL : CEC_SM_CLAIMED));
         assert(chip.c5_resets == 1);
     }
+    /* c5 bit 23 high since before the send (a latched cause): read once at most, then neither a completion nor a timeout reads it as a frame */
+    for (int mode = 0; mode < 2; mode++) {
+        start(0x1000); chip.sticky_int = 1; chip.r[CEC_R_CNTRL_5 / 4] |= CEC_C5_RX_CEC_INT;
+        cec_drv_task(&drv, 1);
+        cec_drv_task(&drv, 40);
+        if (mode) { chip.r[CEC_R_CPU_STATUS / 4] |= CEC_CPU_CEC; finish_tx(&chip, 1); cec_drv_task(&drv, 100); assert(strstr(drv.log.text, "poll 4 ack")); }
+        else { cec_drv_task(&drv, 2100); assert(strstr(drv.log.text, "timeout")); }
+        assert(drv.rx_frames <= 1);                                  /* the one rise is read once, never again */
+        if (!mode) { unsigned f = drv.rx_frames; cec_drv_task(&drv, 2300); cec_drv_task(&drv, 2400); assert(drv.rx_frames == f); }
+    }
 }
 
 static void claim4(void) {
@@ -197,6 +207,23 @@ static void test_flags_without_status_bit(void) {
     claim4(); chip.sticky_rx = 1; inject_quiet(&chip, up, 3);
     for (uint32_t t = 1000; t < 1400; t += 40) cec_drv_task(&drv, t);
     assert(drv.rx_flag_off && drv.rx_frames <= 2 && strstr(drv.log.text, "flag path off"));
+    /* only c5 bit 23 stays high (a latched cause), RX_EOM clears: one frame at most, no key repeats, the path goes off with one log line */
+    claim4(); keys.n = 0; chip.sticky_int = 1; inject_quiet(&chip, up, 3); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;
+    for (uint32_t t = 1000; t < 3000; t += 30) cec_drv_task(&drv, t);
+    unsigned presses = 0; for (unsigned i = 0; i < keys.n; i++) presses += keys.val[i] == 1 || keys.val[i] == 2;
+    assert(drv.rx_frames <= 1 && presses <= 1 && drv.rx_flag_off);
+    { const char *a = strstr(drv.log.text, "flag path off"); assert(a && !strstr(a + 1, "flag path off")); }
+    /* a stale bit 23 beside a finished send is not a received frame, and a send that times out does not replay an old frame */
+    claim4(); chip.sticky_int = 0; chip.r[CEC_R_CNTRL_5 / 4] |= CEC_C5_RX_CEC_INT; chip.r[CEC_R_CPU_STATUS / 4] |= CEC_CPU_CEC;
+    { unsigned f = drv.rx_frames; for (uint32_t t = 100; t < 4000; t += 40) cec_drv_task(&drv, t); assert(drv.rx_frames <= f + 1); }
+    /* the same frame read again within 20 ms is dropped; a repeat 100 ms later is a new press */
+    claim4(); keys.n = 0; inject(&chip, up, 3); cec_drv_task(&drv, 5000); inject(&chip, up, 3); cec_drv_task(&drv, 5010);
+    assert(keys.n == 1 && drv.rx_dups == 1);
+    inject(&chip, up, 3); cec_drv_task(&drv, 5110); assert(keys.n == 2);
+    /* a second init starts clean */
+    drv.rx_flag_off = 1; drv.rx_flag_bad = 5; drv.tx_eom_stale = 1; drv.flags_sig = 7; drv.flags_ms = 9; drv.rx_flag_ms = 9; drv.rx_via_flags = 3; drv.rx_pending = 1;
+    cec_drv_init(&drv, 0x1000, 163682864u, 0);
+    assert(!drv.rx_flag_off && !drv.rx_flag_bad && !drv.tx_eom_stale && !drv.flags_sig && !drv.flags_ms && !drv.rx_flag_ms && !drv.rx_via_flags && !drv.rx_pending);
     /* the normal path logs every received frame raw, key frames too */
     claim4(); inject(&chip, up, 3); cec_drv_task(&drv, 100);
     assert(strstr(drv.log.text, "rx raw 3B 04:44:01 via status"));
