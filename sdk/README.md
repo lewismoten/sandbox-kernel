@@ -1,10 +1,10 @@
 # sandbox-kernel SDK
 
 Headers for programs that run on sandbox-kernel, MIT-licensed. The ABI is the
-**1.11** described in [docs/design.md](../docs/design.md#system-call-abi-current-version-112);
+**1.12** described in [docs/design.md](../docs/design.md#system-call-abi-current-version-112);
 minor versions add compatible features. New to this? Read the
 [OS author's guide](../docs/os-authors.md) first: boot, the program rules, and a table of
-what each ABI minor added (the headers are now at minor 11).
+what each ABI minor added (the headers are now at minor 12).
 
 - `include/sandbox/abi.h`: call numbers, error values, open flags, ioctl IDs and the
   fixed records, with size and offset asserts. Portable C11; no OS headers.

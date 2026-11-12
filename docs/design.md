@@ -119,7 +119,7 @@ This is a POSIX-style source interface, not Linux binary compatibility or full
 POSIX compliance. The MIT SDK supplies C wrappers returning zero or negative
 `SBX_E*` values directly; it does not set libc `errno`. No C++ objects cross the
 boundary. Kernel and SDK declarations are independently checked by layout tests.
-Startup reports major 1/minor 11. Calls 0, 7, 8, 10 and 15 remain unimplemented
+Startup reports major 1/minor 12. Calls 0, 7, 8, 10 and 15 remain unimplemented
 (`ENOSYS`); their proposed records are not a public implemented contract.
 
 For ARM32, execute ARM-state `svc #0` with `r7` = call number, `r0` = pointer to
@@ -169,7 +169,7 @@ error except where a later explicit extension says otherwise.
 
 The SDK wrappers in `sdk/include/sandbox/syscall.h` describe the exact records.
 ABI 1.2 adds framebuffer mode/palette ioctls, 1.7 save scope, 1.8 audio, 1.9
-e-ink, 1.10 serial and 1.11 power holds/timeouts. No implemented `replace` call occupies number 18.
+e-ink, 1.10 serial, 1.11 power holds/timeouts and 1.12 the asleep query. No implemented `replace` call occupies number 18.
 `query` and feature/inventory enumeration remain proposed; inspect startup
 major/minor and handle device errors instead. AArch64 above is a proposed profile.
 
@@ -392,7 +392,7 @@ interaction while implementing a fresh parser and installer:
 
 Current code accepts `PUT2 kernel` (a consumed trial) and `PUT2 host-companion`
 (an idle-slot install without reboot), only for `zero-w-armv6`. `INFO 2` still
-prints the legacy literal `ABI=1.0`; app startup reports 1.11. Current commands,
+prints the legacy literal `ABI=1.0`; app startup reports 1.12. Current commands,
 GET/LS and screen capture framing are in [os-authors.md](os-authors.md#6-developing-over-usb)
 and [serial.md](serial.md). The OS/bundle and confirmed-pair behavior below
 is a **proposal**: current OS files are installed with PUTF, and kernel trial

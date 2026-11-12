@@ -83,6 +83,11 @@ int main(void) {
  fill(1); assert(audio0.ring.underruns == 2);
  audio_dev_close(); fill(2); assert(audio0.ring.underruns == 2);
  assert(audio_dev_open() == 0); fill(3); assert(!audio0.ring.underruns);
+ /* Asleep with an OS that writes nothing: DMA segments are silence, not a glitch storm. */
+ assert(audio_dev_write(&sample, sizeof sample) == 1); audio0.asleep = 1;
+ for (unsigned i = 0; i < 8; i++) fill(i % HDMI_DMA_SEGS);
+ assert(audio0.ring.underruns == 0 && audio0.ring.played == 1);
+ audio0.asleep = 0; audio_dev_close(); assert(audio_dev_open() == 0);
 
  build_ring();
  for (unsigned i = 0; i < HDMI_DMA_SEGS; i++) {
