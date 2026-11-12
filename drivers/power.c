@@ -7,6 +7,7 @@
 #include "input.h"
 #include "fb.h"
 #include "power.h"
+#include "audio_null.h"
 static uint32_t fast_hz,slow_hz,activity,applied,last_target;
 static uint32_t pending,pending_target,pending_mode,uncertain,mode_generation;
 static uint64_t retry_at;
@@ -26,6 +27,7 @@ void power_hw_task(void) {
  uint64_t now=clock_us();
  if(activity!=input_activity) {activity=input_activity;power_input(now);retry_at=0;}
  uint32_t target=power_target(now);
+ audio0.asleep=(target&POWER_NO_BLANK)!=0; /* sound is dropped while the screen is dark (ABI 1.12) */
  if(mode_generation!=fb_mode_generation) {
   mode_generation=fb_mode_generation;
   if((target|applied|pending)&POWER_NO_BLANK) uncertain|=POWER_NO_BLANK;

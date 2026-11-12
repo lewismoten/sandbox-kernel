@@ -397,7 +397,7 @@ the recovery console. **Any other value counts as a fault** (and uses the restar
 ## 4. What is supported, by ABI version
 
 The major version is 1 and the current minor is the `SBX_ABI_MINOR` in
-`sdk/include/sandbox/abi.h:13` (currently **1.11**, also `include/abi.h:8`). Minors only add.
+`sdk/include/sandbox/abi.h:13` (currently **1.12**, also `include/abi.h:8`). Minors only add.
 Every returning syscall returns 0 or a negative errno. `exit` does not return to user
 code; `SYS_EXITED=1` is internal to the supervisor (`core/sys.c:475`, `core/os.c:171`).
 Existing call numbers and record layouts stay compatible. (The first row lists the ABI 1.0 draft
@@ -416,6 +416,7 @@ described in `docs/design.md`.)
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 16,384-frame ring (about 341 ms; `include/audio_ring.h:20`) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. Short drains are filled with silence. HDMI drains the ring when its backend starts; otherwise the null backend silently drains it. No ABI minor was added for this backend or its internal mixer. See the audio rules below and `docs/audio-device.md`. |
 | 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
+| 1.12 | `power_hold` operation 2 (query): the record's `flags` returns what is asleep now (`NO_BLANK`, `NO_SLOWDOWN`), so an OS can stop its sound and synthesis while the screen is blanked. While blanked, `/dev/audio` writes are accepted and dropped. See [sleep and sound](#sleep-and-sound-abi-112). |
 | 1.11 | `power_hold` (call 22, 40 bytes): acquire/release keep-awake tokens. `power_timeouts` (call 23, 32 bytes): set slowdown/blank timeouts. See [idle power](#idle-power-abi-111). |
 
 **Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Hardware-untested:** HDMI audio output on physical sinks and the new e-ink/serial
@@ -505,6 +506,24 @@ immediately for a past deadline (`core/sys.c:379`).
   Both roles use [bounded DWC2 waits](usb-bounded-waits.md); a terminal USB
   timeout requires reboot. CEC claim polls now claim on NACK or timeout, try
   the next address on ACK, and bound transport-error retries ([cec.md](cec.md)).
+
+### Sleep and sound (ABI 1.12)
+
+When the blank timeout passes with no input and no `NO_BLANK` hold, the screen is blanked and
+the kernel does two things for sound. It accepts and **drops** every `/dev/audio` write (the
+call succeeds, nothing is queued, so no stale tail plays at wake and a dry ring counts no
+underruns), which keeps an OS that never looks at power state silent. And call 22 operation 2
+(token and flags zero on entry) returns the `NO_BLANK`/`NO_SLOWDOWN` bits of what is asleep now
+in the record's `flags`. An OS that wants no CPU spent while the screen is dark polls it (cheap,
+no device handle), fades out and stops its synthesis when `NO_BLANK` appears, and resumes when
+it clears (any key, CEC key or USB input clears it). Require `startup->minor >= 12`; an older
+kernel returns EINVAL, treat that as awake. The slowdown bit is information only: sound
+is not touched by the 60-second slowdown.
+
+```c
+uint32_t asleep = 0;
+if (!sbx_power_asleep(&asleep) && (asleep & SBX_POWER_NO_BLANK)) { /* stop synthesis */ }
+```
 
 ### Idle power (ABI 1.11)
 
@@ -765,7 +784,7 @@ it still reads `kernel,no-os` when updates are ready (it never meant "no OS") an
 otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
 
 `INFO 2` is protocol version 2. Its literal `ABI=1.0` is stale and does **not** identify
-the app ABI: startup reports the current major/minor (1.11 on this branch). Gate app
+the app ABI: startup reports the current major/minor (1.12 on this branch). Gate app
 features on startup, never that INFO field (`core/protocol.c:135`, `core/os.c:111`,
 `include/abi.h:8`). INFO also reports `profile=zero-w-armv6`, `capacity=2097152`,
 `active` (slot), `active_generation`, `confirmed`, `pending` (generation, 0 if none),

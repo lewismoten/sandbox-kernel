@@ -217,6 +217,15 @@ static inline int32_t sbx_power_release(uint64_t token) {
   sbx_power_hold_rec r = {SBX_HEADER(sbx_power_hold_rec),0,0,token};
   return sbx_syscall(SBX_CALL_POWER_HOLD,&r,sizeof r);
 }
+/* ABI 1.12. *asleep gets the SBX_POWER_NO_* bits of what the kernel has put to sleep now: NO_BLANK set
+ * means the screen is blanked (stop your sound and synthesis), NO_SLOWDOWN set means the clock is slowed.
+ * Any input clears them. Needs startup->minor >= 12; older kernels return EINVAL. */
+static inline int32_t sbx_power_asleep(uint32_t *asleep) {
+  sbx_power_hold_rec r = {SBX_HEADER(sbx_power_hold_rec),2,0,0};
+  int32_t s=sbx_syscall(SBX_CALL_POWER_HOLD,&r,sizeof r);
+  if(!s) *asleep=(uint32_t)r.flags;
+  return s;
+}
 static inline int32_t sbx_power_timeouts(uint32_t slow_seconds,uint32_t blank_seconds) {
   sbx_power_timeouts_rec r = {SBX_HEADER(sbx_power_timeouts_rec),slow_seconds,blank_seconds};
   return sbx_syscall(SBX_CALL_POWER_TIMEOUTS,&r,sizeof r);
