@@ -14,7 +14,7 @@ The TV test procedure is
 | `drivers/cec_regs.c`, `include/cec_regs.h` | the HDMI core's CEC register offsets and fields; divider and bit-timing words for an HSM clock |
 | `drivers/cec_drv.c` | transport over a read/write pair: programs the block, sends the state machine's frames, handles a received frame or a finished send, cancels a stuck send, logs |
 | `drivers/cec_edid.c` | the physical address from the display's HDMI vendor block in its EDID |
-| `drivers/cec_log.c` | the bounded session log (2 KiB, oldest whole lines dropped) |
+| `drivers/cec_log.c` | the bounded session log (24 KiB: the first 6 KiB of the session always kept, then the newest lines) |
 | `drivers/cec_hw.c` | the real registers (HDMI core at 0x20902000), HSM clock from the clock manager, the EDID from the firmware mailbox, key events into `/dev/input/event0`, `CEC.TXT` |
 
 `tests/test_cec_core.py` and `tests/test_cec_drv.py` build them on the host (set `CEC_SANITIZE=1`
@@ -73,8 +73,8 @@ replacing the older one. No raw CEC syscall or device is exposed.
 ## The log
 
 `cec_log` keeps the session in RAM and `cec_hw` writes it to `/OS/SAVES/KERNEL/CEC.TXT` (the saves
-area, so GMOS and the card tools see a normal file): first write 8 s after CEC initialization, then at most one
-every 30 s and 20 per boot, and never while a USB install is running. It records the init values
+area, so GMOS and the card tools see a normal file): first write 8 s after CEC initialization, then one
+every 10 s for the first 10 minutes and one a minute after that (up to 400 writes), only when something was logged, and never while a USB install is running. It records the init values
 (physical address, HSM clock, divider), every poll and frame sent with `ack` or `nack`, every
 received frame that is not a held key, each new key press (`UI 01 key 103`, or `UI 66 UNMAPPED`
 for a code the map ignores), send timeouts and the claim result. Each line starts with
@@ -124,6 +124,32 @@ The driver now never gives up:
 - CEC.TXT: a `session boot <boot id> hpd N` line, `hotplug rose/fell`, `hpd` on every register line, and a raw `done; c1 c5 st hpd`
   line for each of the first 16 completed sends. CEC.TXT holds one boot (the file is replaced each save), times are ms since boot.
   Seconds 600 and later in a log with no TV are the 10-minute idle Standby (`power.c`), not a retry.
+
+## No receive and no completions (2026-11-12, second Insignia session)
+
+Evidence (`CEC.TXT` of that session; the old 2 KiB log held only the last 15 s of it, which is why its first lines and the
+`session boot` line were gone, and it was written at most every 30 s): sends timed out one after another, one 12-byte
+directed frame completed and was ACKed, `alive tx 3/4 rx 0`, and `c5` read `00CCBCB4` (bit 23, the receive-event flag) at some
+moments while `CPU_STATUS` showed only the ignored bit 1. Linux (rpi-6.6.y `vc4_hdmi.c`, facts only) differs from this driver in two ways:
+it writes the CEC bit to `CPU_MASK_CLEAR` (0x354) when CEC is enabled (the driver never did), and it consumes both TX end and RX
+frames from the one status bit, so a missed bit is a missed frame. Changes, all in `cec_drv.c`:
+
+- the CEC bit is unmasked at every (re)program and every 100 ms check (`CPU_MASK_CLEAR`);
+- besides `CPU_STATUS` bit 6, a send is also seen to end when `c1` bit 31 (TX_EOM) rises after a start that did not already show it,
+  and a frame is read when `c5` bit 23 or `c1` bit 29 (RX_EOM) is set with the status bit clear (not while sending; at most every
+  30 ms; switched off with a log line if the flag survives the receive clear or eight reads in a row give no frame);
+- a send timeout resets the transmitter only (never the receiver) and, if a receive flag is up, reads that frame and re-arms the receiver
+  (`CLEAR_RECEIVE_OFF`) first;
+- the send timeout is 2 s (a 16-byte frame with the block's own retry is over a second on the wire);
+- log: every received frame as `rx raw <n>B <bytes> via status|flags|timeout c1 <word>`, a `flags;` line (c1 c5 st mask hotplug) whenever
+  the status, RX flag, EOM or GOOD bits change (at most every 250 ms), `mk` (CPU_MASK_STATUS), raw HOTPLUG (`hp`) and HOTPLUG_INT (`hi`)
+  on every register line.
+
+Hotplug: the offset 0x00c and bit 0 match Linux (`HDMI_HOTPLUG`, `VC4_HDMI_HOTPLUG_CONNECTED`), so the read is probably not at a wrong
+address; the firmware may drive HDMI without setting it (inferred). `hp` and `hi` in the log show the whole words.
+
+Frames for other addresses (the TV talking to an audio system at 5 with ARC on) are ignored without any send; only directed frames
+for our address and the broadcasts listed above are answered.
 
 ## Limits and things the TV session decides
 

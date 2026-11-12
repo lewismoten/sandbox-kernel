@@ -18,9 +18,14 @@
 #define CEC_HOTPLUG_CONNECTED 1u
 #define CEC_R_CPU_STATUS 0x340u /* bit 6: a CEC event (TX done or RX frame) */
 #define CEC_R_CPU_CLEAR 0x348u  /* write the bit to clear it */
+#define CEC_R_CPU_MASK_STATUS 0x34cu
 #define CEC_R_CPU_MASK_SET 0x350u
+#define CEC_R_CPU_MASK_CLEAR 0x354u /* Linux writes the CEC bit here when it enables CEC (rpi-6.6.y vc4_hdmi.c) */
+#define CEC_R_HOTPLUG_INT 0x008u
 #define CEC_CPU_CEC (1u << 6)
 
+#define CEC_C1_TX_EOM (1u << 31)         /* a send has ended */
+#define CEC_C1_RX_EOM (1u << 29)         /* a frame has been received */
 #define CEC_C1_TX_STATUS_GOOD (1u << 30) /* the frame was acknowledged (it makes one retry itself) */
 #define CEC_C1_REC_WRD_SHIFT 24u         /* received length minus 1, 4 bits */
 #define CEC_C1_REC_WRD_MASK (0xfu << 24)
