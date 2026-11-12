@@ -65,7 +65,11 @@ void panel_task(const char *state,uint32_t seconds) {
   wait_phase(9,0);return;
  }
  case 11:if(!expired(since,delay))return;phase=0;return;
- case 12:if(!expired(since,1000))return;gpio_set(17,true);cmd(0x3c);datum(0x80);setup();cmd(0x24);pos=0;phase=7;return;
+ case 12:if(!expired(since,1000))return;gpio_set(17,true);wait_phase(13,20000);return; /* reset released: the controller wakes from deep sleep */
+ case 13: /* BUSY stays high while it wakes: no command until it falls (after the 20 ms settle the cold boot also waits) */
+  if(!expired(since,delay))return;
+  if(gpio_get(24)) {if(expired(since,5000000)) disable("Panel BUSY timeout");return;}
+  cmd(0x3c);datum(0x80);setup();cmd(0x24);pos=0;phase=7;return;
  default:break;
  }
  if(phase)return;

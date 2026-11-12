@@ -68,6 +68,21 @@ class Panel(SupervisorBase):
         self.assertTrue(self.c.panel_snapshot(plane))
         self.assertEqual(plane.raw, sent)  # failed/new desired plane never replaces sent data
 
+    def test_second_refresh_after_deep_sleep_waits_for_wake(self):
+        self.c.panel_probe_busy_commands.restype = C.c_uint
+        self.c.panel_probe_wakes.restype = C.c_uint
+        self.boot()
+        page = bytearray(eink.PAGE)
+        for i in range(3):  # three updates in a row, each waking the sleeping controller
+            self.jump(self.c.clock_us()+3_000_000)
+            page[0] = 0x80 if i & 1 else 0x40
+            self.assertEqual(self.c.eink_page(bytes(page), len(page), C.c_uint64(self.c.clock_us())), 0)
+            self.pump()
+            self.assertGreaterEqual(self.c.panel_probe_partial_count(), i+1)
+        self.assertGreaterEqual(self.c.panel_probe_wakes(), 3)
+        self.assertEqual(self.c.panel_probe_busy_commands(), 0)  # no write reached the controller during sleep or wake BUSY
+        self.assertFalse(self.c.panel_probe_disabled())
+
     def test_boot_full_command_spacing(self):
         self.boot()
         page = bytearray(eink.PAGE)
