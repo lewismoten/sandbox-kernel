@@ -15,6 +15,8 @@ void usblog_add_critical(const char *line); /* retain a terminal fault even afte
 void usblog_add(const char *line);            /* appends line + '\n' */
 const char *usblog_text(uint32_t *bytes);
 uint32_t usblog_version(void);                /* changes whenever text is added */
+/* Writes "<ms> " (ms = whole milliseconds of the 64-bit microsecond clock hi:lo, decimal, no 64-bit divide helper) and returns its length; out holds 22 bytes. */
+unsigned usblog_stamp(char *out,uint32_t hi,uint32_t lo);
 /* One line each, built from numbers (speed is "LS", "FS" or "HS"; hub 0 = the OTG port itself). */
 void usblog_fmt_device(char *out,uint8_t daddr,uint8_t hub,uint8_t port,const char *speed,bool split,
                        uint16_t vid,uint16_t pid,uint8_t cls,uint8_t sub,uint8_t proto,uint8_t ep0);

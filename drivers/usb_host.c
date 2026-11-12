@@ -16,11 +16,18 @@ static const char *init_fail="unavailable";
 /* USB.TXT (core/usblog.c): each device as TinyUSB reads it, then what the kernel did with it. */
 /* Every USB.TXT line from this driver starts with the milliseconds since boot ("12345 "), so a stall
  * during enumeration can be placed on the timeline (the log had no times before). */
+static void now_us64(uint32_t *hi,uint32_t *lo) {
+#ifdef HOST_TEST
+ *hi=0;*lo=micros();
+#else
+ /* The system timer's high word (CHI) extends micros() (CLO) past its 71.6 minute wrap; reread if CHI changed between the reads. */
+ uint32_t h,l;do{h=REG(PERIPH+0x3008);l=REG(PERIPH+0x3004);}while(h!=REG(PERIPH+0x3008));
+ *hi=h;*lo=l;
+#endif
+}
 static void lg(const char *l) {
- char t[USBLOG_LINE];unsigned a=0,k=0;char d[11];uint32_t ms=micros()/1000u;
- do{d[k++]=(char)('0'+ms%10);ms/=10;}while(k<10&&ms);
- while(k) t[a++]=d[--k];
- t[a++]=' ';
+ char t[USBLOG_LINE];unsigned a;uint32_t hi,lo;
+ now_us64(&hi,&lo);a=usblog_stamp(t,hi,lo);
  for(;*l&&a<USBLOG_LINE-1;l++) t[a++]=*l;
  t[a]=0;usblog_add(t);
 }

@@ -22,6 +22,14 @@ int main(void) {
  usblog_fmt_poll_retry(l,5,3,0,"exhausted: reset");assert(!strcmp(l,"hub5 poll exhausted: reset retry=3"));
  usblog_fmt_poll_retry(l,5,2,0,"recovered");assert(!strcmp(l,"hub5 poll recovered retry=2"));
  usblog_fmt_port_retry(l,0,0,1,"reset retry");assert(!strcmp(l,"hub0 port0 enum reset retry 1/2"));
+ /* The stamp is milliseconds of the 64-bit microsecond clock, across the 2^32 us wrap (71.6 min). */
+ usblog_stamp(l,0,0);assert(!strcmp(l,"0 "));
+ usblog_stamp(l,0,4294967295u);assert(!strcmp(l,"4294967 "));
+ usblog_stamp(l,1,0);assert(!strcmp(l,"4294967 "));
+ usblog_stamp(l,1,704u);assert(!strcmp(l,"4294968 "));
+ usblog_stamp(l,1,705032704u);assert(!strcmp(l,"5000000 "));
+ usblog_stamp(l,0xFFFFFFFFu,0xFFFFFFFFu);assert(!strcmp(l,"18446744073709551 "));
+ assert(usblog_stamp(l,0,12345000u)==6);
  usblog_clear();assert(usblog_version()>0);uint32_t v=usblog_version();
  usblog_add("one");usblog_add("two\nthree");assert(usblog_version()!=v);
  assert(!strcmp(usblog_text(&n),"one\ntwo three\n")&&n==14);

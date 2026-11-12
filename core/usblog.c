@@ -88,3 +88,21 @@ void usblog_fmt_poll_retry(char *out,uint8_t hub,unsigned retry,unsigned delay_m
  offset=put(out,offset," retry=");offset=dec(out,offset,retry);
  if(delay_ms){offset=put(out,offset," wait=");offset=dec(out,offset,delay_ms);(void)put(out,offset,"ms");}
 }
+
+/* Long division of the 64-bit hi:lo by 10 or 1000 with shifts and subtracts only: ARMv6 has no 64-bit divide helper in the kernel link. */
+static uint32_t div_small(uint32_t *hi,uint32_t *lo,uint32_t d) {
+ uint32_t r=0,qh=0,ql=0;
+ for(int i=63;i>=0;i--) {
+  uint32_t bit=i>=32?(*hi>>(i-32))&1u:(*lo>>i)&1u;
+  r=(r<<1)|bit;
+  if(r>=d) {r-=d;if(i>=32) qh|=1u<<(i-32); else ql|=1u<<i;}
+ }
+ *hi=qh;*lo=ql;return r;
+}
+unsigned usblog_stamp(char *out,uint32_t hi,uint32_t lo) {
+ char d[21];unsigned k=0,a=0;
+ div_small(&hi,&lo,1000u);
+ do {d[k++]=(char)('0'+div_small(&hi,&lo,10u));} while(hi||lo);
+ while(k) out[a++]=d[--k];
+ out[a++]=' ';out[a]=0;return a;
+}
