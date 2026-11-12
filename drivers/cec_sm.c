@@ -28,8 +28,15 @@ static void menu_active(struct cec_sm *s) { /* a menu-providing active source te
     push(s, &m);
 }
 
+/* The TV says it is on (or going on): a TV that booted after our announcement missed it, so say it again. */
+static void tv_power(struct cec_sm *s, unsigned from, const struct cec_msg *m) {
+    if (from != CEC_ADDR_TV || cec_nparams(m) < 1 || !s->active) return;
+    uint8_t st = cec_params(m)[0];
+    if ((st == CEC_POWER_ON || st == 2u) && s->qn + 3u <= CEC_SM_QUEUE) { active_source(s); menu_active(s); }
+}
+
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
-    s->phys = phys; s->laddr = CEC_ADDR_BROADCAST; s->cand = 0; s->active = 0;
+    s->phys = phys; s->laddr = CEC_ADDR_BROADCAST; s->cand = 0; s->active = 0; s->tentative = 0;
     s->poll_retries = 0;
     s->ui_code = 0; s->inflight = 0; s->inflight_retry = 0; s->retry_next = 0;
     s->tx_id = 0; s->tx_start_ms = 0; s->now_ms = now_ms; s->qn = 0;
@@ -66,6 +73,7 @@ void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result resu
         } else if (result == CEC_SM_TX_NACK || result == CEC_SM_TX_TIMEOUT) { /* no ACK: free */
             struct cec_msg m;
             s->laddr = cands[s->cand]; s->state = CEC_SM_CLAIMED;
+            s->tentative = result == CEC_SM_TX_TIMEOUT; /* a timeout is no answer: the bus may not have been ready */
             report(s);
             cec_build_set_osd_name(&m, s->laddr, CEC_ADDR_TV, CEC_SM_OSD_NAME); /* directed: the spec has no broadcast */
             push(s, &m);
@@ -111,6 +119,7 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
     if (from == CEC_ADDR_BROADCAST) return CEC_SM_EV_NONE;
     if (cec_is_broadcast(m)) {
         if (op == CEC_OP_REQUEST_ACTIVE_SOURCE) { if (s->active) active_source(s); }
+        else if (op == CEC_OP_REPORT_POWER_STATUS) tv_power(s, from, m);
         else if (op == CEC_OP_SET_STREAM_PATH && cec_nparams(m) >= 2) {
             const uint8_t *p = cec_params(m);
             if (((uint16_t)(p[0] << 8 | p[1])) == s->phys) { s->active = 1; active_source(s); menu_active(s); }
@@ -135,6 +144,7 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
         cec_build_device_vendor_id(&r, s->laddr, CEC_VENDOR_UNKNOWN); push(s, &r); break;
     case CEC_OP_MENU_REQUEST:                        /* "activated": the TV keeps sending us the remote's keys */
         cec_build_menu_status(&r, s->laddr, from, CEC_MENU_ACTIVATED); push(s, &r); break;
+    case CEC_OP_REPORT_POWER_STATUS: tv_power(s, from, m); break;
     case CEC_OP_FEATURE_ABORT: break;                /* never abort an abort */
     default:                                         /* Give Device Vendor ID and the rest */
         cec_build_feature_abort(&r, s->laddr, from, (uint8_t)op, CEC_ABORT_UNRECOGNIZED); push(s, &r);

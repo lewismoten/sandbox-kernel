@@ -232,6 +232,39 @@ static void test_power(void) {
  drv.sm.qn=CEC_SM_QUEUE;assert(cec_sm_standby(&drv.sm)==-1);
 }
 
+/* A TV that is off at boot, starts 60 s later, raises HPD, and at first NACKs directed frames (still starting). */
+static unsigned tv_phys_calls;
+static int late_phys(void *c) { (void)c; tv_phys_calls++; return chip.r[CEC_R_HOTPLUG / 4] ? 0x2100 : -1; }
+static int sent_has(const uint8_t *e, unsigned n) {
+    for (unsigned i = 0; i < chip.sent_n; i++) if (chip.sent_len[i] == n && !memcmp(chip.sent[i], e, n)) return 1;
+    return 0;
+}
+static void test_late_tv(void) {
+    start(0x1000); drv.phys = late_phys; drv.phys_assumed = 1; tv_phys_calls = 0;
+    unsigned before_up = 0, claimed_ms = 0;
+    for (uint32_t t = 1; t <= 90000u; t += 20u) {
+        if (t >= 60000u && !chip.r[CEC_R_HOTPLUG / 4]) { before_up = chip.sent_n; chip.r[CEC_R_HOTPLUG / 4] = 1; }
+        cec_drv_task(&drv, t);
+        if (chip.tx_started && t >= 60500u) {                      /* the bus works from 60.5 s */
+            int to_tv = (chip.tx[0] & 15u) == 0;
+            finish_tx(&chip, to_tv ? (t >= 63000u) : (chip.tx_len > 1));   /* directed to the TV: NACK until 63 s; polls free */
+        }
+        if (!claimed_ms && drv.sm.state == CEC_SM_CLAIMED && !drv.sm.tentative && drv.bus_ok) claimed_ms = t;
+    }
+    assert(before_up >= 4);                                          /* it kept trying while the TV was dark, not for 11 s only */
+    assert(drv.restarts >= 3 && drv.backoff_ms <= 30000u);
+    assert(claimed_ms >= 60500u && claimed_ms < 66000u);            /* a verified claim within seconds of the bus working */
+    assert(drv.sm.phys == 0x2100 && !drv.phys_assumed && drv.hpd_rises == 1);
+    assert(sent_has((uint8_t[]){0x4F, 0x84, 0x21, 0x00, 0x04}, 5)); /* Report Physical Address with the address read late */
+    assert(sent_has((uint8_t[]){0x4F, 0x82, 0x21, 0x00}, 4));       /* Active Source */
+    assert(strstr(drv.log.text, "hotplug rose") && strstr(drv.log.text, "done; c1") && strstr(drv.log.text, " hpd "));
+    /* the TV reports it is on later (it booted after our announcement): announce again */
+    unsigned n = chip.sent_n;
+    inject(&chip, (uint8_t[]){0x0F, 0x90, 0x00}, 3); cec_drv_task(&drv, 90020);
+    for (uint32_t t = 90040; t < 90400; t += 20) { cec_drv_task(&drv, t); if (chip.tx_started) finish_tx(&chip, 1); }
+    assert(chip.sent_n >= n + 2 && chip.sent_len[n] == 4 && chip.sent[n][1] == 0x82);
+}
+
 int main(void) {
     test_power();
     test_timing_and_claim(); puts("PASS timing and claim");
@@ -240,5 +273,6 @@ int main(void) {
     test_rx_keys_and_replies(); puts("PASS rx, keys, replies");
     test_registers_wiped(); puts("PASS registers wiped and rewritten");
     test_edid_log_timing(); puts("PASS edid, log, timing");
+    test_late_tv(); puts("PASS TV that appears 60 s late");
     return 0;
 }

@@ -22,6 +22,7 @@ struct cec_sm {
     uint8_t cand;                  /* index into the 4/8/11 candidates */
     uint8_t poll_retries;          /* uncertain outcomes for this candidate */
     uint8_t active;                /* we are the active source */
+    uint8_t tentative;             /* claimed after a poll that never finished (bus not ready): unverified */
     uint8_t ui_code;               /* operand of the last Pressed */
     uint8_t inflight;              /* a frame is out for sending */
     uint8_t inflight_retry;        /* it was already retried */

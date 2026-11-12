@@ -14,6 +14,7 @@ struct cec_drv {
     void (*wr)(void *ctx, uint32_t off, uint32_t v);
     void (*key)(void *ctx, uint16_t code, uint8_t value); /* value 0 up, 1 down, 2 repeat */
     void (*wake)(void *ctx); /* accepted button / display activation */
+    int (*phys)(void *ctx);  /* optional: read the display's physical address again (EDID); -1 if unreadable */
     void *ctx;
     struct cec_sm sm;
     struct cec_keys keys;
@@ -29,6 +30,9 @@ struct cec_drv {
     uint32_t hb_tx, hb_rx;
     uint32_t alive_ms;            /* last heartbeat line */
     uint32_t check_ms;            /* last register check */
+    uint8_t bus_ok;               /* some transfer has completed (ACK, NACK or a received frame) since the last claim */
+    uint8_t hpd, hpd_known, phys_assumed, phys_want, retry_armed;
+    uint32_t backoff_ms, retry_ms, phys_try_ms, restarts, hpd_rises;
     uint32_t reprogrammed;        /* times the registers were found changed and written again */
 };
 
