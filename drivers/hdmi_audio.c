@@ -11,6 +11,7 @@
 #include "mixer.h"
 #include "audio_diag.h"
 #include "audio_rot.h"
+#include "audio_stall.h"
 #include "bootinfo.h"
 #include "fatput.h"
 #include "os.h"
@@ -39,6 +40,7 @@ static volatile uint32_t completions; /* single writer: segment-complete IRQ */
 static uint32_t last_completed, segs_played, starved, started_us, errors, tones;
 static uint32_t last_progress_us;
 static int stalled;
+static struct audio_stall stall_watch;
 static struct hdmi_audio_clocks clk;
 static const char *why = "not tried";
 /* Never busy-wait for a TV to wake. Initial retry is after ~15 60-Hz frames,
@@ -332,6 +334,21 @@ void hdmi_audio_poll(void) {
  save_diagnostics();
  if (!expired(poll_since, 100000u)) return;
  poll_since = micros();
+ if (hw.active) { /* DMA stopped completing segments: log it and fall back to the null drain, never wedge */
+  uint32_t comp = completions;
+  if (audio_stall_check(&stall_watch, micros(), comp, AUDIO_STALL_US)) {
+   struct audio_stall_info si = { audio_ring_queued(&audio0.ring), audio_ring_free(&audio0.ring),
+    dma_cb_index(dma(DMA_CONBLK), bus(cbs), HDMI_DMA_SEGS), comp, observed.pixel_used, clk.n, clk.cts, observed.pixel_src };
+   char sl[AUDIO_LOG_LINE]; audio_stall_line(sl, sizeof sl, &si);
+   REG(PERIPH + 0xb21cu) = 1u << (16u + (uint32_t)hw.ch); barrier();
+   dmaw(DMA_CS, 0x80000000u);
+   hd(HD_MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
+   hw.active = 0; audio_hw.task = 0; audio_hw.tone = 0; audio0.clocked = 0;
+   why = "DMA stalled"; window_attempts = RETRY_WINDOW; /* no retry until a link edge */
+   audio_diag_line(&diagnostics, timestamp(), sl); record_decision();
+   return;
+  }
+ } else audio_stall_reset(&stall_watch);
  uint32_t link = link_state();
  if (link != last_link) {
   last_link = link;

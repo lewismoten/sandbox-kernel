@@ -111,6 +111,15 @@ class AudioDev(m1.CallsBase):
         self.tick(1_000)  # 48 frames out; room again
         self.assertEqual(self.write(fd, 48), (0, 192))
 
+    def test_full_ring_write_returns_quickly(self):
+        import time
+        fd = self.start()
+        self.fill(fd, FRAMES)  # ring full, no drain: a stalled consumer looks like this
+        t0 = time.monotonic()
+        for _ in range(2000):
+            self.assertEqual(self.write(fd, 448)[0], -EAGAIN)  # never blocks, never loops
+        self.assertLess((time.monotonic() - t0) / 2000, 0.020)
+
     def test_close_while_playing_drops_queue(self):
         fd = self.start()
         self.fill(fd, 2000)

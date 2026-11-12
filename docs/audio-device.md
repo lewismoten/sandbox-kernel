@@ -23,6 +23,13 @@ and recovery qualification remain hardware-untested. See [design.md](design.md).
   segments to packed IEC 958 silence; it never consumes the application ring.
   Missed ring drains and their underruns are accounted when the task resumes.
   Ring underruns do not count before the first write of an open, or while closed.
+
+- **Stalled DMA:** if the HDMI DMA completes no segment for 250 ms (`AUDIO_STALL_US`,
+  `core/audio_stall.c`), the driver stops it, writes an `audio_stall` line to AUDIO.TXT
+  (ring queued and free, DMA segment, completions, `pixel_source`, `pixel_used_hz`, N, CTS),
+  and the null drain takes over so `/dev/audio` keeps draining. It does not retry until the
+  next HDMI link edge. The write ABI is unchanged: it never blocks; a full ring is a short
+  count or `EAGAIN`, so a caller must treat that as "try next frame", never loop on it.
 - **Overrun:** the ring never overwrites unread audio. A write that does not
   fit is cut at the last whole frame that fits; each refused write adds one to
   `overruns` and its refused frames to `overrun_frames`. The app sees the short count.
