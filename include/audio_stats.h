@@ -24,7 +24,7 @@ void audio_stats_begin(struct audio_stats *s, uint32_t now_us, uint32_t comp);
 void audio_stats_sample(struct audio_stats *s, uint32_t now_us, uint32_t pos, uint32_t ring_bytes,
                         uint32_t mai, uint32_t dbg, uint32_t cs);
 int audio_stats_due(const struct audio_stats *s, uint32_t now_us);
-struct audio_stats_ctx { uint32_t comp, poll_mode, ring_queued, ring_underruns, mai_now, dma_cs; };
+struct audio_stats_ctx { uint32_t comp, poll_mode, ring_queued, ring_underruns, mai_now, dma_cs, stall_silence; };
 /* Two lines (each under 190 bytes), then the window restarts. Line 1 starts
  * "stat rate", line 2 "stat flags". Returns line 1's length; line 2 goes to out2. */
 size_t audio_stats_lines(struct audio_stats *s, uint32_t now_us, const struct audio_stats_ctx *c,

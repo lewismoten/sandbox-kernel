@@ -52,7 +52,7 @@ size_t audio_stats_lines(struct audio_stats *s, uint32_t now_us, const struct au
     put(&p, e, " (48 kHz stereo=384000)"); num(&p, e, " frames_s=", bps / 8u);
     num(&p, e, " segs=", c->comp - s->comp0); put(&p, e, c->poll_mode ? " dma_detect=poll" : " dma_detect=irq");
     num(&p, e, " fg_gap_max_ms=", s->max_gap_us / 1000u); num(&p, e, " gaps_over_32ms=", s->big_gaps);
-    num(&p, e, " pos_bad=", s->pos_bad); *p = 0; size_t n1 = (size_t)(p - o1);
+    num(&p, e, " pos_bad=", s->pos_bad); num(&p, e, " stall_silence=", c->stall_silence); *p = 0; size_t n1 = (size_t)(p - o1);
     p = o2; e = o2 + cap2 - 1;
     put(&p, e, "stat flags"); num(&p, e, " looks=", s->samples);
     num(&p, e, " empty=", s->empty); num(&p, e, " full=", s->full); num(&p, e, " busy=", s->busy);

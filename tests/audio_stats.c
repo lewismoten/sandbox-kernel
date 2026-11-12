@@ -16,10 +16,10 @@ int main(void) {
         audio_stats_sample(&s, t, pos, ring, i == 7 ? MAI_CTL_ERRORE | MAI_CTL_EMPTY : MAI_CTL_FULL, i == 9 ? 2u : 0, 0);
     }
     assert(audio_stats_due(&s, t));
-    struct audio_stats_ctx c = {725, 1, 16384, 3, 0x1234, 0x1};
+    struct audio_stats_ctx c = {725, 1, 16384, 3, 0x1234, 0x1, 2};
     char a[192], b[192]; audio_stats_lines(&s, t, &c, a, sizeof a, b, sizeof b);
     assert(strstr(a, "stat rate dt_ms=5000 bytes_s=383923 ")); /* the first look only sets the base */
-    assert(strstr(a, "frames_s=47990 segs=625 dma_detect=poll fg_gap_max_ms=1 gaps_over_32ms=0 pos_bad=0"));
+    assert(strstr(a, "frames_s=47990 segs=625 dma_detect=poll fg_gap_max_ms=1 gaps_over_32ms=0 pos_bad=0 stall_silence=2"));
     assert(strstr(b, "stat flags looks=5000 empty=1 full=4999 busy=0 underflow=1 overflow=0 dlate=0 dbg_fifo=1"));
     assert(strstr(b, "cs=0x0001 mai=0x1234 ring_queued=16384 ring_underruns=3"));
     assert(!audio_stats_due(&s, t)); /* window restarted */
