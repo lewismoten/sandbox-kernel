@@ -50,5 +50,7 @@ int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *nex
 #define FATLOG_MAXSEC (FATLOG_CEC_CAP/512u)
 int fatlog_set(unsigned id,const uint8_t *data,uint32_t bytes);
 int fatlog_pump(void);
+void fatlog_forget(void); /* a path that removes, moves or replaces files calls this: the next pump looks the log up again */
+#define FATLOG_RETRY_PASSES 20000u /* main-loop passes to wait after 3 failed tries (the text is kept) */
 bool fatlog_pending(unsigned id);
 uint32_t fatlog_writes(void);

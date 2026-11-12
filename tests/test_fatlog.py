@@ -85,3 +85,48 @@ class FatLog(InstallBase):
                 self.assertTrue(len(got) >= len(old))
                 for n, d in self.before.items(): self.assertEqual(self.read('/' + n), d)
                 r = fsck(self.disk, self.work); self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def entry(self, name11):
+        """Offset of a directory entry's 32 bytes in the disk image (the first whole-name match)."""
+        self.c.close_disk(); self.addCleanup(lambda: None)
+        with open(self.disk, 'rb') as f: i = f.read().find(name11)
+        self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+        self.assertGreater(i, 0); return i
+
+    def patch(self, off, b):
+        self.c.close_disk()
+        with open(self.disk, 'r+b') as f: f.seek(off); f.write(b)
+        self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+
+    def test_replaced_log_never_lets_the_pump_write_into_another_files_clusters(self):
+        self.set(self.lines(900)[:24000]); self.drain()
+        self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatsave_put(b'KERNEL', b'CEC.TXT', b'small\n', 6), 0)   # an app's save replaces the log's clusters
+        other = bytes((i * 7 + 3) & 255 for i in range(24576))                        # a new file takes the freed clusters
+        self.assertEqual(self.c.fatput(b'GAMES/DICE/DICE.BIN', other, len(other)), 0)
+        self.assertEqual(self.read('/GAMES/DICE/DICE.BIN'), other)
+        self.set(self.lines(50, b'after')); self.drain()
+        self.assertEqual(self.read('/GAMES/DICE/DICE.BIN'), other)
+        self.assertEqual(self.read(LOG).rstrip(b'\0'), self.lines(50, b'after'))
+        r = fsck(self.disk, self.work); self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_a_changed_directory_entry_is_noticed_even_without_a_forget_call(self):
+        self.set(self.lines(900)[:24000]); self.drain()
+        off = self.entry(b'CEC     TXT')
+        self.patch(off + 28, b'\0\0\0\0')                     # another writer changed the size behind the pump's back
+        self.set(self.lines(30, b'again')); w = self.c.write_count()
+        self.assertEqual(self.c.fatlog_pump(), 1)
+        self.drain()
+        self.assertEqual(self.read(LOG).rstrip(b'\0'), self.lines(30, b'again'))   # (the leaked old chain is why there is no fsck here)
+
+    def test_a_chain_shared_with_another_name_is_refused(self):
+        other = bytes((i * 5 + 1) & 255 for i in range(24576))
+        self.assertEqual(self.c.fatput(b'GAMES/DICE/DICE.BIN', other, len(other)), 0)
+        self.set(self.lines(10)); self.drain()
+        with open(self.disk, 'rb') as f: data = f.read()
+        a = data.find(b'CEC     TXT'); b = data.find(b'DICE    BIN'); self.assertGreater(a, 0); self.assertGreater(b, 0)
+        self.patch(b + 20, data[a + 20:a + 22]); self.patch(b + 26, data[a + 26:a + 28])   # DICE.BIN now starts on the log's chain
+        before = self.read('/GAMES/DICE/DICE.BIN'); self.c.fatlog_forget()
+        self.set(self.lines(20, b'zzz')); res = [self.c.fatlog_pump() for _ in range(5)]
+        self.assertTrue(any(r < 0 for r in res), res)
+        self.assertEqual(self.read('/GAMES/DICE/DICE.BIN'), before)
