@@ -99,7 +99,7 @@ int main(void) {
             subprocess.run(['cc', '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',
                             '-Iinclude', '-I' + str(directory), 'tests/hdmi_startup.c',
                             'core/audio_ring.c', 'core/audio_null.c', 'core/mixer.c',
-                            'core/iec958.c', 'core/hdmi_audio_plan.c', 'core/audio_diag.c', 'core/audio_rot.c', 'core/audio_stall.c', '-o', str(executable)],
+                            'core/iec958.c', 'core/hdmi_audio_plan.c', 'core/audio_diag.c', 'core/audio_rot.c', 'core/audio_stall.c', 'core/audio_stats.c', '-o', str(executable)],
                            cwd=ROOT, check=True)
             subprocess.run([str(executable)], check=True, timeout=60)
 

@@ -281,6 +281,14 @@ int main(void) {
  hdmi_audio_edid(1, edid); now += 1000000; hdmi_audio_poll();
  assert(strstr(saved, "edid_block=1 cta_basic_audio=1\n"));
  assert(strstr(saved, "edid_block=1 audio_data_block=090707\n"));
+ /* Active audio logs two "stat" lines every 5 s and clears sticky MAI flags it saw. */
+ reset(0); pixel_hz = 148500000; assert(hdmi_audio_init() == 0 && hw.active);
+ for (unsigned i = 0; i < 7000; i++) {
+  write_count = 0; if (i == 3) hd_regs[HD_MAI_CTL / 4] = MAI_CTL_ERRORE | MAI_CTL_EMPTY;
+  else hd_regs[HD_MAI_CTL / 4] &= ~(MAI_CTL_ERRORE | MAI_CTL_DLATE | MAI_CTL_ERRORF); /* write-one-to-clear */
+  completions += (i % 8 == 0); dma_regs[3] = 0xc0200000u + (i * 384u) % 12288u; hdmi_audio_poll(); }
+ assert(strstr(diagnostics.text, " stat rate dt_ms=") && strstr(diagnostics.text, " stat flags looks="));
+ assert(strstr(diagnostics.text, "underflow=1 "));
  puts("hdmi startup ok");
  return 0;
 }

@@ -206,3 +206,11 @@ The corrected startup is host-tested, not yet validated on the failing TV/monito
 Sources: BCM2835 ARM Peripherals datasheet (DMA); Linux `vc4_hdmi.c`, `vc4_hdmi_regs.h`,
 `vc4_regs.h` read for register offsets, bit positions and step order only (GPL, nothing copied);
 HDMI 1.4b and CEA-861.
+
+## Periodic health lines in AUDIO.TXT
+
+While HDMI audio runs, the driver adds two `stat` lines every 5 s (`core/audio_stats.c`): `stat rate`
+(bytes the DMA really consumed per second against 384000 for 48 kHz stereo, segments, foreground gap
+maximum) and `stat flags` (MAI_CTL EMPTY/FULL looks, underflow/overflow/DLATE events, DMA DEBUG error
+bits, CS, ring queue). The MAI flags are write-one-to-clear and are cleared after each look. Older
+`stat` lines are retired first, so the boot lines survive; saves after the eighth are 30 s apart.

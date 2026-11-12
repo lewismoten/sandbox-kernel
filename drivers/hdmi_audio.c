@@ -12,6 +12,7 @@
 #include "audio_diag.h"
 #include "audio_rot.h"
 #include "audio_stall.h"
+#include "audio_stats.h"
 #include "bootinfo.h"
 #include "fatput.h"
 #include "os.h"
@@ -22,6 +23,7 @@
 #define CM_HSMDIV (PERIPH + 0x101000u + 0x08cu)
 #define DMA_CS 0x00u
 #define DMA_CONBLK 0x04u
+#define DMA_SOURCE_AD 0x0cu /* BCM2835 datasheet: DMA source address now (read only) */
 #define DMA_DEBUG 0x20u
 #define TONE_VOL 26u /* Q8: about 10% of full scale */
 #define RATE 48000u
@@ -44,6 +46,8 @@ static uint32_t last_completed, segs_played, starved, started_us, errors, tones;
 static uint32_t last_progress_us;
 static int stalled;
 static struct audio_stall stall_watch;
+static struct audio_stats stats;
+static uint32_t stats_look_us;
 static struct hdmi_audio_clocks clk;
 static const char *why = "not tried";
 /* Never busy-wait for a TV to wake. Initial retry is after ~15 60-Hz frames,
@@ -52,7 +56,7 @@ static const char *why = "not tried";
 #define RETRY_FIRST_US 250000u
 #define RETRY_EVERY_US 500000u
 #define RETRY_WINDOW 12u
-#define AUDIO_SAVE_MAX 20u
+#define AUDIO_SAVE_MAX 400u /* the first 8 saves are 1 s apart, later ones 30 s (stat lines) */
 static struct audio_diag diagnostics;
 static struct audio_observation observed;
 static uint32_t attempts, window_attempts, retry_since, retry_delay;
@@ -84,7 +88,7 @@ static void save_diagnostics(void) {
  if (link_state() & 1u) display_seen = 1;
  /* A link boot (Mac attached) with no display must not replace the display boot's record. */
  if (!audio_rot_should_write(bootinfo_this(), display_seen)) return;
- if (saves && !expired(save_since, 1000000u)) return;
+ if (saves && !expired(save_since, saves < 8u ? 1000000u : 30000000u)) return;
  save_since = micros(); saves++;
  static uint8_t out[AUDIO_LOG_BYTES + 80];
  if (!rotated) { /* first write of this boot: keep the last three boots (AUDIO.TXT, .1, .2) */
@@ -326,6 +330,7 @@ int hdmi_audio_init(void) {
  dmaw(DMA_DEBUG, 7u);
  dmaw(DMA_CONBLK, bus(cbs));
  started_us = micros(); last_progress_us = started_us;
+ audio_stats_begin(&stats, started_us, 0); stats_look_us = started_us;
  completions = 0; last_completed = 0; pos_idx = 0; poll_mode = 0; detect = "none"; segs_played = 0; starved = 0; errors = 0; stalled = 0;
  REG(PERIPH + 0xb210u) = 1u << (16u + (uint32_t)hw.ch); barrier();
  say("DMA channel ", (uint32_t)hw.ch, " (32-bit, burst 2, DREQ 17)");
@@ -360,10 +365,35 @@ int hdmi_audio_active(void) { return hw.active; }
 /* Runs independently of audio_hw.task: the null sink must keep draining while
  * discovery is deferred. Called only at a main-loop boundary, never from IRQ
  * or service_io (delay_us during startup services I/O). */
+/* Look at the MAI and DMA about every millisecond (a lap of the ring is 64 ms, so
+ * the byte count never loses one), clear the sticky flags so a later look sees only
+ * new events, and every 5 s write two "stat" lines to AUDIO.TXT. Flags: Linux
+ * rpi-6.6.y vc4_regs.h (MAI_CTL ERRORE underflow, ERRORF overflow, DLATE: write 1
+ * to clear); DMA DEBUG bits 0-2 and SOURCE_AD: BCM2835 datasheet. */
+static void stats_look(void) {
+ uint32_t now = micros();
+ if (now - stats_look_us < 1000u) return;
+ stats_look_us = now;
+ uint32_t mai = REG(HDMI_HD_BASE + HD_MAI_CTL), dbg = dma(DMA_DEBUG), cs = dma(DMA_CS);
+ uint32_t pos = dma(DMA_SOURCE_AD) - bus(buf);
+ audio_stats_sample(&stats, now, pos, sizeof buf, mai, dbg, cs);
+ if (mai & (MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF))
+  hd(HD_MAI_CTL, hdmi_mai_ctl_run() | MAI_CTL_DLATE | MAI_CTL_ERRORE | MAI_CTL_ERRORF);
+ if (dbg & 7u) dmaw(DMA_DEBUG, dbg & 7u);
+ if (audio_stats_due(&stats, now)) {
+  struct audio_stats_ctx c = {completions, (uint32_t)poll_mode, audio_ring_queued(&audio0.ring),
+   (uint32_t)audio0.ring.underruns, mai, cs};
+  char a[AUDIO_LOG_LINE], b[AUDIO_LOG_LINE];
+  audio_stats_lines(&stats, now, &c, a, sizeof a, b, sizeof b);
+  audio_diag_stat(&diagnostics, timestamp(), a); audio_diag_stat(&diagnostics, timestamp(), b);
+ }
+}
+
 void hdmi_audio_poll(void) {
  if (!probed) return;
  (void)timestamp();
  save_diagnostics();
+ if (hw.active) stats_look();
  if (!expired(poll_since, 100000u)) return;
  poll_since = micros();
  if (hw.active) { /* DMA stopped completing segments: log it and fall back to the null drain, never wedge */

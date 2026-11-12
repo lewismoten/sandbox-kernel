@@ -27,6 +27,25 @@ void audio_diag_line(struct audio_diag *l, uint32_t ms, const char *s) {
  for (uint32_t i = 0; i < n; i++) l->text[l->len + i] = line[i];
  l->len += n; l->text[l->len] = 0; l->dirty = 1;
 }
+static int is_stat(const char *t) { return t[0]=='s' && t[1]=='t' && t[2]=='a' && t[3]=='t' && t[4]==' '; }
+/* A periodic "stat " line: when the log is full, retire the oldest stat lines
+ * first so the boot and decision lines at the top survive a long session. */
+void audio_diag_stat(struct audio_diag *l, uint32_t ms, const char *s) {
+ uint32_t need = 12; while (s[need - 12] && need < AUDIO_LOG_LINE + 12) need++;
+ while (l->len + need > AUDIO_LOG_BYTES) {
+  uint32_t a = 0, found = 0;
+  while (a < l->len && !found) {
+   uint32_t b = a; while (b < l->len && l->text[b] != '\n') b++;
+   uint32_t d = a; while (d < b && l->text[d] >= '0' && l->text[d] <= '9') d++;
+   if (d < b && l->text[d] == ' ' && b - d > 5 && is_stat(l->text + d + 1)) {
+    b++; for (uint32_t i = b; i < l->len; i++) l->text[i - (b - a)] = l->text[i];
+    l->len -= b - a; found = 1;
+   } else a = b + 1;
+  }
+  if (!found) break;
+ }
+ audio_diag_line(l, ms, s);
+}
 void audio_diag_decision(struct audio_diag *l, uint32_t ms,
                          const struct audio_observation *o, int active, const char *reason) {
  char b[AUDIO_LOG_LINE], *p = b;
