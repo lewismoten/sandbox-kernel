@@ -101,4 +101,63 @@ class UsbFs(ProtocolBase):
         self.assertEqual(self.c.fatput(b'GAMES/DICE/A.GAM',b'a',1),0,text(self.c,'fatput_fail'))
         root=self.cmd('LS /');self.assertIn('skipped=1',root);self.assertNotIn(' GAMES',root)   # the dot-named entry is skipped, not an error
 
+    # --- review fixes (2026-11-12): long names, damaged chains, FSInfo, path length ---
+    FAT0=(2048+32)*512
+    def entry_at(self,m,name,ext='GAM'):
+        i=m.find(name.ljust(8).encode()+ext.encode()+b'\x20');self.assertGreater(i,0);return i
+    def lfn_before(self,name,slots):
+        """Put a valid checksummed long-name group of `slots` entries right before NAME.GAM (a file of its own
+        takes each slot first, then is removed so the slot is free to overwrite)."""
+        pads=[f'GAMES/DICE/P{i}.GAM' for i in range(slots)]
+        self.seed(*pads,'GAMES/DICE/'+name+'.GAM')
+        for p in pads: self.assertIn('OK rm',self.cmd('RM '+p))
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            i=self.entry_at(m,name);sfn=bytes(m[i:i+11]);x=0
+            for c in sfn: x=(((x&1)<<7)+(x>>1)+c)&0xff
+            offs=[]
+            for k in range(slots):                       # slot k sits (k+1) entries before the short entry
+                o=i-32*(slots-k);e=bytearray(32);e[0]=(slots-k)|(0x40 if k==0 else 0);e[1:3]=b'L\0';e[11]=0x0f;e[13]=x
+                self.assertEqual(m[o],0xe5);m[o:o+32]=e;offs.append(o)
+        return offs
+    def live_lfn(self,offs):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m: return [m[o]!=0xe5 for o in offs]
+    def test_short_alias_changes_take_the_long_name_with_them(self):
+        for slots in (1,2):
+            for how in ('rename','move','rm'):
+                with self.subTest(slots=slots,how=how):
+                    self.setUp();self.seed('GAMES/OTHR/Z.GAM')
+                    offs=self.lfn_before('LNAM',slots);self.assertEqual(self.live_lfn(offs),[True]*slots)
+                    line={'rename':'MV GAMES/DICE/LNAM.GAM GAMES/DICE/NEWN.GAM','move':'MV GAMES/DICE/LNAM.GAM GAMES/OTHR/LNAM.GAM','rm':'RM GAMES/DICE/LNAM.GAM'}[how]
+                    self.assertIn('OK',self.cmd(line));self.assertEqual(self.live_lfn(offs),[False]*slots);self.clean()
+    def test_unrelated_orphan_long_name_slot_is_kept(self):
+        offs=self.lfn_before('LNAM',1)
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m: m[offs[0]+13]^=0xff     # checksum no longer matches
+        self.assertIn('OK',self.cmd('RM GAMES/DICE/LNAM.GAM'));self.assertEqual(self.live_lfn(offs),[True])
+    def head_of(self,name):
+        with open(self.disk,'rb') as f, mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ) as m:
+            i=self.entry_at(m,name);return struct.unpack_from('<H',m,i+20)[0]<<16|struct.unpack_from('<H',m,i+26)[0]
+    def set_fat(self,c,val):
+        with open(self.disk,'r+b') as f, mmap.mmap(f.fileno(),0) as m:
+            for copy in (0,1): struct.pack_into('<I',m,self.FAT0+copy*2048*512+c*4,val)
+    def test_a_damaged_chain_is_refused_and_nothing_is_freed(self):
+        for label in ('bad marker','self loop','free next','too short'):
+            with self.subTest(label):
+                self.setUp();self.seed('GAMES/DICE/X.GAM','GAMES/DICE/Y.GAM');h=self.head_of('X');free=self.free()
+                self.set_fat(h,{'bad marker':0x0ffffff7,'self loop':h,'free next':0,'too short':0x0fffffff}[label])
+                before=self.free();self.assertIn('ERR PUT OLD CHAIN',self.cmd('RM GAMES/DICE/X.GAM'));self.assertEqual(self.free(),before)
+                self.assertEqual(self.read('/GAMES/DICE/Y.GAM'),b'GAMES/DICE/Y.GAM'*300)
+    def test_fsinfo_follows_a_move_that_grows_the_folder(self):
+        self.seed(*[f'GAMES/OTHR/F{i:02d}.GAM' for i in range(14)],'GAMES/DICE/X.GAM')
+        def fsinfo():
+            with open(self.disk,'rb') as f: f.seek((2048+1)*512+488);return struct.unpack('<I',f.read(4))[0]
+        free,info=self.free(),fsinfo()
+        self.assertIn('OK mv',self.cmd('MV GAMES/DICE/X.GAM GAMES/OTHR/X.GAM'))
+        self.assertEqual(self.free(),free-1,'the folder must have grown for this test to mean anything');self.assertEqual(fsinfo(),info-1);self.clean()
+    def test_host_paths_over_the_kernel_limit_are_refused(self):
+        import sys,pathlib;sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'scripts'));import usb_kernel
+        six='/'.join(['ABCDEFGH.XYZ']*6);self.assertGreater(len(six),63)
+        with self.assertRaises(ValueError): usb_kernel.fs_path('GAMES/'+six[:len(six)-13])
+        ok='/'.join(['ABCDEFGH.XY']*5);self.assertEqual(len(ok),59);self.assertEqual(usb_kernel.fs_path(ok),ok)
+        self.assertIn('ERR command',self.cmd('LS '+'ABCDEFGH.XYZ/'*4+'ABCDEFGH.XYZ'))
+
 if __name__=='__main__': unittest.main()
