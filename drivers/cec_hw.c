@@ -15,6 +15,7 @@
 #include "fatput.h"
 #include "os.h"
 #include "bootinfo.h"
+#include "looptrace.h"
 
 #define CM_HSMCTL (PERIPH + 0x101000u + 0x088u) /* same clock manager words hdmi_audio.c reads */
 #define CM_HSMDIV (PERIPH + 0x101000u + 0x08cu)
@@ -30,7 +31,8 @@ extern bool storage_ready;
 bool protocol_busy(void);
 static struct cec_drv drv;
 static bool up;
-static uint32_t saves, last_save_ms, saved_total;
+static uint32_t saves, last_save_ms, saved_total, loop_ms;
+#define LOOP_LINE_MS 10000u  /* a 'loop' line this often (see include/looptrace.h) */
 
 static uint32_t hrd(void *c, uint32_t o) { (void)c; return REG(HDMI_CORE_BASE + o); }
 static void hwr(void *c, uint32_t o, uint32_t v) { (void)c; REG(HDMI_CORE_BASE + o) = v; barrier(); }
@@ -119,6 +121,9 @@ void cec_hw_task(void) {
     uint32_t now = now_ms();
     power_task();
     cec_drv_task(&drv, now);
+    if ((uint32_t)(now - loop_ms) >= LOOP_LINE_MS) {   /* the breadcrumb: the last of these in CEC.TXT says the loop was turning, and which task was slow */
+        char b[80]; loop_ms = now; looptrace_take(b, sizeof b, os_running()); cec_log_line(&drv.log, now, b);
+    }
     save_log(now);
 }
 
