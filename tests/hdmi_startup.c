@@ -308,7 +308,7 @@ int main(void) {
  os_on = false;
  /* CEC's EDID reads are included in the same persisted session. */
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
- hdmi_audio_edid(1, edid); now += 1000000; hdmi_audio_poll();
+ hdmi_audio_edid(1, edid); now += 31000000; hdmi_audio_poll();
  assert(strstr(saved, "edid_block=1 cta_basic_audio=1\n"));
  assert(strstr(saved, "edid_block=1 audio_data_block=090707\n"));
  /* Active audio logs two "stat" lines every 5 s and clears sticky MAI flags it saw. */
