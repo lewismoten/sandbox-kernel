@@ -714,8 +714,8 @@ int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *nex
  * power cut can tear at most the sector being written (a few lines of the log), never the FAT or another file. The file
  * is plain text followed by NUL padding up to its capacity; readers strip the trailing NULs. fatlog_set only copies the
  * text into RAM (no card access); sectors whose content hash equals what was last written are skipped. */
-struct fatlog {uint8_t *buf; uint32_t cap,nsec,cur,base,lba[FATLOG_MAXSEC],hash[FATLOG_MAXSEC]; bool open,pending,valid,known[FATLOG_MAXSEC]; unsigned fails,wait;
- uint32_t first,dirlba,diroff; uint8_t nm[11];};
+struct fatlog {uint8_t *buf; uint32_t cap,nsec,cur,base,lba[FATLOG_MAXSEC],hash[FATLOG_MAXSEC]; bool open,pending,valid,dead,known[FATLOG_MAXSEC]; unsigned fails,wait,create_fails;
+ uint32_t first,second,dirlba,diroff; uint8_t nm[11];};
 static uint8_t lbuf0[FATLOG_CEC_CAP],lbuf1[FATLOG_AUDIO_CAP];
 static struct fatlog logs[FATLOG_SLOTS]={{.buf=lbuf0,.cap=FATLOG_CEC_CAP},{.buf=lbuf1,.cap=FATLOG_AUDIO_CAP}};
 static const char *const log_name[FATLOG_SLOTS]={"CEC.TXT","AUDIO.TXT"};
@@ -739,21 +739,25 @@ static int log_resolve(struct fatlog *l,const char *name,bool *found) {
  if(shared) return fail("PUT SHARED",5); /* never write in place into a chain two names share */
  if(cn*cb<l->cap||cn*v.spc>FATLOG_MAXSEC+v.spc) return 0;
  l->nsec=l->cap/512; for(uint32_t i=0;i<l->nsec;i++) l->lba[i]=lba_of(old[i/v.spc],i%v.spc);
- l->base=v.base; l->first=first; l->dirlba=hit.lba; l->diroff=hit.off; memcpy(l->nm,nm,11); *found=true; return 0;
+ l->base=v.base; l->first=first; l->second=cn>1?old[1]:0x0fffffffu; l->dirlba=hit.lba; l->diroff=hit.off; memcpy(l->nm,nm,11); *found=true; return 0;
 }
 /* The directory entry must still be what log_open saw (name, plain file, first cluster, size): another writer (USB RM, MV,
    PUTF, an app's save) may have freed or replaced the chain, and its clusters may now belong to another file. */
 static bool log_entry_ok(const struct fatlog *l) {
  if(rd(l->dirlba,s)) return false;
  const uint8_t *e=s+l->diroff;
- return !memcmp(e,l->nm,11)&&!(e[11]&0x1f)&&ecl(e)==l->first&&u32(e+28)==l->cap;
+ if(memcmp(e,l->nm,11)||(e[11]&0x1f)||ecl(e)!=l->first||u32(e+28)!=l->cap) return false;
+ uint32_t n; fc_sec=~0u; heal=false; /* the chain's second link too: a freed and reallocated chain starting on the same cluster differs here */
+ if(fat_get(l->first,&n)) return false;
+ return (l->second==0x0fffffffu?n>=0x0ffffff8u:n==l->second);
 }
 static int log_open(unsigned id,bool keep) {
  struct fatlog *l=&logs[id]; bool found; uint32_t was_first=l->first; int r=log_resolve(l,log_name[id],&found); if(r) return r;
- if(!found) {
-  if((r=put_file(log_name[id],0,l->cap,true,"KERNEL"))) return r;
-  if((r=log_resolve(l,log_name[id],&found))) return r;
-  if(!found) return fail("PUT LOG",5);
+ if(!found) { /* a full card must not bring a whole-FAT scan back every few seconds: three failed creations and the log stops for this boot */
+  if((r=put_file(log_name[id],0,l->cap,true,"KERNEL"))||(r=log_resolve(l,log_name[id],&found))||(!found&&(r=fail("PUT LOG",5)))) {
+   if(++l->create_fails>=3) l->dead=true;
+   return r;
+  }
  }
  if(!(keep&&l->valid&&l->first==was_first)) {for(uint32_t i=0;i<l->nsec;i++) l->known[i]=false; l->cur=0;}
  l->valid=true; l->open=true; return 0;
@@ -762,6 +766,7 @@ int fatlog_set(unsigned id,const uint8_t *data,uint32_t bytes) {
  if(id>=FATLOG_SLOTS) return -22;
  struct fatlog *l=&logs[id]; if(bytes>l->cap) return -27;
  memcpy(l->buf,data,bytes); memset(l->buf+bytes,0,l->cap-bytes);
+ if(l->dead) return 0;
  l->pending=true; l->fails=0; l->wait=0; l->open=false; /* the file is looked up again at the next pump; known sectors are kept only if it is the same file */
  return 0;
 }
@@ -769,6 +774,7 @@ bool fatlog_pending(unsigned id) {return id<FATLOG_SLOTS&&logs[id].pending;}
 int fatlog_pump(void) {
  for(unsigned k=0;k<FATLOG_SLOTS;k++) {
   unsigned id=(log_turn+k)%FATLOG_SLOTS; struct fatlog *l=&logs[id];
+  if(l->dead) l->pending=false;
   if(!l->pending) continue;
   if(l->wait) {l->wait--; continue;} /* after 3 failures: a pause, then try again */
   if(asset_cache_readers()) return 0; /* an app has a save open: try again next pass */
@@ -787,7 +793,8 @@ int fatlog_pump(void) {
    }
    if(!r) {l->pending=false; continue;} /* every sector is on the card */
   }
-  l->open=false; if(++l->fails>=3) {l->fails=0;l->wait=FATLOG_RETRY_PASSES; return r;} /* log it once, keep the text, try again later */
+  l->open=false; if(l->dead) {l->pending=false; return r;} /* creation given up for this boot: reported once */
+  if(++l->fails>=3) {l->fails=0;l->wait=FATLOG_RETRY_PASSES; return r;} /* log it once, keep the text, try again later */
   return 0;
  }
  return 0;
