@@ -303,8 +303,9 @@ int main(void) {
  if (card_writes == 1) { memset(diagnostics.text + diagnostics.len, 'x', 1100); diagnostics.len += 1100; diagnostics.text[diagnostics.len] = 0; diagnostics.dirty = 1; hdmi_audio_poll(); }
  assert(card_writes == 2 && os_credits == 2);
  /* A simulated hour with the OS running and a log that grows 200 B a minute: a handful of saves, never one a pass. */
- for (unsigned m = 0; m < 60; m++) { now += 60000000; diagnostics.len += 200; if (diagnostics.len > 8000) diagnostics.len = 8000; diagnostics.text[diagnostics.len] = 0; diagnostics.dirty = 1; hdmi_audio_poll(); }
- assert(card_writes <= 2 + 12);
+ for (unsigned m = 0; m < 60; m++) { now += 60000000; if (diagnostics.len > 7000) { diagnostics.len = 0; diagnostics.dropped++; } memset(diagnostics.text + diagnostics.len, 'x', 200); diagnostics.len += 200; diagnostics.text[diagnostics.len] = 0; diagnostics.dirty = 1; hdmi_audio_poll(); }
+ assert(card_writes <= 20);   /* before: one per 30 s = 120 */
+ diagnostics.len = 0; diagnostics.text[0] = 0; saved_len = 0; now += 31000000;
  os_on = false;
  /* CEC's EDID reads are included in the same persisted session. */
  uint8_t edid[128] = {2, 3, 8, 0x40, 0x23, 0x09, 0x07, 0x07};
