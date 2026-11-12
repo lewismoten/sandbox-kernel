@@ -19,6 +19,7 @@ static unsigned phase,pos,total;
 static uint8_t wx0,wx1=15; static unsigned wy0,wy1=249; /* RAM window: byte columns and rows being written; a partial update narrows it to what changed */
 static uint32_t since,delay;
 static bool full=true,disabled,asleep;
+static bool raw_asleep,drawn_valid; static uint64_t raw_since,last_draw; static uint32_t drawn_gen;
 static uint32_t frozen; /* uptime when power saving began: while asleep the screen stays as it was */
 static void disable(const char *reason) {disabled=true;eink_set_available(false);error(reason);}
 static bool byte(uint8_t b) {
@@ -86,9 +87,17 @@ void panel_task(const char *state,uint32_t seconds) {
  default:break;
  }
  if(phase)return;
- {bool now_asleep=power_target(clock_us())!=0;if(now_asleep&&!asleep) frozen=seconds;asleep=now_asleep;render_status_sleep(asleep);}
+ {uint64_t now=clock_us();bool raw=(power_target(now)&POWER_NO_BLANK)!=0; /* SLEEP = the screen-blank stage only (the bit that silences audio); a slowed but lit screen keeps the uptime */if(raw!=raw_asleep) {raw_asleep=raw;raw_since=now;}
+  /* SLEEP is debounced: blank must hold 30 s to show it, and 10 s awake to clear it (docs/eink.md) */
+  if(raw&&!asleep&&now-raw_since>=EINK_SLEEP_SHOW_US) {asleep=true;frozen=seconds;}
+  else if(!raw&&asleep&&now-raw_since>=EINK_SLEEP_CLEAR_US) asleep=false;
+  render_status_sleep(asleep);}
  eink_compose(desired,BUILD_ID,state,last_error,asleep?frozen:seconds); /* the OS page or title, or the kernel screen (docs/eink.md) */
- {uint64_t now=clock_us();if(!memcmp(desired,shown,4000)&&!(eink_maintenance_due(now)&&eink_full_due(now)))return;full=eink_full_due(now);} /* ghost-clearing full refresh: VERIFY on the board */
+ {uint64_t now=clock_us();bool changed=memcmp(desired,shown,4000)!=0,maint=eink_maintenance_due(now)&&eink_full_due(now);
+  if(!changed&&!maint)return;
+  /* at most one redraw per 10 s, unless the OS or the kernel's error text asked for a new picture */
+  if(drawn_valid&&eink_generation()==drawn_gen&&!maint&&now-last_draw<EINK_REDRAW_MIN_US)return;
+  drawn_valid=true;drawn_gen=eink_generation();last_draw=now;full=eink_full_due(now);}
  memcpy(frame,desired,4000);
  if(full) whole_window(); else changed_window(); /* a partial writes (and syncs 0x26 for) only the rectangle that changed */
  gpio_set(17,false);wait_phase(12,1000);

@@ -112,4 +112,4 @@ do not set it. Screen/file-read refusals also leave the sticky error unchanged; 
 
 ## Power saving
 
-While the kernel is in power saving (`power_target` names slowdown or blank), the status screen draws once with `SLEEP` after the uptime (for example `9h 2m SLEEP`, which still fits 16 characters), freezes that uptime, and is not redrawn again; leaving power saving redraws once with the live uptime. The 24-hour full refresh still runs. An OS page is unaffected.
+The status screen says `SLEEP` only for the screen-blank stage (the `POWER_NO_BLANK` bit that also silences audio), never for the slowdown stage: a slowed but lit screen keeps the uptime. Blank must hold 30 s before `SLEEP` draws (the uptime freezes then), and must be gone 10 s before it clears. The kernel's own screen redraws at most once per 10 s (so the seconds under 100 s step by about 10), except at once when the OS sets a title, page or clear or the kernel error text changes. The 24-hour full refresh still runs. One owner draws: an OS title or page wins while the OS runs; the kernel screen is drawn only without one.

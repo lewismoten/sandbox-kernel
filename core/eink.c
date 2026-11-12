@@ -12,6 +12,7 @@ static struct {
  char seen[40]; /* the kernel error text the last redraw showed */
 } s={.seen="none"}; /* the kernel starts with no error */
 static uint64_t accepted[EINK_BURST]; static unsigned next_slot,filled; /* a ring of the last 30 accepted times */
+static uint32_t gen; /* counts what the OS or the kernel error text changed: a redraw for it is not rate-limited */
 static unsigned partials; static uint64_t last_full; static bool available; /* a panel provider is linked and running */
 /* Gate every change: 1 s apart, 30 in any 60 s. A refusal changes nothing. */
 static int gate(uint64_t now) {
@@ -22,7 +23,7 @@ static int gate(uint64_t now) {
  }
  return 0;
 }
-static void take(uint64_t now) {accepted[next_slot]=now;next_slot=(next_slot+1)%EINK_BURST;if(filled<EINK_BURST) filled++;}
+static void take(uint64_t now) {gen++;accepted[next_slot]=now;next_slot=(next_slot+1)%EINK_BURST;if(filled<EINK_BURST) filled++;}
 int eink_title(const char *name,uint32_t n,const uint8_t *mark,const char *build,uint32_t bn,uint64_t now) {
  if(!name||n<1||n>EINK_TITLE_MAX||bn>EINK_BUILD_MAX||(bn&&!build)) return -EINVAL_;
  char t[EINK_TITLE_MAX+1]; for(uint32_t i=0;i<n;i++) {
@@ -48,12 +49,13 @@ int eink_clear(uint64_t now) {
  int e=gate(now); if(e) return e;
  s.has_title=s.has_mark=s.has_page=s.suppressed=false; take(now); return 0;
 }
-void eink_reset(void) {s.has_title=s.has_mark=s.has_page=s.suppressed=false;}
+uint32_t eink_generation(void) {return gen;}
+void eink_reset(void) {gen++;s.has_title=s.has_mark=s.has_page=s.suppressed=false;}
 bool eink_page_shown(void) {return s.has_page&&!s.suppressed;}
 void eink_compose(uint8_t *plane,const char *build_id,const char *usb,const char *error,uint32_t seconds) {
  unsigned i=0; while(i<sizeof s.seen-1&&error[i]&&error[i]==s.seen[i]) i++;
  if(i<sizeof s.seen-1&&(error[i]||s.seen[i])) { /* a new kernel error: it wins at this very update */
-  for(i=0;i<sizeof s.seen-1&&error[i];i++) s.seen[i]=error[i];
+  gen++;for(i=0;i<sizeof s.seen-1&&error[i];i++) s.seen[i]=error[i];
   s.seen[i]=0;
   if(s.has_page&&strcmp(error,"none")) s.suppressed=true;
  }
