@@ -40,7 +40,7 @@ still hardware-untested. The separate [PCM host core](docs/audio-host-core.md)
 remains unlinked. [CEC](docs/cec.md) remains host-only and hardware-untested.
 Build the default `USB_ROLE=device` Mac CDC link with `make`;
 `make USB_ROLE=host all` builds the [USB boot-keyboard role](docs/usb-host-keyboard.md)
-(hardware-untested, no CDC, trial-only and never confirmed). Keyboards tried so far: [tested keyboards](docs/tested-keyboards.md). `make boot` refuses
+(hardware-untested, no CDC, trial-only and never confirmed). Keyboards tried so far: [Game-Maker OS tested hardware](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/tested-hardware.md). `make boot` refuses
 a host runtime. Run host checks with `make test`, and assemble a boot folder
 and card image with `make boot`. On 2026-11-10, test discovery finds 440 cases;
 optional-tool skips are reported by the runner. The default compiler is the requested Arm GNU
