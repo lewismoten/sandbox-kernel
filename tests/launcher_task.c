@@ -47,7 +47,8 @@ static void idle_stop(void) {
  reset();add("GMOS.ELF");clean_exit();tick();assert(launcher_active());
  os_recoveries++;tick();                        /* USB STOP with nothing running: recovery console takes over */
  assert(!launcher_active());                    /* its keys must not reach a hidden list */
- for(int i=0;i<3;i++) tick();assert(!launcher_active()&&starts==0);
+ for(int i=0;i<3;i++) {tick();}
+ assert(!launcher_active()&&starts==0);
  press(LAUNCHER_KEY_ENTER);tick();assert(starts==0);
  /* STOP during a pending clean-exit cleanup: the wish to reopen is cancelled too */
  reset();clean_exit();cleanup=true;tick();assert(!launcher_active());

@@ -36,7 +36,8 @@ void usb_wait_report(void) {
   for(const char *p=names[i];*p;p++)line[at++]=*p;
   const char *s=" count=";while(*s)line[at++]=*s++;
   char digits[11];unsigned k=0;do{digits[k++]=(char)('0'+n%10);n/=10;}while(n);
-  while(k)line[at++]=digits[--k];line[at]=0;usblog_add_critical(line);
+  while(k) {line[at++]=digits[--k];}
+  line[at]=0;usblog_add_critical(line);
  }
 }
 /* The cooperative stack uses asynchronous timers. Reject unexpected long blocking
