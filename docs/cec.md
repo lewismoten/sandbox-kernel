@@ -47,13 +47,14 @@ announcement, received keys and replies, a stuck send, and the log bound.
    (1.4), Menu Request (Menu Status: activated), Request
    Active Source and Set Stream Path once active. Menu Request is answered Menu Status
    "activated", so a TV that withholds the remote from a device with no active menu keeps
-   sending keys. Give Device Vendor ID gets a broadcast Device Vendor ID of 000000 (no vendor
+   sending keys. Active Source (on announce and on Set Stream Path to us) is followed by an
+   unsolicited directed Menu Status "activated" for TVs that wait for it. Give Device Vendor ID gets a broadcast Device Vendor ID of 000000 (no vendor
    claimed; the value is a convention, not a registered id). Anything else directed at us gets
    Feature Abort "unrecognized opcode" (Feature Abort itself is ignored). These messages request TV input selection; they do
    not guarantee that a TV changes input.
 6. Keys: User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
    keyboard and the synthetic device use): Select and Enter are Enter, arrows are arrows, Exit is
-   Esc, Play and Pause are Space, 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
+   Esc, Play, Pause, Play Function and Pause-Play Function are Space (Record Function is not passed on), 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
    is Menu. A remote's repeat (Pressed again about every 100 to 500 ms) becomes a key repeat for
    arrows and channel up/down only; Select, Exit and the others act once per press. No Pressed for
    550 ms ends the press when no Released arrives. If the USB keyboard left, `input_add()` brings the device back (host role).

@@ -80,8 +80,9 @@ static void test_timing_and_claim(void) {
     finish_tx(&chip, 0); cec_drv_task(&drv, 20); expect(&chip, 2, osd, 12);       /* broadcast Report: the flag says nack, no retry */
     finish_tx(&chip, 1); cec_drv_task(&drv, 30); expect(&chip, 3, ivo, 2);
     finish_tx(&chip, 1); cec_drv_task(&drv, 40); expect(&chip, 4, asrc, 4);        /* the TV acked Image View On */
-    finish_tx(&chip, 0); cec_drv_task(&drv, 50);
-    assert(chip.sent_n == 5 && !chip.tx_started && !drv.tx_busy);                   /* nothing resent */
+    finish_tx(&chip, 0); cec_drv_task(&drv, 50); expect(&chip, 5, (uint8_t[]){0x40, 0x8E, 0x00}, 3); /* Menu Status activated */
+    finish_tx(&chip, 1); cec_drv_task(&drv, 60);
+    assert(chip.sent_n == 6 && !chip.tx_started && !drv.tx_busy);                   /* nothing resent */
     assert(strstr(drv.log.text, "claimed logical address 4") && strstr(drv.log.text, "announcing"));
 }
 
@@ -127,7 +128,7 @@ static void claim4(void) {
     start(0x1000); cec_drv_task(&drv, 1); finish_tx(&chip, 0);
     for (unsigned t = 2; t < 20; t++) { cec_drv_task(&drv, t); if (chip.tx_started) finish_tx(&chip, 1); }
     cec_drv_task(&drv, 20); assert(!drv.tx_busy);
-    assert(drv.sm.state == CEC_SM_CLAIMED && chip.sent_n == 5);
+    assert(drv.sm.state == CEC_SM_CLAIMED && chip.sent_n == 6);
 }
 
 static void test_rx_keys_and_replies(void) {

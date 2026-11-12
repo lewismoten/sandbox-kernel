@@ -159,10 +159,11 @@ static void test_sm(void) {
     r = mk(ucr, 2); assert(cec_sm_rx(&s, &r) == CEC_SM_EV_KEY_RELEASED && !tx(&s, &m));
     /* active source: silent until active, then answers Request Active Source and Set Stream Path */
     static const uint8_t ras[] = {0x0F, 0x85}, ssp[] = {0x0F, 0x86, 0x10, 0x00}, ssp2[] = {0x0F, 0x86, 0x20, 0x00};
-    static const uint8_t asrc[] = {0x4F, 0x82, 0x10, 0x00};
+    static const uint8_t asrc[] = {0x4F, 0x82, 0x10, 0x00}, mact[] = {0x40, 0x8E, 0x00}; /* Menu Status activated follows Active Source */
     r = mk(ras, 2); cec_sm_rx(&s, &r); assert(!tx(&s, &m));
     r = mk(ssp2, 4); cec_sm_rx(&s, &r); assert(!tx(&s, &m) && !s.active);
     r = mk(ssp, 4); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
+    assert(tx(&s, &m)); eq(&m, mact, 3); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ras, 2); cec_sm_rx(&s, &r); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
     r = mk(ssp2, 4); cec_sm_rx(&s, &r); assert(!s.active);
     static const uint8_t stby[] = {0x0F, 0x36};
@@ -171,11 +172,13 @@ static void test_sm(void) {
     cec_sm_announce(&s);
     static const uint8_t ivo[] = {0x40, 0x04};
     assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, last_tx_id, 1); assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
+    assert(tx(&s, &m)); eq(&m, mact, 3); cec_sm_tx_done(&s, last_tx_id, 1);
     /* retry once on NACK, then give up */
     cec_sm_announce(&s);
     assert(tx(&s, &m)); cec_sm_tx_done(&s, last_tx_id, 0);
     assert(tx(&s, &m)); eq(&m, ivo, 2); cec_sm_tx_done(&s, last_tx_id, 0);   /* second failure is final */
     assert(tx(&s, &m)); eq(&m, asrc, 4); cec_sm_tx_done(&s, last_tx_id, 1);
+    assert(tx(&s, &m)); eq(&m, mact, 3); cec_sm_tx_done(&s, last_tx_id, 1);
     assert(!tx(&s, &m));
     /* a frame that never reports back times out as an error and is retried */
     cec_sm_announce(&s);
@@ -304,6 +307,8 @@ static void test_stale_completion(void) {
     assert(cec_sm_next_tx(&s, &next, &next_id));
     assert(cec_opcode(&next) == CEC_OP_ACTIVE_SOURCE);
     cec_sm_tx_done(&s, next_id, 1);
+    assert(cec_sm_next_tx(&s, &next, &next_id) && cec_opcode(&next) == CEC_OP_MENU_STATUS);
+    cec_sm_tx_done(&s, next_id, 1);
     assert(!cec_sm_next_tx(&s, &next, &next_id));
 
     /* A poll timeout claims, and late ACK/NACK cannot complete its report. */
@@ -326,7 +331,7 @@ static void test_stale_completion(void) {
     cec_sm_announce(&s);
     assert(cec_sm_next_tx(&s, &next, &next_id) && next_id == UINT64_MAX);
     cec_sm_tx_done(&s, next_id, 1);
-    assert(!cec_sm_next_tx(&s, &next, &next_id) && s.qn == 1);
+    assert(!cec_sm_next_tx(&s, &next, &next_id) && s.qn == 2);
     puts("PASS cec_sm stale completions ignored");
 }
 int main(void) { test_msg(); test_keys(); test_sm(); test_poll_errors(); test_stale_completion(); return 0; }

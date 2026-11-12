@@ -22,6 +22,11 @@ static void active_source(struct cec_sm *s) {
     cec_build_active_source(&m, s->laddr, s->phys);
     push(s, &m);
 }
+static void menu_active(struct cec_sm *s) { /* a menu-providing active source tells the TV so, after Active Source (CEC 1.3a 13.12.2) */
+    struct cec_msg m;
+    cec_build_menu_status(&m, s->laddr, CEC_ADDR_TV, CEC_MENU_ACTIVATED);
+    push(s, &m);
+}
 
 void cec_sm_init(struct cec_sm *s, uint16_t phys, uint32_t now_ms) {
     s->phys = phys; s->laddr = CEC_ADDR_BROADCAST; s->cand = 0; s->active = 0;
@@ -95,6 +100,7 @@ void cec_sm_announce(struct cec_sm *s) {
     cec_build_image_view_on(&m, s->laddr, CEC_ADDR_TV);
     push(s, &m);
     active_source(s);
+    menu_active(s);
 }
 
 enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
@@ -107,7 +113,7 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
         if (op == CEC_OP_REQUEST_ACTIVE_SOURCE) { if (s->active) active_source(s); }
         else if (op == CEC_OP_SET_STREAM_PATH && cec_nparams(m) >= 2) {
             const uint8_t *p = cec_params(m);
-            if (((uint16_t)(p[0] << 8 | p[1])) == s->phys) { s->active = 1; active_source(s); }
+            if (((uint16_t)(p[0] << 8 | p[1])) == s->phys) { s->active = 1; active_source(s); menu_active(s); }
             else s->active = 0;
         }
         return CEC_SM_EV_NONE;                       /* other broadcasts: silence */
