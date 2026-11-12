@@ -46,8 +46,8 @@ static unsigned renames;
 int fatsave_rename(const char *g, const char *f, const char *t, uint8_t *s, uint32_t c) {
  (void)g; (void)f; (void)t; (void)s; (void)c; renames++; return 0;
 }
-int fatsave_put(const char *game, const char *name, const uint8_t *data, uint32_t bytes) {
- assert(!strcmp(game, "KERNEL") && !strcmp(name, "AUDIO.TXT"));
+int fatlog_set(unsigned id, const uint8_t *data, uint32_t bytes) {
+ assert(id == FATLOG_AUDIO);
  assert(bytes < sizeof saved); memcpy(saved, data, bytes); saved[bytes] = 0;
  card_writes++; return 0;
 }

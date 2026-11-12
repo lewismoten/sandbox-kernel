@@ -91,7 +91,7 @@ static void record_decision(void) {
 extern uint32_t boot_generation;
 static uint32_t link_state(void);
 static int rot_rename(const char *from, const char *to, void *ctx) {
- return fatsave_rename("KERNEL", from, to, (uint8_t *)ctx, AUDIO_LOG_BYTES + 80);
+ return fatsave_rename("KERNEL", from, to, (uint8_t *)ctx, FATLOG_AUDIO_CAP);
 }
 static void save_diagnostics(void) {
  if (!diagnostics.dirty || !storage_ready || protocol_busy() || saves >= AUDIO_SAVE_MAX) return;
@@ -108,7 +108,7 @@ static void save_diagnostics(void) {
  if (os && saves && diagnostics.len < saved_len + 1024u && diagnostics.dropped == saved_dropped) return;
  uint64_t t0 = clock_us();
  save_since = micros(); saves++; saved_len = diagnostics.len; saved_dropped = diagnostics.dropped;
- static uint8_t out[AUDIO_LOG_BYTES + 80];
+ static uint8_t out[FATLOG_AUDIO_CAP];
  if (!rotated) { /* first write of this boot: keep the last three boots (AUDIO.TXT, .1, .2) */
   rotated = 1; struct audio_rot_io io = {rot_rename, out}; audio_rot_rotate(&io);
  }
@@ -116,7 +116,7 @@ static void save_diagnostics(void) {
  uint32_t n = audio_rot_header((char *)out, 80, bootinfo_this(), boot_generation, diagnostics.dropped);
  out[n++] = '\n';
  memcpy(out + n, diagnostics.text, diagnostics.len); n += diagnostics.len;
- if (fatsave_put("KERNEL", "AUDIO.TXT", out, n)) log_line("AUDIO.TXT write failed");
+ if (fatlog_set(FATLOG_AUDIO, out, n)) log_line("AUDIO.TXT write failed");
  else diagnostics.dirty = 0;
  if (os) os_usb_work(t0, clock_us());
 }
