@@ -70,7 +70,7 @@ way to ask for a full refresh; the kernel decides.
 | Minimum interval between accepted updates | **1 s**; sooner is `EAGAIN` (nothing changes) | VERIFY: a safe round number, not a datasheet figure |
 | At most **30** accepted updates in any 60 s | `EAGAIN` beyond | VERIFY: guess; stops a loop from running the panel flat out |
 | **Ghost-clearing full refresh** after every **50** partial refreshes, and never sooner than **180 s** after the last full one | done by the kernel on the next redraw | Waveshare wiki and manual, 2.13" V4: "refresh interval of at least 180 s; refresh at least once every 24 hours; after several partial refreshes, do a full refresh". VERIFY the 50 against the SSD1680 panel guidance and the real panel |
-| After each finished refresh the driver sends **deep sleep mode 1** (command 0x10, data 1); the next refresh starts with a hardware reset | always | Waveshare 2.13" V4 demo sleeps the controller after display. Hardware-untested |
+| After each finished refresh the driver sends **deep sleep mode 1** (command 0x10, data 1); the next refresh starts with a hardware reset | always | Waveshare 2.13" V4 demo sleeps the controller after display. The wake sequence also resends the internal temperature sensor choice (0x18, 0x80), which a reset forgets. Hardware-untested |
 | A full refresh at least once every **24 h** | kernel: its own deadline of **23 h** after the last full refresh, kept even when the screen never changes (a static page is redrawn in full) | same source; one hour of margin |
 | The boot refresh | counts as a full refresh: the 180 s gap and the 23 h deadline run from the boot full-refresh command trigger | the next refresh can never land inside the gap |
 
@@ -108,4 +108,4 @@ do not set it. Screen/file-read refusals also leave the sticky error unchanged; 
 
 - Hardware check: the ghost-clearing full refresh after boot uses the boot sequence's full
   path (`panel.c`, phase 7 and 8) and has only been run on the host. VERIFY on the board.
-- No grayscale, no fast-refresh mode, and no per-region partial update: always a whole page.
+- No grayscale, no fast-refresh mode, and no per-region update for the OS: it always sends a whole page. Inside the driver a partial refresh writes only the rectangle of RAM that changed (0x44/0x45 window, 0x4e/0x4f counters), to both 0x24 and 0x26, so 0x26 always equals the glass; the panel still refreshes whole, but only changed pixels are driven.
