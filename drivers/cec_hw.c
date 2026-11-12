@@ -21,8 +21,10 @@
 #define ASSUMED_HSM_HZ 163682000u /* what the 2026-11-09 hardware log read; used only if the registers are unreadable */
 #define ASSUMED_PHYS 0x1000u      /* 1.0.0.0, HDMI port 1; used only if the EDID cannot be read */
 #define SAVE_FIRST_MS 8000u       /* first CEC.TXT write, then at most one per SAVE_EVERY_MS */
-#define SAVE_EVERY_MS 30000u
-#define SAVE_MAX 20u
+#define SAVE_EVERY_MS 10000u      /* the first 10 minutes; after that one write a minute */
+#define SAVE_SLOW_AFTER_MS 600000u
+#define SAVE_SLOW_EVERY_MS 60000u
+#define SAVE_MAX 400u
 
 extern bool storage_ready;
 bool protocol_busy(void);
@@ -96,7 +98,7 @@ void cec_hw_init(void) {
 
 static void save_log(uint32_t now) {
     if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || os_running() || saves >= SAVE_MAX) return;
-    if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < SAVE_EVERY_MS)) return;
+    if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS))) return;
     drv.log.dirty = 0; last_save_ms = now; saves++;
     if (fatsave_put("KERNEL", "CEC.TXT", (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");
 }

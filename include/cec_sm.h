@@ -7,7 +7,7 @@
 #include "cec_msg.h"
 
 #define CEC_SM_QUEUE 6u
-#define CEC_SM_TX_TIMEOUT_MS 1000u
+#define CEC_SM_TX_TIMEOUT_MS 2000u
 #define CEC_SM_POLL_RETRIES 2u
 #define CEC_SM_OSD_NAME "Game Maker"
 

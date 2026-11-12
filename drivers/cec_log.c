@@ -2,7 +2,7 @@
  * Original work (Claude Sonnet 5.5). Bounded CEC session log. */
 #include "cec_log.h"
 
-void cec_log_init(struct cec_log *l) { l->len = 0; l->dropped = 0; l->lines = 0; l->dirty = 0; l->text[0] = 0; }
+void cec_log_init(struct cec_log *l) { l->len = 0; l->head_end = 0; l->dropped = 0; l->lines = 0; l->dirty = 0; l->text[0] = 0; }
 
 static uint32_t put_num(char *o, uint32_t n) {
     char t[11]; unsigned k = 0; uint32_t w = 0;
@@ -18,14 +18,14 @@ void cec_log_line(struct cec_log *l, uint32_t now_ms, const char *text) {
         line[n++] = (text[i] >= 32 && text[i] < 127) ? text[i] : '?';
     line[n++] = '\n';
     while (l->len + n > CEC_LOG_BYTES) {          /* drop the oldest whole line */
-        uint32_t k = 0;
+        uint32_t f = l->head_end, k = f;
         while (k < l->len && l->text[k] != '\n') k++;
         k = k < l->len ? k + 1 : l->len;
-        for (uint32_t i = k; i < l->len; i++) l->text[i - k] = l->text[i];
-        l->len -= k; l->dropped++; if (l->lines) l->lines--;
+        for (uint32_t i = k; i < l->len; i++) l->text[i - (k - f)] = l->text[i];
+        l->len -= k - f; l->dropped++; if (l->lines) l->lines--;
     }
     for (uint32_t i = 0; i < n; i++) l->text[l->len + i] = line[i];
-    l->len += n; l->lines++; l->text[l->len] = 0; l->dirty = 1;
+    l->len += n; l->lines++; if (!l->head_end && l->len >= CEC_LOG_HEAD) l->head_end = l->len; l->text[l->len] = 0; l->dirty = 1;
 }
 
 uint32_t cec_log_tail(const struct cec_log *l, unsigned n, char *out, uint32_t cap) {

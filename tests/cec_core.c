@@ -183,8 +183,8 @@ static void test_sm(void) {
     /* a frame that never reports back times out as an error and is retried */
     cec_sm_announce(&s);
     cec_sm_tick(&s, 5000); assert(tx(&s, &m));
-    cec_sm_tick(&s, 5999); assert(!tx(&s, &m));
-    cec_sm_tick(&s, 6000); assert(tx(&s, &m) && cec_opcode(&m) == 0x04);
+    cec_sm_tick(&s, 6999); assert(!tx(&s, &m));
+    cec_sm_tick(&s, 7000); assert(tx(&s, &m) && cec_opcode(&m) == 0x04);
     puts("PASS cec_sm polling, replies, active source, retry");
 }
 static void test_poll_errors(void) {
@@ -258,7 +258,7 @@ static void test_stale_completion(void) {
     cec_sm_init(&s, 0x1000, 0);
     assert(cec_sm_next_tx(&s, &poll, &poll_id) && cec_is_poll(&poll));
     assert(poll_id != 0);
-    cec_sm_tick(&s, 999);
+    cec_sm_tick(&s, 1999);
     assert(!cec_sm_next_tx(&s, &next, &next_id));
     cec_sm_tx_done(&s, poll_id, CEC_SM_TX_ERROR);
     assert(s.state == CEC_SM_POLL && s.laddr == CEC_ADDR_BROADCAST && !s.inflight);
@@ -295,7 +295,7 @@ static void test_stale_completion(void) {
     /* A timed-out frame's retry has identical bytes but a fresh identity. */
     cec_sm_announce(&s);
     assert(cec_sm_next_tx(&s, &report, &report_id));
-    cec_sm_tick(&s, 2000);
+    cec_sm_tick(&s, 4000);
     assert(cec_sm_next_tx(&s, &next, &next_id));
     eq(&next, report.b, report.len);
     assert(next_id != report_id && s.inflight_retry);
