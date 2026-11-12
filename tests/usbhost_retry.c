@@ -204,7 +204,9 @@ int main(void) {
  callbacks--;
  // Cancellation while waiting must not send a late setup or invoke a callback twice.
  start();usbh_control_xfer_cb(1,0,XFER_RESULT_FAILED,0);usbh_device_close(0,1);
+ assert(!_usbh_devices[0].connected); /* a closing device counts as gone from the moment its request is cancelled */
  unsigned before=setups;now+=100;control_retry_task();assert(setups==before&&callbacks==4);
+ _usbh_devices[0].connected=1; /* the fixture adds the device back for the next case */
  now=UINT32_MAX-10;start();usbh_control_xfer_cb(1,0,XFER_RESULT_FAILED,0);
  before=setups;now=8;control_retry_task();assert(setups==before);
  now=9;control_retry_task();assert(setups==before+1);finish();

@@ -14,7 +14,16 @@
 static bool initialized;
 static const char *init_fail="unavailable";
 /* USB.TXT (core/usblog.c): each device as TinyUSB reads it, then what the kernel did with it. */
-static void lg(const char *l) {usblog_add(l);}
+/* Every USB.TXT line from this driver starts with the milliseconds since boot ("12345 "), so a stall
+ * during enumeration can be placed on the timeline (the log had no times before). */
+static void lg(const char *l) {
+ char t[USBLOG_LINE];unsigned a=0,k=0;char d[11];uint32_t ms=micros()/1000u;
+ do{d[k++]=(char)('0'+ms%10);ms/=10;}while(k<10&&ms);
+ while(k) t[a++]=d[--k];
+ t[a++]=' ';
+ for(;*l&&a<USBLOG_LINE-1;l++) t[a++]=*l;
+ t[a]=0;usblog_add(t);
+}
 static const char *speed_name(uint8_t s) {return s==TUSB_SPEED_HIGH?"HS":s==TUSB_SPEED_LOW?"LS":s==TUSB_SPEED_FULL?"FS":"??";}
 static struct {uint8_t d;bool mounted,warned;uint32_t t;} dv[8];
 static volatile uint32_t ev_attach,ev_remove;
