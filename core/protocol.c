@@ -339,7 +339,7 @@ static void work(void) {
     if(memcmp(h,put_hash,32)) {fail("sha256");return;}
     int r=fatput(put_name,staging,expected);
     if(r) r=fatput(put_name,staging,expected); /* one retry: a transient card error is not a failure */
-    if(r) {fail(fatput_fail);return;}
+    if(r) {char t[64]="SD last ";strncat(t,sd_fail,40);log_line(t);fail(fatput_fail);return;}
     putf=false;phase=0;usb_reply("OK file ");reply_path(put_name);usb_reply(" ");field(expected);usb_reply("\n");
     char t[64]="File installed ";unsigned k=15;if(in_os(put_name)){memcpy(t+k,"/OS",3);k+=3;}t[k++]='/';memcpy(t+k,put_name,strlen(put_name)+1);log_line(t);return;
    }

@@ -91,12 +91,16 @@ bool sd_adopt(const uint32_t in[8]) {
  return true;
 }
 bool sd_init(void) {
+ uint32_t keep_cap=capacity,keep_rca=rca; bool keep_hc=high_capacity;
  sd_fail="none";
  /* Cold start: plain init. Later attempts power-cycle the card. */
  for(unsigned attempt=0;attempt<3;attempt++) {
   if(sd_init_once(attempt>0)) return true;
   delay_us(20000);
  }
+ /* A failed re-init zeroed capacity and rca, so every later transfer was refused ("lba>=capacity") without
+    ever reaching the card until a power cycle. Keep the old identity: the next transfer tries to recover again. */
+ if(keep_cap&&keep_rca) { capacity=keep_cap; rca=keep_rca; high_capacity=keep_hc; }
  return false; /* sd_fail names the step of the last attempt */
 }
 bool sd_init_after_handoff(const uint32_t in[8]) {
@@ -106,24 +110,25 @@ bool sd_init_after_handoff(const uint32_t in[8]) {
  return false;
 }
 uint32_t sd_sectors(void) { return capacity; }
+#define XFAIL(code) do { sd_fail=(code); return false; } while(0)
 static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bool write) {
- if(lba>=capacity) return false;
- if(!wait_bits(0x24,3,0,100000)) return false;
+ if(lba>=capacity) { sd_fail="SD LBA"; return false; }
+ if(!wait_bits(0x24,3,0,100000)) XFAIL("SD XFER INHIBIT");
  R(0x04)=(1<<16)|512;
- if(!command(write?24:17,lba,0x3a0000|(write?0:0x10))) return false;
+ if(!command(write?24:17,lba,0x3a0000|(write?0:0x10))) XFAIL("SD XFER CMD");
  uint32_t t=micros(),ready=write?0x10:0x20;
- while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)) return false; }
- if(R(0x30)&0xffff8000u) return false;
+ while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)) XFAIL("SD XFER READY TIMEOUT"); }
+ if(R(0x30)&0xffff8000u) XFAIL("SD XFER READY ERR");
  R(0x30)=ready;
  uint8_t *b=read_data;
  const uint8_t *out=write_data;
  for(unsigned i=0;i<128;i++) { uint32_t w; if(write) { memcpy(&w,out+i*4,4); R(0x20)=w; } else { w=R(0x20); memcpy(b+i*4,&w,4); } }
- t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)) return false; }
- if(R(0x30)&0xffff8000u) { return false; }
+ t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)) XFAIL("SD XFER DATA TIMEOUT"); }
+ if(R(0x30)&0xffff8000u) XFAIL("SD XFER DATA ERR");
  R(0x30)=2;
  /* CMD13 polls card programming state: host DATA_DONE alone is insufficient. */
  if(write) {
-  t=micros(); do { if(!command(13,rca,0x1a0000)) return false; uint32_t status=R(0x10); if(status&0xfdffe008u) return false; if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); return false;
+  t=micros(); do { if(!command(13,rca,0x1a0000)) XFAIL("SD XFER CMD13"); uint32_t status=R(0x10); if(status&0xfdffe008u) XFAIL("SD XFER CARDERR"); if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); XFAIL("SD XFER BUSY");
  }
  return true;
 }
@@ -135,8 +140,10 @@ static void sd_recover(void) {
  R(0x2c)|=3u<<25; wait_bits(0x2c,3u<<25,0,100000);
  R(0x30)=~0u;
  command(12,0,0x1b0000|0xc00000); wait_bits(0x24,3,0,100000);
+ const char *why=sd_fail;
  if(command(13,rca,0x1a0000)&&((R(0x10)>>9)&15)==4) return;
  sd_init();
+ if(sd_fail[0]=='n') sd_fail=why; /* keep the reason the transfer failed, not "none" */
 }
 static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
  if(transfer_once(lba,read_data,write_data,write)) return true;

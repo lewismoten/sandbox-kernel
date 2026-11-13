@@ -9,7 +9,7 @@ class SdRecover(unittest.TestCase):
         cls.t = tempfile.TemporaryDirectory(); so = pathlib.Path(cls.t.name)/'sd.so'
         subprocess.run(['cc','-shared','-fPIC','-O1','-DHOST_TEST','-Wall','-Wextra','-Werror','-I'+str(hostlib.ROOT/'include'),
                         str(hostlib.ROOT/'tests/sd_sim.c'),'-o',str(so)],check=True)
-        cls.c = C.CDLL(str(so)); cls.c.sim_setup.argtypes=[C.c_uint32]; cls.c.sim_fail_reads.argtypes=[C.c_uint32]
+        cls.c = C.CDLL(str(so)); cls.c.sim_setup.argtypes=[C.c_uint32]; cls.c.sim_fail_reads.argtypes=[C.c_uint32]; cls.c.sim_cmd13_bad.argtypes=[C.c_uint32]
     @classmethod
     def tearDownClass(cls): cls.t.cleanup()
     def setUp(self): self.c.sim_setup(1000); self.buf = C.create_string_buffer(512)
@@ -23,6 +23,11 @@ class SdRecover(unittest.TestCase):
         self.assertFalse(self.c.sd_read(5, self.buf))
         self.assertTrue(self.c.sd_read(6, self.buf))
         self.assertTrue(self.c.sd_read(7, self.buf))
+    def test_failed_reinit_keeps_the_card_so_a_later_read_can_recover(self):
+        self.c.sim_fail_reads(2); self.c.sim_cmd13_bad(1)  # recovery sees no transfer state, re-init fails (power property fails)
+        self.assertFalse(self.c.sd_read(5, self.buf))
+        self.assertGreater(self.c.sd_sectors(), 0, 'a failed re-init must not zero the capacity')
+        self.assertTrue(self.c.sd_read(6, self.buf))
     def test_out_of_range_is_refused_without_recovery(self):
         self.assertFalse(self.c.sd_read(5000, self.buf)); self.assertEqual(self.c.sim_cmd12s(), 0)
 
