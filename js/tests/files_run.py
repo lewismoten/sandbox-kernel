@@ -327,6 +327,25 @@ sys.exit(0);
         self.assertTrue(t['new'].startswith('ENOSPC'), t['new']); self.assertFalse((d / 'OS/SAVES').exists())
 
 
+class Toctou(unittest.TestCase):
+    """Review 2026-11-13: readInto took the buffer's address, then ran the app's valueOf() for offset and length; a valueOf that
+    detached the buffer made the read write into freed memory. The buffer is looked at again after the arguments."""
+
+    def test_valueof_cannot_detach_the_target(self):
+        code = PRE + """
+const f = fs.open('/sd/OS/APPS/FT/BIN.DAT');
+const b = new ArrayBuffer(64), u = new Uint8Array(b);
+E('off', () => f.readInto(u, { valueOf() { b.transfer(); return 0; } }));
+const b2 = new ArrayBuffer(64), u2 = new Uint8Array(b2);
+E('len', () => f.readInto(u2, 0, { valueOf() { b2.transfer(); return 32; } }));
+T('pos', f.position); f.close(); sys.exit(0);
+"""
+        t, _, _ = run_ok(self, code, files={'OS/APPS/FT/BIN.DAT': BIN})
+        self.assertTrue(t['off'].startswith('TypeError'), t)
+        self.assertTrue(t['len'].startswith('TypeError'), t)
+        self.assertEqual(t['pos'], '0')
+
+
 class Leaks(unittest.TestCase):
     def test_fifty_open_close_and_write_cycles_leave_nothing(self):
         code = PRE + """

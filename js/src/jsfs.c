@@ -191,6 +191,9 @@ static JSValue f_read_into(JSContext *c, JSValueConst t, int n, JSValueConst *a)
   if (n > 1 && !JS_IsUndefined(a[1])) {double d; if (JS_ToFloat64(c, &d, a[1])) return JS_EXCEPTION; if (!(d >= 0) || d > (double)room || d != (double)(uint32_t)d) return JS_ThrowRangeError(c, "offset is outside the buffer"); off = (uint32_t)d;}
   if (len_arg(c, n, a, 2, f->size - f->pos, (uint32_t)(room - off), &len)) return JS_EXCEPTION;
   if (n > 2 && !JS_IsUndefined(a[2])) {double d; JS_ToFloat64(c, &d, a[2]); if (d > (double)(room - off)) return JS_ThrowRangeError(c, "length runs past the end of the buffer");}
+  /* offset and length may have run the app's valueOf(): it could have detached or shrunk the buffer, so look at it again */
+  size_t room2; if (bytes_of(c, a[0], &p, &room2)) return JS_EXCEPTION;
+  if (room2 != room) return JS_ThrowTypeError(c, "readInto: the buffer changed size while its arguments were read");
   int32_t got = pull(f, p + off, len);
   if (got < 0) return fail_errno(c, got, "read", f->path);
   return JS_NewUint32(c, (uint32_t)got);
