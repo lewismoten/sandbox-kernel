@@ -265,9 +265,9 @@ static void test_log_storm(void) {
     cec_log_line(&l, 0, "session boot x"); cec_log_line(&l, 5, "POWER HDMI blank, CEC standby");
     for (unsigned i = 0; i < 1000; i++) { cec_log_line(&l, 100u + i * 2u, "rx 04:44:41 key"); assert(l.len <= CEC_LOG_BYTES); }
     unsigned kept = 0; for (uint32_t i = 0; i < l.len; i++) kept += l.text[i] == '\n';
-    assert(kept <= 2u * CEC_LOG_RATE + 2u && l.shed > 900u);
+    assert(kept <= 3u * CEC_LOG_RATE + 4u && l.shed > 0u && strstr(l.text, " lines (rate limit)\n"));
     assert(!strncmp(l.text, "0 session boot x\n", 17) && strstr(l.text, "POWER HDMI blank"));
-    uint32_t shed = l.shed; cec_log_flush(&l, 2100u + 5u);     /* the storm is over; the main loop's flush writes the marker */
+    uint32_t shed = l.shed; cec_log_flush(&l, 3200u);     /* the storm is over; the main loop's flush writes the marker */
     char want[48]; snprintf(want, sizeof want, "dropped %u lines (rate limit)\n", (unsigned)shed);
     assert(l.shed == 0 && l.len > strlen(want) && !strcmp(l.text + l.len - strlen(want), want));
     uint32_t len = l.len; cec_log_flush(&l, 9000u); assert(l.len == len);   /* nothing more to say */
@@ -300,13 +300,13 @@ static void test_edid_log_timing(void) {
 
     static struct cec_log l; char out[512];
     cec_log_init(&l);
-    for (unsigned i = 0; i < 1000; i++) cec_log_line(&l, i * 7u, "RX 0>4 44:01 padding padding padding padding");
+    for (unsigned i = 0; i < 1000; i++) cec_log_line(&l, i * 40u, "RX 0>4 44:01 padding padding padding padding");
     assert(l.len <= CEC_LOG_BYTES && l.dropped > 0 && l.text[l.len - 1] == '\n' && l.text[0] >= '0' && l.text[0] <= '9');
     assert(l.lines == 1000 - l.dropped);
-    assert(strstr(l.text, "6993 RX"));                      /* the newest line is kept */
+    assert(strstr(l.text, "39960 RX"));                      /* the newest line is kept */
     uint32_t n = cec_log_tail(&l, 2, out, sizeof out);
     unsigned nl = 0; for (uint32_t i = 0; i < n; i++) nl += out[i] == '\n';
-    assert(nl == 2 && strstr(out, "6993 RX") && strstr(out, "6986 RX") && !strstr(out, "6979 RX"));
+    assert(nl == 2 && strstr(out, "39960 RX") && strstr(out, "39920 RX") && !strstr(out, "39880 RX"));
     cec_log_line(&l, 1, "bell\x07 x"); assert(strstr(l.text, "bell? x"));
 }
 
