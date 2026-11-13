@@ -1,5 +1,15 @@
 # Sandbox JS changelog
 
+## 0.1.3 (2026-11-13)
+
+Save safety, from the review of 0.1.2. Host-tested only; not run on a board. No ABI change.
+
+- After any failed `write()` (`EDQUOT`, `ENOSPC`, out of memory, wrong type) the writer is spoiled: later writes, `commit()` and `close()` throw `EIO` and discard it, so the old file stays. A `close()` in a `finally` after a failed write used to publish the part staged before it (a 600-byte save became a 100-byte one); a host test now covers that case.
+- `docs/apps.md` no longer promises that a power cut leaves the old file or the new one. The kernel's docs say save writes are hardware-untested against power cuts, so the page now says that and suggests two save slots with a generation number and checksum.
+- Error texts: `ENOSPC` means the card or the kernel's staging space is full, and 1 MiB is a per-write limit; `EFBIG` comes only from the kernel's rename, which the runtime never calls. `apps.md` lists `EISDIR`, `EFBIG` and `EIO`.
+- `screen.gameLowres` changes nothing when its size check fails (it used to switch the flag first).
+- Correction to 0.1.2's note: the kernel does offer apps a rename (`sbx_rename`); saves skip temp-and-rename by choice (see `apps.md`, design note), not for lack of one.
+
 ## 0.1.2 (2026-11-13)
 
 Second pass over the adversarial review. Host-tested only; not run on a board. No ABI change.

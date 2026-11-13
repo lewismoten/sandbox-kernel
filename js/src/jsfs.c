@@ -40,8 +40,8 @@ static const char *errno_name(int e, const char **why) {
   case 16: *why = "another file or writer is open on the save area; close read handles there and try again"; return "EBUSY";
   case 22: *why = "the kernel refused the request"; return "EINVAL";
   case 24: *why = "too many open files"; return "EMFILE";
-  case 27: *why = "the file is too big for the kernel to save"; return "EFBIG";
-  case 28: *why = "the card is full, or the file is over the kernel's 1 MiB single-write limit"; return "ENOSPC";
+  case 27: *why = "the kernel refused to move a file over 1 MiB"; return "EFBIG";
+  case 28: *why = "the card or the kernel's staging space is full"; return "ENOSPC";
   case 30: *why = "this path is read-only for apps"; return "EROFS";
   case 36: *why = "the name is too long"; return "ENAMETOOLONG";
   case 122: *why = "the kernel allows 64 game folders and 32 files per game"; return "EDQUOT";
@@ -316,7 +316,7 @@ static JSValue w_write(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   else {uint8_t *q; if (bytes_of(c, a[0], &q, &len)) {snprintf(f->failed, sizeof f->failed, "TypeError"); return JS_EXCEPTION;} p = q;}
   JSValue r = JS_UNDEFINED;
   if ((uint64_t)f->n + len > jsrt_write_quota) r = fail(c, "EDQUOT", "this app may stage %u bytes in a save file (%u already, %u more asked)", (unsigned)jsrt_write_quota, (unsigned)f->n, (unsigned)len);
-  else if ((uint64_t)f->n + len > JSFS_KERNEL_MAX) r = fail(c, "ENOSPC", "the kernel writes at most 1 MiB in one file (%u already, %u more asked)", (unsigned)f->n, (unsigned)len);
+  else if ((uint64_t)f->n + len > JSFS_KERNEL_MAX) r = fail(c, "ENOSPC", "the kernel takes at most 1 MiB in one write (%u already, %u more asked)", (unsigned)f->n, (unsigned)len);
   else if (f->n + len > f->cap) {
     uint32_t cap = f->cap ? f->cap : 1024; while (cap < f->n + len) cap *= 2;
     uint8_t *nb = realloc(f->buf, cap);

@@ -187,7 +187,8 @@ fs.write('/sd/OS/SAVES/MYAPP/SLOT1.SAV', bytesOrString);        // one call
 const w = fs.createWriter('/sd/OS/SAVES/MYAPP/SLOT1.SAV');
 w.write(header); w.write(body);                      // returns the staged size
 try { w.commit(); } catch (e) { if (e.code === 'EBUSY') { /* close readers in the save folder, retry */ } else w.abort(); }
-// w.commit() and w.close() PUBLISH the staged bytes. w.discard() and w.abort() THROW THEM AWAY. Never close() in a finally.
+// w.commit() and w.close() PUBLISH the staged bytes. w.discard() and w.abort() THROW THEM AWAY.
+// After a failed write(), commit() and close() publish nothing: they discard and throw EIO, and the old file stays.
 ```
 
 How it works, and the limits that come from the kernel:
@@ -197,12 +198,21 @@ How it works, and the limits that come from the kernel:
 - **Writes** are whole files. The kernel can only write a complete file (create or replace) to a canonical name under
   `/sd/OS/SAVES/<id>/` (the app's folder name) or the one file `/sd/OS/CACHE/<id>`. So a writer keeps its bytes in the
   app's memory and `commit()` does the kernel's single write (open, write, flush, close). Nothing touches the card before
-  that. `abort()`, a dropped writer, or the app stopping discards the bytes and leaves the card as it was. The kernel replaces
-  a save by writing new data, then one directory entry, so a power cut leaves the old file or the new one.
+  that. `abort()`, a dropped writer, or the app stopping discards the bytes and leaves the card as it was. If the commit
+  itself fails, the kernel discards the new bytes and keeps the old file.
+- **Power cuts are not tested.** The kernel is designed to write the new data first and switch to it last, but its own
+  docs say physical power cuts during save writes are hardware-untested, that a FAT rename and flush are not a power-loss
+  transaction, and that its other power-cut claims assume the card writes each 512-byte sector whole and in order (cards
+  do that in practice, not by guarantee). So a cut during a commit may lose the save. For a save that matters, keep two
+  slots (say `SLOT1A.SAV` and `SLOT1B.SAV`): write each new save to the older slot, with a generation number and a
+  checksum inside, and at load read both and use the newest one whose checksum is right.
 - **commit, close, discard, abort.** `commit()` and `close()` are the same call: both publish what is staged and close the
   writer (`close` is kept because authors expect it to finish the file). To give up, call `discard()` (or its older name
-  `abort()`): the card is left as it was, and a second call does nothing. So do not close a writer in a `finally` after an
-  error; that would save a half-built file. Put `discard()` in the `catch` instead.
+  `abort()`): the card is left as it was, and a second call does nothing. If any `write()` fails (`EDQUOT`, `ENOSPC`, out
+  of memory, or data that is not a string or bytes), the writer is spoiled: later writes, `commit()` and `close()` throw
+  `EIO` and discard it, so the old file stays. This makes `close()` in a `finally` safe after a failed write. It can not
+  help if your own code throws between two writes that both worked: then a `close()` in a `finally` still publishes the
+  first part. Put `discard()` in the `catch` and commit only at the end of the `try`.
 - **An empty writer** commits a zero-length file (the kernel's open with create-and-truncate already marks the file to be
   written, so its flush publishes an empty one). `fs.write(path, '')` does the same: it creates the file or empties it.
 - **Reading the cache back.** An app with `fs.write.cache` may read its own `/sd/OS/CACHE/<id>` (a read capability is implied
@@ -211,19 +221,23 @@ How it works, and the limits that come from the kernel:
   2 s watchdog inside one call. The 1.5 MiB heap is the real limit: `{ meta: true }` builds an object per file, so list a
   folder with thousands of entries without `meta`.
 - **Design note: no temp file and rename.** A commit is the kernel's single whole-file write (new data first, then one
-  directory entry), which already leaves the old file or the new one after a power cut. The cache's temp-file-then-rename
-  (`sbx_rename`) would add a copy and a window with two names, so the runtime does not use it for saves.
+  directory entry). The kernel does offer apps a rename (`sbx_rename`, copy then publish), but it would add a copy, a window
+  with two names, and after a cut an orphan `.TMP` file the app can not delete (apps have no unlink) that takes one of the
+  32 file slots and counts against the quota. The kernel's docs say rename and flush are not a power-loss transaction
+  either, so the runtime does not use it for saves. Neither way is tested against real power cuts; see above.
 - **Names** are 8.3: 1 to 8 letters, digits, `_` or `-`, optionally a dot and 1 to 3 more. Lowercase is turned into
   uppercase. One folder deep, no subfolders, no `.` or `..`.
 - **Quota.** An app may keep 256 KiB in its save folder (all its files together; the file being replaced does not count
-  against itself), and a staged file may not exceed it: `EDQUOT`. The kernel's own limit of 1 MiB per file (`ENOSPC`) and
+  against itself), and a staged file may not exceed it: `EDQUOT`. The kernel's own limit of 1 MiB in one write (`ENOSPC`) and
   its 64 games and 32 files per game (`EDQUOT`) still apply. The default is `jsrt_write_quota` in `src/jsfs.c`.
 - **One writer** at a time (the kernel has one): a second `createWriter` is `EBUSY` until the first commits or aborts.
 - **Readers block commits.** While any file handle is open in the save folder (or cache), a commit fails with `EBUSY`; close
   it and call `commit()` again (a failed commit keeps the writer open).
 - **Errors** are `Error`s with `code` and a message that starts with it: `ENOENT`, `EACCES` (no capability, or a path
   outside the grant for a read), `EROFS` (a write outside the save or cache path, including the app's own folder),
-  `EINVAL` and `ENAMETOOLONG` (name rules), `EBUSY`, `EDQUOT`, `ENOSPC`, `EBADF` (closed handle), `EMFILE`/RangeError (too
+  `EINVAL` and `ENAMETOOLONG` (name rules), `EBUSY`, `EDQUOT`, `ENOSPC` (card or kernel staging space full), `EISDIR` (the
+  kernel will not save to that name), `EFBIG` (the kernel's rename refused a file over 1 MiB; the runtime never renames,
+  so apps should not see it), `EIO` (a card error, or a commit after a failed write), `EBADF` (closed handle), `EMFILE`/RangeError (too
   many handles, 12 per app). `fs.readFile` and `fs.readdir` keep their slice 1 messages.
 - No append, no in-place update, no delete, no folders: the kernel has none (contract gaps G2 and G11 to G14).
 
