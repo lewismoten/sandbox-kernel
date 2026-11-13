@@ -960,6 +960,8 @@ capabilities you did not ask for, keeps the app to its own folder and `/sd/OS/SA
 picker with the reason on screen when `AUTORUN.TXT` names an app that will not start. Line 2 there is `APPS/NAME` or
 `PICKER`. This is tested on the host (`make -C js test`), not yet on a board; see [`js/docs/apps.md`](../js/docs/apps.md).
 
+Step by step from zero, with a small example OS (home, files, settings, chime, e-ink clock), host-tested only: [`js/docs/make-your-own-os.md`](../js/docs/make-your-own-os.md).
+
 ## 8. Limits and gotchas
 
 - **The 8 MiB image quota is real.** GMOS hit it on 2026-11-09 and was rejected with
