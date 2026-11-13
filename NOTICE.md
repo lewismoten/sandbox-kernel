@@ -207,3 +207,24 @@ GET_CLOCK_RATE, SET_CLOCK_RATE and Blank Screen. See [power-saving.md](docs/powe
 for the design, host coverage, limitations and outstanding physical acceptance.
 The pinned TinyUSB 0.21.0 local dependency was checked against its SHA256.json;
 its existing upstream/license inventory is unchanged.
+
+## Sandbox JS, 2026-11-13
+
+`js/` imports the JS runtime from the maintainer's `gamemaker-os` repository (MIT; source commit in
+[js/IMPORT.md](js/IMPORT.md)), written there by Claude Sonnet 5.5 (Anthropic, Claude Code; see that
+repository's NOTICE.md) and imported and split here the same way. The import, the optional-profile guards, the
+standalone Makefile, the host fixtures, the size and reproducibility tools were made by Claude Sonnet 5.5
+(Anthropic, Claude Code) on 2026-11-13.
+
+- **QuickJS-ng** v0.18.0 (<https://github.com/quickjs-ng/quickjs>, commit d7215b0), MIT, copyright (c) 2017-2026 Fabrice Bellard,
+  (c) 2017-2024 Charlie Gordon, (c) 2023-2026 Ben Noordhuis and the other QuickJS-ng authors. Unchanged, in
+  `js/third_party/quickjs-ng/` with its `LICENSE`, `PINNED` and `SHA256SUMS`; the license text travels with any shipped `JS.ELF`.
+- **newlib** `libc.a` and `libm.a` from the Arm GNU Toolchain 15.3.rel2 are linked into `JS.ELF` (not copied into this
+  repository). Newlib is under BSD-style and similar permissive licenses ([COPYING.NEWLIB](https://sourceware.org/newlib/COPYING.NEWLIB));
+  the math functions come from Sun's fdlibm ("Permission to use, copy, modify, and distribute this software is freely granted, provided that this notice is preserved").
+  A shipped `JS.ELF` must carry those notices (open for slice 6).
+- **libgcc** is linked too (`-lgcc`): GPL-3.0-or-later with the GCC Runtime Library Exception, which permits linking into a program under another license.
+- **Bitmap fonts:** `js/fonts/font.txt` and `js/src/font_data.c` are the 5x9 font: capitals, digits and `- : . /` from this
+  repository's 5x7 status font (MIT, same author), lowercase and punctuation drawn new. No other font ships in `JS.ELF`
+  (the 8x8 font in `gamemaker-os` belongs to the game profile and is not imported).
+- `js/src/gif.c` is a C port of Game-Maker: Sandbox Edition's `formats/gif.ts` (MIT), itself following the original GIFC.C behavior.

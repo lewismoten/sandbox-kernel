@@ -4,14 +4,14 @@ Working name. A layer on top of sandbox-kernel so you can write your own OS for 
 
 You write apps in JavaScript. Sandbox JS is one ELF (QuickJS-ng inside) that the kernel boots like any program; it turns the kernel's small system-call surface (files, display, input, audio, e-ink, serial, power) into plain JavaScript objects, plus a DOM-lite UI profile (elements, a small CSS subset, a 2D canvas) for people who want a page-shaped shell. Your OS is a folder of `.js` files copied to the card.
 
-**Status: slice 0 of 7.** Only the contract exists: [docs/contract.md](docs/contract.md) lists every kernel call and what it becomes in JavaScript, with the gaps. No runtime code lives here yet. The JS that runs today is `JS.ELF` in the `gamemaker-os` repository ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
+**Status: slice 1 of 7.** The contract ([docs/contract.md](docs/contract.md)) lists every kernel call and what it becomes in JavaScript, with the gaps. The runtime now lives here too: a clean import of `JS.ELF` from `gamemaker-os` ([IMPORT.md](IMPORT.md) has the source commit, every change and what slice 2 must split), with no API expansion. `gamemaker-os` keeps its own copy for now ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
 
 ## What v1 is, and is not
 
 - Trusted maker apps. It does not promise to protect the card or other apps from hostile code.
 - One ELF under 1 MiB, with an always-embedded recovery picker.
 - ABI 1.12 kernels, with graceful fallback on older ones.
-- Game-Maker play (the `game` element) is a separate profile owned by gamemaker-os.
+- Game-Maker play (the `game` element) is a separate profile owned by gamemaker-os. It is off here (`JS_GAME=0`, the default).
 
 These are defaults picked for Lewis on 2026-11-13; he can change them (the list is in the contract).
 
@@ -30,7 +30,19 @@ These are defaults picked for Lewis on 2026-11-13; he can change them (the list 
 
 Design and estimates: the owner's research note `2026-11-10-js-layer-design.md` (kept with Lewis's research folder, not in this repository).
 
-## Slice 1 needs
+## Build and test
+
+```sh
+make -C js           # build/JS.ELF (stripped), build/JS.full.elf; needs the Arm GNU Toolchain
+make -C js host      # build/host/jsrun, the same runtime over stdio
+make -C js test      # host cases against tests/fixtures.json (log lines and framebuffer CRC-32 match the gamemaker-os build)
+make -C js size      # ELF bytes and each PT_LOAD against the 1 MiB ceiling and the 8 MiB image quota
+make -C js repro     # two clean builds at different paths must match byte for byte
+```
+
+Current size (2026-11-13, toolchain 15.3.rel2, `JS_GAME=0`): `JS.ELF` 752,204 bytes (71.7% of 1 MiB, 296,372 spare); two PT_LOADs, R-X 743,232 bytes and RW- 2,308 file bytes with 3,958,484 in memory (the 3 MiB heap, a 256 KiB read buffer and QuickJS's data); loaded image 4.49 MiB of the 8 MiB quota. Run on the host, not yet on a board. Third-party notices: [third_party/README.md](third_party/README.md). Nothing here is flashed by the tests.
+
+## Slice 1 needs (done)
 
 1. A decision on the `JS.ELF` source move: copy from gamemaker-os with history or a clean import, and which repository builds `JS.ELF` afterward.
 2. QuickJS-ng pinned (version and license text) and its build ported to this repository's Makefile and SDK.
