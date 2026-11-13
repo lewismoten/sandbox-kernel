@@ -94,6 +94,7 @@ test: host host-profiletest host-appcheck
 	$(PYTHON) tests/devices_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/launch_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/os_run.py $(HOSTDIR)/jsrun
+	$(PYTHON) tests/limits_run.py $(HOSTDIR)/jsrun
 size: $(BUILD)/JS.ELF
 	$(SIZE) $(BUILD)/JS.full.elf
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF

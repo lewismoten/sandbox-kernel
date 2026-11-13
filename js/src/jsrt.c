@@ -940,6 +940,7 @@ static int load_app(const char *dir) {
   return 0;
 }
 static int start_inner(const char *dir, uint32_t heap_limit) {
+  plat_heartbeat(); /* a start is progress: each one gets its own 2 s window, as the chain of starts after a stop can be long */
   native = JS_UNDEFINED;
   exited = exit_code = want_frame = 0;
   wake_at_ms = 1e300;
@@ -1180,19 +1181,15 @@ static int app_fault(const char *from_id, const char *why) {
     snprintf(cur_args, sizeof cur_args, "%s", lstack[ldepth].args);
     snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
     sayf("JS fault in %s, back to %s, depth %u", from_id, lstack[ldepth].id, ldepth);
-    if (!try_start(dir, 0)) {
-      snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why);
-      start_who[0] = start_why[0] = 0;
-      return 0;
-    }
+    snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why); /* the caller reads it as it starts */
+    if (!try_start(dir, 0)) {start_who[0] = start_why[0] = 0; return 0;}
+    fail_id[0] = 0;
   } else if (autorun_dir[0] && strcmp(app_id_of(autorun_dir), from_id)) {
     cur_args[0] = 0;
     sayf("JS fault in %s, back to the AUTORUN app", from_id);
-    if (!try_start(autorun_dir, 0)) {
-      snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why);
-      start_who[0] = start_why[0] = 0;
-      return 0;
-    }
+    snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why);
+    if (!try_start(autorun_dir, 0)) {start_who[0] = start_why[0] = 0; return 0;}
+    fail_id[0] = 0;
   }
   launch_state_clear();
   return try_start(0, 0);
