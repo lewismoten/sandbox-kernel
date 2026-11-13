@@ -8,6 +8,7 @@
 #include "plat.h"
 #include <stdlib.h>
 #include <string.h>
+#include "alloc.h"
 
 #define IO_MAX 4096u
 static JSContext *sctx;

@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "font.h"
+#include "alloc.h"
 static int32_t W = 640, H = 480; /* the screen mode (dom_screen) */
 static uint32_t depth = 32;
 #define SLOTS 8
@@ -110,6 +111,8 @@ void dom_insert_before(struct dom_el *p, struct dom_el *c, struct dom_el *before
   if (before) before->prev = c; else p->last = c;
   if (p->in_tree) {tree_flag(c, 1); need_layout = 1; c->old.w = c->old.h = 0;}
 }
+unsigned dom_depth(const struct dom_el *e) {unsigned n = 0; for (; e->parent; e = e->parent) n++; return n;}
+unsigned dom_height(const struct dom_el *e) {unsigned h = 0; for (const struct dom_el *c = e->first; c; c = c->next) {unsigned k = dom_height(c) + 1; if (k > h) h = k;} return h;}
 void dom_append(struct dom_el *p, struct dom_el *c) {dom_insert_before(p, c, 0);}
 void dom_delete(struct dom_el *e) {
   dom_remove(e);

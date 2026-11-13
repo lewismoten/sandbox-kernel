@@ -26,7 +26,7 @@ static uint64_t vnow;
 static uint32_t fb[PLAT_SURFACE / 4];
 static uint32_t mode_w = PLAT_W, mode_h = PLAT_H, mode_d = 32;
 static uint8_t palette[768];
-static struct {uint64_t at; uint16_t type, code; int32_t value;} keys[256];
+static struct {uint64_t at; uint16_t type, code; int32_t value;} keys[16384];
 static int host_attached = 1, have_seed, seed_live, sleepstat, devstat;
 static uint64_t seed_value, max_sleep, sleeps;
 static int nkeys, next_key;
@@ -358,10 +358,27 @@ static long blocks(void) {malloc_statistics_t st; malloc_zone_statistics(0, &st)
 #include <malloc.h>
 static long blocks(void) {struct mallinfo2 m = mallinfo2(); return (long)m.uordblks;}
 #endif
+#ifdef JSRT_FAULT
+extern unsigned long fi_dcount, fi_qcount, fi_dfail, fi_qfail, fi_hits;
+extern long fi_dlive, fi_qlive;
+/* One start, run for ms and stop; the start's result. */
+static int run_once(const char *dir, uint32_t heap, uint64_t ms) {
+  vnow = 0; next_key = 0;
+  int r = jsrt_start(dir, heap);
+  if (!r) for (;;) {
+    uint64_t wake = jsrt_step();
+    if (!wake || plat_clock_ns() >= ms * 1000000ull) break;
+    plat_sleep_until(wake < ms * 1000000ull ? wake : ms * 1000000ull);
+  }
+  jsrt_stop();
+  return r;
+}
+#endif
+static uint64_t step_max, s1, steps; static size_t heap_hi; static long blocks0;
 int main(int argc, char **argv) {
   if (argc < 3) {fprintf(stderr, "usage: jsrun <sd folder> <app folder> [--ms N] [--vclock] [--keys ms:code:value,...] [--shot out.rgb] [--heap bytes]\n"); return 2;}
   root = argv[1];
-  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = 3u << 20; int launcher = 0, autorun = 0; unsigned cycles = 0; const char *alt = 0;
+  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = JSRT_HEAP_LIMIT; int launcher = 0, autorun = 0; unsigned cycles = 0; const char *alt = 0, *sweep = 0; unsigned stride = 1, rep_count = 1; int soak = 0; unsigned long long rep_period = 0;
   for (int i = 3; i < argc; i++) {
     if (!strcmp(argv[i], "--ms") && i + 1 < argc) ms = strtoull(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--vclock")) vclock = 1;
@@ -405,11 +422,15 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--write-quota") && i + 1 < argc) jsrt_write_quota = (uint32_t)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--disk-full")) disk_full = 1;
     else if (!strcmp(argv[i], "--alt") && i + 1 < argc) alt = argv[++i]; /* with --cycles: alternate between argv[2] and this app */
+    else if (!strcmp(argv[i], "--sweep") && i + 1 < argc) sweep = argv[++i]; /* fault build: fail the N-th allocation, for every N (direct or qjs), and check nothing crashes or leaks */
+    else if (!strcmp(argv[i], "--stride") && i + 1 < argc) stride = (unsigned)strtoul(argv[++i], 0, 10);
+    else if (!strcmp(argv[i], "--soak")) soak = 1; /* after the run: HOST soak ... (the longest loop turn, the heap's high-water mark) */
+    else if (!strcmp(argv[i], "--keys-repeat") && i + 1 < argc) sscanf(argv[++i], "%llu:%u", &rep_period, &rep_count); /* period_ms:count: the --keys schedule again, count times in all */
     else if (!strcmp(argv[i], "--cycles") && i + 1 < argc) cycles = (unsigned)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--heap") && i + 1 < argc) heap = (uint32_t)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--keys") && i + 1 < argc)
-      for (char *p = argv[++i]; *p && nkeys < 256;) {
+      for (char *p = argv[++i]; *p && nkeys < 16000;) {
         unsigned long long at; unsigned code, type = 1; int value, used;
         if (sscanf(p, "%llu:%u:%d%n", &at, &code, &value, &used) != 3) {fprintf(stderr, "bad --keys\n"); return 2;}
         p += used; if (*p == ':' && sscanf(p, ":%u%n", &type, &used) == 1) p += used; /* ms:code:value[:type] (type 0 code 3 = SYN_DROPPED, 256 attach, 257 detach) */
@@ -417,7 +438,34 @@ int main(int argc, char **argv) {
         if (*p == ',') p++;
       }
   }
+  if (rep_count > 1) { /* the schedule again every period, rep_count times in all */
+    int base = nkeys;
+    for (unsigned r = 1; r < rep_count; r++)
+      for (int k = 0; k < base && nkeys < 16384; k++) {keys[nkeys] = keys[k]; keys[nkeys].at += r * rep_period * 1000000ull; nkeys++;}
+  }
+  (void)sweep; (void)stride;
   start = real_ns();
+  blocks0 = blocks();
+#ifdef JSRT_FAULT
+  if (sweep) { /* fail the N-th allocation of one series, for each N: nothing may crash or leak. One clean run first counts them. */
+    int qjs = !strcmp(sweep, "qjs");
+    unsigned long total, runs = 0, bad_starts = 0, leaks = 0;
+    fi_dfail = fi_qfail = 0; fi_dcount = fi_qcount = 0;
+    run_once(argv[2], heap, ms);
+    total = qjs ? fi_qcount : fi_dcount;
+    printf("SWEEP %s allocations %lu\n", sweep, total); fflush(stdout);
+    for (unsigned long n = 1; n <= total; n += (n < 300 || stride < 2) ? 1 : stride) {
+      fi_dcount = fi_qcount = 0; fi_hits = 0;
+      if (qjs) {fi_qfail = n; fi_dfail = 0;} else {fi_dfail = n; fi_qfail = 0;}
+      printf("SWEEP at %lu\n", n); fflush(stdout);
+      if (run_once(argv[2], heap, ms)) bad_starts++;
+      runs++;
+      if (fi_dlive || fi_qlive || jsrt_heap_blocks() || jsrt_handles_open()) {leaks++; printf("SWEEP LEAK at %lu direct %ld qjs %ld heap_blocks %zu handles %u\n", n, fi_dlive, fi_qlive, jsrt_heap_blocks(), jsrt_handles_open()); fi_dlive = fi_qlive = 0;}
+    }
+    printf("SWEEP %s total %lu runs %lu failed_starts %lu leaks %lu\n", sweep, total, runs, bad_starts, leaks);
+    return leaks ? 1 : 0;
+  }
+#endif
   if (cycles) { /* start, run for --ms and stop, again and again; prints the live heap blocks after the first and last */
     long first = 0; unsigned leaks = 0;
     for (unsigned c = 0; c < cycles; c++) {
@@ -440,7 +488,9 @@ int main(int argc, char **argv) {
   if (autorun ? jsapp_autorun(heap) : launcher ? jsapp_start(dir, heap) : jsrt_start(dir, heap)) {jsrt_stop(); return 1;}
   uint64_t end = ms * 1000000ull;
   for (;;) {
+    uint64_t s0 = real_ns();
     uint64_t wake = launcher ? jsapp_step() : jsrt_step();
+    s1 = real_ns() - s0; if (s1 > step_max) step_max = s1; steps++; if (jsrt_heap_peak() > heap_hi) heap_hi = jsrt_heap_peak();
     if (!wake || plat_clock_ns() >= end) break;
     if (next_key < nkeys && keys[next_key].at < wake) wake = keys[next_key].at;
     plat_sleep_until(wake < end ? wake : end);
@@ -451,6 +501,7 @@ int main(int argc, char **argv) {
   }
   int status = jsrt_exit_code();
   jsrt_stop();
+  if (soak) printf("HOST soak steps %llu max_step_us %llu heap_peak %zu blocks_start %ld blocks_end %ld heap_blocks %zu\n", (unsigned long long)steps, (unsigned long long)(step_max / 1000u), heap_hi, blocks0, blocks(), jsrt_heap_blocks());
   if (devstat) print_devstat();
   if (sleepstat) printf("HOST sleeps %llu max_us %llu\n", (unsigned long long)sleeps, (unsigned long long)(max_sleep / 1000u));
   return status;

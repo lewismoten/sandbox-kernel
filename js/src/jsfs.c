@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "alloc.h"
 
 #define ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES)
 #define ANY_WRITE (APP_CAP_FS_WRITE_SAVES | APP_CAP_FS_WRITE_CACHE)

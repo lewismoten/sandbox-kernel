@@ -33,7 +33,7 @@ LFLAGS := -nostartfiles -T$(SDK)/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-i
 JSC := src/jsrt.c src/dom.c src/gif.c src/font_data.c src/app.c src/handle.c src/jsfs.c src/jsdev.c src/jsaudio.c src/jseink.c src/jsserial.c src/jspower.c
 JSBOARD := src/main.c src/plat_sbx.c src/sys.c
 HOSTDIR := $(BUILD)/host
-.PHONY: all host host-profiletest host-appcheck test size repro clean
+.PHONY: all host host-fault host-profiletest host-appcheck test size repro clean
 all: $(BUILD)/JS.ELF
 $(BUILD) $(HOSTDIR) $(BUILD)/q:
 	mkdir -p $@
@@ -72,6 +72,10 @@ HOSTSRC = tests/host/jsrun.c $(JSC) $(HOSTDIR)/js_prelude.c $(HOSTDIR)/js_picker
 HOSTCF = -O1 -std=gnu11 $(WARN) -Isrc -isystem third_party/quickjs-ng
 $(HOSTDIR)/jsrun: $(HOSTSRC) $(JS_PROFILE) $(wildcard src/*.h) Makefile | $(HOSTDIR)
 	$(HOSTCC) $(HOSTCF) $(JS_PROFILE_FLAGS) $(HOSTSRC) $(JS_PROFILE) $(JS_PROFILE_LIBS) -lm -o $@
+# The runtime with every allocation counted and the N-th one failable (src/alloc.h, tests/host/faultalloc.c): tests/alloc_run.py.
+host-fault: $(HOSTDIR)/jsrun-fault
+$(HOSTDIR)/jsrun-fault: $(HOSTSRC) tests/host/faultalloc.c $(JS_PROFILE) $(wildcard src/*.h) Makefile | $(HOSTDIR)
+	$(HOSTCC) $(HOSTCF) -DJSRT_FAULT $(JS_PROFILE_FLAGS) $(HOSTSRC) tests/host/faultalloc.c $(JS_PROFILE) $(JS_PROFILE_LIBS) -lm -o $@
 # The same runtime with the test profile (tests/host/profile_test.c) in place of the core profile.
 host-profiletest: $(HOSTDIR)/jsrun-pt
 $(HOSTDIR)/jsrun-pt: $(HOSTSRC) tests/host/profile_test.c $(wildcard src/*.h) Makefile | $(HOSTDIR)

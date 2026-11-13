@@ -10,6 +10,7 @@
 #include "plat.h"
 #include <stdlib.h>
 #include <string.h>
+#include "alloc.h"
 
 #define KEYS 768u /* the kernel's key code space (SBX_INPUT_KEYS) */
 #define SLEEPS_MAX 64u

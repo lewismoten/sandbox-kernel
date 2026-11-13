@@ -9,6 +9,7 @@
 #include "plat.h"
 #include <stdlib.h>
 #include <string.h>
+#include "alloc.h"
 
 #define PAGE 3904u
 #define WINDOW_MAX 64u

@@ -10,6 +10,7 @@
 #include "plat.h"
 #include <stdlib.h>
 #include <string.h>
+#include "alloc.h"
 
 #define STAGE 1024u    /* kernel frames converted at a time (4 KiB on the stack) */
 #define TONES_MAX 32u

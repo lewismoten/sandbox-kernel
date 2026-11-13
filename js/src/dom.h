@@ -42,6 +42,9 @@ int dom_tag(const char *name);                  /* DOM_* or -1 */
 const char *dom_tag_name(int tag);
 struct dom_el *dom_new(int tag);                /* 0 when out of memory */
 void dom_delete(struct dom_el *e);              /* unlinks it and its children from it */
+/* Levels from the root down to e (a root is 0), and the levels below e (a leaf is 0): the nesting a tree may reach is bounded. */
+unsigned dom_depth(const struct dom_el *e);
+unsigned dom_height(const struct dom_el *e);
 void dom_append(struct dom_el *parent, struct dom_el *child);
 void dom_insert_before(struct dom_el *parent, struct dom_el *child, struct dom_el *before);
 void dom_remove(struct dom_el *child);

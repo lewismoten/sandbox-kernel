@@ -4,6 +4,15 @@
  * frames on the platform's clock (plat.h). One app at a time. */
 #pragma once
 #include <stdint.h>
+/* Limits (apps.md, "Limits"): the JS heap an app may use (the board's malloc pool is 3 MiB, shared with the element tree and
+   the runtime), the milliseconds of script one loop turn or one start may run, and QuickJS's own stack depth. */
+#define JSRT_HEAP_LIMIT (1536u << 10)
+#define JSRT_STEP_BUDGET_MS 500u
+#define JSRT_START_BUDGET_MS 1000u
+#define JSRT_JS_STACK (256u * 1024u)
+#define JSRT_DOM_DEPTH 64u    /* elements nest at most this deep: layout, paint and teardown recurse on the 1 MiB stack */
+#define JSRT_EXIT_TIMEOUT 124 /* an app stopped for running too long, as timeout(1) says it */
+#define JSRT_EXIT_OOM 137     /* ... or for running out of memory */
 #define JSRT_VERSION "0.3.0" /* the runtime (slice 3); the API an app asks for is APP_API_VERSION in app.h */
 struct jsrt_stats {
   uint64_t start_ns;                  /* runtime and context made, prelude and app run */
@@ -13,6 +22,11 @@ struct jsrt_stats {
   uint64_t game_play_ns;              /* time in the play phase (ticks are due only then) */
 };
 extern struct jsrt_stats jsrt_stats;
+#include <stddef.h>
+/* The JS heap in use and its high-water mark since the last start, and live blocks (0 after jsrt_stop). */
+size_t jsrt_heap_used(void);
+size_t jsrt_heap_peak(void);
+size_t jsrt_heap_blocks(void);
 /* Starts the app in folder dir ("/sd/OS/APPS/HELLO": runs its MAIN.JS);
    0, or -1 (the reason is logged). heap_limit: bytes for the JS heap. */
 int jsrt_start(const char *dir, uint32_t heap_limit);

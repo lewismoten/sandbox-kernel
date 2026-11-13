@@ -17,7 +17,7 @@ int main(const sbx_startup *start) {
   char line[120];
   snprintf(line, sizeof line, "JS.ELF QuickJS-ng %s, ABI %u.%u, runtime %s API %u", "0.18.0", (unsigned)start->major, (unsigned)start->minor, JSRT_VERSION, APP_API_VERSION);
   plat_log(line, (uint32_t)strlen(line));
-  if (jsapp_autorun(3u << 20)) return 5;
+  if (jsapp_autorun(JSRT_HEAP_LIMIT)) return 5;
   snprintf(line, sizeof line, "JS heap high-water after start %u bytes", (unsigned)sys_heap_used());
   plat_log(line, (uint32_t)strlen(line));
   for (;;) {

@@ -119,7 +119,7 @@ const a = audio.open({ onneed(frames) {
   at += a.write(sample.subarray(at * 2, (at + n) * 2));
 } });
 sleep(6000).then(() => { const s = a.stats(); T('s', [s.underruns, at > 250000, s.writes > 1000].join(',')); sys.exit(0); });
-""", ms='6500', args=['--sleepstat'])
+""", ms='6500', args=['--sleepstat', '--heap', str(3 << 20)])   # a 1.9 MB sample is past the app default (1.5 MiB)
         self.assertEqual(t['s'], '0,true,true')
         m = re.search(r'HOST sleeps (\d+) max_us (\d+)', '\n'.join(rest))
         self.assertTrue(m, rest)

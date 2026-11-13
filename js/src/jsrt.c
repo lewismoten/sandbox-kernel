@@ -21,6 +21,7 @@
 #include "jseink.h"
 #include "jspower.h"
 #include "jsserial.h"
+#include "alloc.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
@@ -99,7 +100,77 @@ static int path_ok(JSContext *c, const char *path, int write, const char *what) 
 int32_t jsrt_fs_read(const char *path, uint8_t *buf, uint32_t cap) {return path_allowed(path, 0, 0) ? plat_read(path, buf, cap) : -1;}
 int32_t jsrt_fs_list(const char *path, void (*fn)(void *, const char *, uint32_t, int, uint32_t), void *user) {return path_allowed(path, 0, 0) ? plat_list(path, fn, user) : -1;}
 static double now_ms(void) {return (double)(plat_clock_ns() - t0_ns) / 1e6;}
+/* ---- Limits (slice 5). The heap: every QuickJS allocation goes through q_* below, which keeps its own byte count (each
+   block carries its size, so the count is exact on the board, where newlib has no usable-size call) and fails an
+   allocation that would pass the app's limit; the failure also sets q_oom, so the app is stopped even if it catches the
+   "out of memory" error. The clock: an interrupt handler QuickJS polls about every 10,000 operations returns "stop" once
+   the script slice's deadline has passed (also inside a regular expression, a sort or a microtask chain), which throws an
+   error the app cannot catch. A slice is JSRT_STEP_BUDGET_MS for everything the app runs in one loop turn (events,
+   timers, frames, microtasks) and JSRT_START_BUDGET_MS for loading it; the kernel's heartbeat is 2 s. A stopped app
+   ends with fault_why set; jsapp_step returns to the caller or the picker with that reason. ---- */
+#define QHDR 16u /* room before each block for its size, keeping the 16-byte alignment */
+static size_t q_used, q_peak, q_limit, q_blocks;
+static int q_oom, timed_out, in_start;
+static void pending_clear(void);
+static uint64_t deadline_ns;
+static char fault_why[96];
+static void q_note(size_t n) {q_used += n; q_blocks++; if (q_used > q_peak) q_peak = q_used;}
+static void *q_malloc(void *o, size_t n) {
+  (void)o;
+  if (n > ~(size_t)0 - QHDR || (q_limit && q_used + n > q_limit)) {q_oom = 1; return 0;}
+  size_t *b = JSRT_QMALLOC(n + QHDR);
+  if (!b) {q_oom = 1; return 0;}
+  b[0] = n; q_note(n); return (char *)b + QHDR;
+}
+static void *q_calloc(void *o, size_t count, size_t size) {
+  (void)o;
+  if (size && count > (~(size_t)0 - QHDR) / size) {q_oom = 1; return 0;}
+  size_t n = count * size;
+  if (q_limit && q_used + n > q_limit) {q_oom = 1; return 0;}
+  size_t *b = JSRT_QCALLOC(1, n + QHDR);
+  if (!b) {q_oom = 1; return 0;}
+  b[0] = n; q_note(n); return (char *)b + QHDR;
+}
+static void q_free(void *o, void *p) {
+  (void)o;
+  if (!p) return;
+  size_t *b = (size_t *)((char *)p - QHDR);
+  q_used -= b[0]; q_blocks--; JSRT_QFREE(b);
+}
+static void *q_realloc(void *o, void *p, size_t n) {
+  if (!p) return q_malloc(o, n);
+  if (!n) {q_free(o, p); return 0;}
+  size_t *b = (size_t *)((char *)p - QHDR), old = b[0];
+  if (n > ~(size_t)0 - QHDR || (q_limit && n > old && q_used + (n - old) > q_limit)) {q_oom = 1; return 0;}
+  size_t *nb = JSRT_QREALLOC(b, n + QHDR);
+  if (!nb) {q_oom = 1; return 0;}
+  nb[0] = n; q_used = q_used - old + n; if (q_used > q_peak) q_peak = q_used;
+  return (char *)nb + QHDR;
+}
+static size_t q_usable(const void *p) {return p ? *(const size_t *)((const char *)p - QHDR) : 0;}
+static const JSMallocFunctions q_funcs = {q_calloc, q_malloc, q_free, q_realloc, q_usable};
+size_t jsrt_heap_used(void) {return q_used;}
+size_t jsrt_heap_peak(void) {return q_peak;}
+size_t jsrt_heap_blocks(void) {return q_blocks;}
+static int interrupt_cb(JSContext *r, void *u) {
+  (void)r; (void)u;
+  if (q_oom) return 1;
+  if (plat_clock_ns() > deadline_ns) {timed_out = 1; return 1;}
+  return 0;
+}
+static void arm(uint32_t ms) {deadline_ns = plat_clock_ns() + (uint64_t)ms * 1000000ull;}
+/* An app that ran out of memory or time stops now, with the reason: no JS runs again, the loop sees exited. */
+static void check_fault(void) {
+  if (fault_why[0]) return;
+  if (q_oom) snprintf(fault_why, sizeof fault_why, "it ran out of memory (limit %u KiB)", (unsigned)(q_limit >> 10));
+  else if (timed_out) snprintf(fault_why, sizeof fault_why, "a script ran too long (limit %u ms)", (unsigned)(in_start ? JSRT_START_BUDGET_MS : JSRT_STEP_BUDGET_MS));
+  else return;
+  exit_code = q_oom ? JSRT_EXIT_OOM : JSRT_EXIT_TIMEOUT; exited = 1; pending_clear();
+  sayf("JS app stopped: %s", fault_why);
+}
 static void report(void) {
+  check_fault();
+  if (fault_why[0]) {JS_FreeValue(ctx, JS_GetException(ctx)); return;} /* a stop is not an error for the app to handle */
   JSValue e = JS_GetException(ctx), f = JS_GetPropertyStr(ctx, native, "onError");
   if (JS_IsFunction(ctx, f)) JS_FreeValue(ctx, JS_Call(ctx, f, JS_UNDEFINED, 1, (JSValueConst *)&e));
   else {const char *s = JS_ToCString(ctx, e); sayf("JS error: %s", s ? s : "?"); JS_FreeCString(ctx, s);}
@@ -112,6 +183,7 @@ static JSValue call_native(const char *name, int argc, JSValueConst *argv) {
   if (JS_IsFunction(ctx, f)) {r = JS_Call(ctx, f, JS_UNDEFINED, argc, argv); if (JS_IsException(r)) report();}
   JS_FreeValue(ctx, f);
   jsrt_stats.js_ns += plat_clock_ns() - t;
+  check_fault();
   return r;
 }
 
@@ -187,6 +259,7 @@ static int adopt(JSContext *c, struct dom_el *p, JSValueConst child, struct dom_
   struct dom_el *k = el_of(c, child);
   if (!k) return -1;
   for (struct dom_el *a = p; a; a = a->parent) if (a == k) {JS_ThrowRangeError(c, "an element cannot hold itself"); return -1;}
+  if (dom_depth(p) + 1 + dom_height(k) > JSRT_DOM_DEPTH) {JS_ThrowRangeError(c, "elements nest at most %u deep", JSRT_DOM_DEPTH); return -1;}
   if (!k->parent) JS_DupValue(c, child); /* the parent keeps it alive */
   dom_insert_before(p, k, before);
   return 0;
@@ -666,6 +739,7 @@ static char pend_id[9], pend_args[ARGS_MAX + 1], cur_args[ARGS_MAX + 1];
 static char ret_id[9]; static int ret_code, ret_set;              /* who returned to this app, and with what */
 static char fail_id[9], fail_why[96];                              /* a launch that did not start, told to the caller */
 static char autorun_dir[48];
+static void pending_clear(void) {pending = PEND_NONE;}
 static JSValue js_apps_launch(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; char id[9]; 
   if (need(c, APP_CAP_APPS_LAUNCH, "apps.launch")) return JS_EXCEPTION;
@@ -826,7 +900,9 @@ int jsrt_eval(const char *src, uint32_t n, const char *name) {
   JSValue r = JS_Eval(ctx, src, n, name, JS_EVAL_TYPE_GLOBAL);
   jsrt_stats.js_ns += plat_clock_ns() - t;
   if (JS_IsException(r)) {report(); return -1;}
-  JS_FreeValue(ctx, r); return 0;
+  JS_FreeValue(ctx, r);
+  check_fault();
+  return 0;
 }
 int jsrt_exit_code(void) {return exit_code;}
 static JSClassID new_class(JSClassID *id, const char *name, JSClassFinalizer *fin, JSClassGCMark *mark, const JSCFunctionListEntry *fns, int n) {
@@ -863,7 +939,7 @@ static int load_app(const char *dir) {
   sayf("JS app %s %s api %u: %s", manifest.name, manifest.version, (unsigned)manifest.api, k ? list : "no extra capabilities");
   return 0;
 }
-int jsrt_start(const char *dir, uint32_t heap_limit) {
+static int start_inner(const char *dir, uint32_t heap_limit) {
   native = JS_UNDEFINED;
   exited = exit_code = want_frame = 0;
   wake_at_ms = 1e300;
@@ -877,10 +953,12 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   memset(&jsrt_stats, 0, sizeof jsrt_stats);
   uint64_t t = plat_clock_ns();
   t0_ns = t;
-  rt = JS_NewRuntime();
+  q_used = q_peak = q_blocks = 0; q_limit = heap_limit; q_oom = timed_out = 0; fault_why[0] = 0;
+  arm(JSRT_START_BUDGET_MS);
+  rt = JS_NewRuntime2(&q_funcs, 0);
   if (!rt) {say("JS no runtime (memory)"); return -1;}
-  JS_SetMemoryLimit(rt, heap_limit);
-  JS_SetMaxStackSize(rt, 256 * 1024);
+  JS_SetMaxStackSize(rt, JSRT_JS_STACK);
+  JS_SetInterruptHandler(rt, interrupt_cb, 0);
   ctx = JS_NewContext(rt);
   if (!ctx) {say("JS no context (memory)"); return -1;}
   for (unsigned i = 0; i < NSTYLE; i++) style_proto[i] = (JSCFunctionListEntry)JS_CGETSET_MAGIC_DEF(style_names[i], style_get, style_set, (int16_t)i);
@@ -920,6 +998,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
     next_frame_ns = plat_clock_ns();
     return 0;
   }
+  arm(JSRT_START_BUDGET_MS); /* the app's own script gets the whole start budget */
   char path[96]; snprintf(path, sizeof path, "%s/%s", dir, entry_name);
   char *src = (char *)io; /* JS_Eval copies what it keeps */
   int32_t n = plat_read(path, io, sizeof io - 1);
@@ -935,10 +1014,21 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   if (bad) {snprintf(start_who, sizeof start_who, "APPS/%.8s", app_id); snprintf(start_why, sizeof start_why, "%s threw an error (see the log)", entry_name);}
   return bad ? -1 : 0;
 }
+int jsrt_start(const char *dir, uint32_t heap_limit) {
+  in_start = 1;
+  int r = start_inner(dir, heap_limit);
+  in_start = 0;
+  if (r) {
+    check_fault();
+    if (fault_why[0]) {snprintf(start_who, sizeof start_who, dir ? "APPS/%.8s" : "PICKER", app_id); snprintf(start_why, sizeof start_why, "%s", fault_why);}
+  }
+  return r;
+}
 uint64_t jsrt_step(void) {
   uint16_t type, code; int32_t value;
   plat_heartbeat();
   if (exited) return 0;
+  arm(JSRT_STEP_BUDGET_MS);
   unsigned handled = 0, more = 0;
   while (!exited) { /* at most JSDEV_EVENTS_PER_STEP events a turn, so a flood cannot starve timers and frames */
     if (handled == JSDEV_EVENTS_PER_STEP) {more = 1; break;}
@@ -989,7 +1079,13 @@ uint64_t jsrt_step(void) {
     } else if (r & JSRT_DRAW && game_el) {struct dom_rect all = {0, 0, PLAT_W, PLAT_H}; dom_damage(&all);}
     if (r & JSRT_END) stop_game();
   }
-  for (JSContext *c; !exited && JS_ExecutePendingJob(rt, &c) > 0;) {}
+  for (JSContext *c; !exited;) {
+    int j = JS_ExecutePendingJob(rt, &c);
+    if (j > 0) continue;
+    if (j < 0) report(); /* a job that threw: logged (or, if it was stopped, the stop) */
+    break;
+  }
+  check_fault();
   if (exited) return 0;
   if (orphan_mode) {orphan_mode = 0; lowres_on = 0; set_mode(mode_w, mode_h, mode_d);}
   uint64_t t = plat_clock_ns();
@@ -1073,6 +1169,34 @@ static int app_switch(const char *from_id) {
   launch_state_clear();
   return try_start(0, 0);
 }
+/* The runtime stopped the app (time or memory): back to whoever launched it, told why (sandbox.launchArgs.failed), else to
+   the AUTORUN app, else to the picker, which shows the reason. 0, or -1 when nothing would start. */
+static int app_fault(const char *from_id, const char *why) {
+  char dir[64];
+  snprintf(start_who, sizeof start_who, "APPS/%.8s", from_id); snprintf(start_why, sizeof start_why, "%s", why);
+  ret_set = 0; fail_id[0] = 0;
+  if (ldepth) {
+    ldepth--;
+    snprintf(cur_args, sizeof cur_args, "%s", lstack[ldepth].args);
+    snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
+    sayf("JS fault in %s, back to %s, depth %u", from_id, lstack[ldepth].id, ldepth);
+    if (!try_start(dir, 0)) {
+      snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why);
+      start_who[0] = start_why[0] = 0;
+      return 0;
+    }
+  } else if (autorun_dir[0] && strcmp(app_id_of(autorun_dir), from_id)) {
+    cur_args[0] = 0;
+    sayf("JS fault in %s, back to the AUTORUN app", from_id);
+    if (!try_start(autorun_dir, 0)) {
+      snprintf(fail_id, sizeof fail_id, "%s", from_id); snprintf(fail_why, sizeof fail_why, "%s", why);
+      start_who[0] = start_why[0] = 0;
+      return 0;
+    }
+  }
+  launch_state_clear();
+  return try_start(0, 0);
+}
 uint64_t jsapp_step(void) {
   uint64_t wake = jsrt_step();
   if (wake) return wake;
@@ -1080,9 +1204,14 @@ uint64_t jsapp_step(void) {
   char next[64]; snprintf(next, sizeof next, "%s", launch_dir);
   char from[9]; snprintf(from, sizeof from, "%.8s", app_id);
   int req = pending;
+  char fw[96]; snprintf(fw, sizeof fw, "%s", fault_why); /* why the runtime stopped it, if it did */
   if (!picker) sayf("JS app returned status %d", exit_code);
   jsrt_stop();
   sayf("JS app stopped");
+  if (!picker && fw[0]) {
+    if (app_fault(from, fw)) {exit_code = 5; return 0;}
+    return plat_clock_ns() + 1;
+  }
   if (!picker && req != PEND_NONE) {
     if (app_switch(from)) {exit_code = 5; return 0;}
     return plat_clock_ns() + 1;
