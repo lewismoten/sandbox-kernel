@@ -788,9 +788,9 @@
   {
    "id": "G5",
    "title": "Process model",
-   "problem": "No exec or launch-next: switching apps means exiting back to the kernel or launcher, and the kernel passes no argv or app name. Today the convention is /OS/AUTORUN.TXT: the kernel reads line 1 (the ELF), JS.ELF reads line 2 (the app). That works for a boot-time app but not for one app starting another with an argument.",
+   "problem": "No exec or launch-next: switching apps means exiting back to the kernel or launcher, and the kernel passes no argv or app name. Today the convention is /OS/AUTORUN.TXT: the kernel reads line 1 (the ELF), JS.ELF reads line 2 (the app). That works for a boot-time app but not for one app starting another with an argument. Mitigated in the runtime (slice 7, no kernel change): with the apps.launch capability an app calls apps.list(), apps.launch(id, {args}) and apps.exit(code); JS.ELF stops the app (every handle released), starts the next inside the same process, passes sandbox.launchArgs and keeps a launch stack 4 deep. A launch that does not start returns to the caller with sandbox.launchError. What stays open is only that a native program (a game) still ends JS.ELF, and the kernel itself still passes no argv.",
    "owner": "kernel/launcher",
-   "proposal": "Keep the AUTORUN.TXT line-2 convention for v1; ask for a launch request with a short argument string only if app-to-app launch is needed",
+   "proposal": "Keep the AUTORUN.TXT line-2 convention for boot; app-to-app launch is the runtime's (apps.launch). Ask the kernel for a launch request with a short argument string only to start a native program from JS and come back",
    "priority": "medium"
   },
   {

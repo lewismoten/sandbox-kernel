@@ -227,6 +227,7 @@
     let launchArgs;
     if (li.args) { try { launchArgs = JSON.parse(li.args); } catch (e) { launchArgs = undefined; } }
     g.sandbox = Object.freeze({
+      launchDepth: li.depth, // how many apps wait for this one to exit (0 when nothing launched it)
       launchArgs: launchArgs === undefined ? undefined : Object.freeze(launchArgs),
       returned: li.returned && Object.freeze(li.returned),
       launchError: li.failed && Object.freeze(li.failed),

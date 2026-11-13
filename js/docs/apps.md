@@ -47,6 +47,7 @@ A call an app has no grant for throws an `Error` that names the capability, for 
 | `fs.write.cache` | `fs.write` and `fs.createWriter` on the one file `/sd/OS/CACHE/<id>` |
 | `display` | `screen.setMode`, `screen.gameLowres`, `screen.lease`, `screen.modes`, `document.createElement`, `requestAnimationFrame`, `<game>.play()` |
 | `input` | the page's key events, and `input.open()` (raw queues). The host's F10 always works and is never delivered to an app. |
+| `apps.launch` | `apps.list`, `apps.launch`, `apps.exit` (see Launching other apps) |
 | `audio`, `eink`, `serial`, `power` | named now; the bindings come in slices 4c and 4d, and `sandbox.require` already refuses them |
 | `log`, `time`, `memory`, `app.lifecycle` | always granted: `console`, timers, `sandbox.now`, `sandbox.sleep`, `Math.random`, `sys.stats`, `sys.exit`, `sys.launch` (`time` is in the base set, so a manifest does not ask for it) |
 
@@ -86,6 +87,38 @@ default is `APPS/HELLO`. (Slice 3 narrowed line 2 from "a folder under /OS" to `
 If line 2 is bad, or the app is refused (bad or newer manifest, missing entry, a script that throws), the runtime logs why
 and starts the always-embedded picker, which shows the reason on two rows ("Could not start APPS/NAME", then the reason).
 The picker lists a folder that has a `MAIN.JS` or an `APP.JSON`.
+
+## Launching other apps (slice 7, gap G5)
+
+The kernel has no exec call, so the runtime switches apps itself: the one app that runs lives inside JS.ELF, and a switch stops it
+(every handle released, as at any stop) and starts the next in a fresh realm. Add `"apps.launch"` to `capabilities`.
+
+```js
+for (const a of apps.list()) console.log(a.id, a.name, a.version, a.ok ? 'ok' : a.reason);
+// {id: 'HELLO', name: 'Hello', version: '1.0', api: 1, capabilities: ['log', ...], ok: true, reason: ''}
+apps.launch('NOTES', { args: { open: 'todo' } });   // returns at once; this app is stopped when the turn ends
+// in NOTES:  sandbox.launchArgs -> { open: 'todo' }  (undefined when there are none; JSON, 200 bytes at most)
+apps.exit(3);                                        // in NOTES: back to the app that launched it
+// back in the caller (a fresh start):  sandbox.returned -> { id: 'NOTES', code: 3 }
+```
+
+- `apps.list()` reads each `/OS/APPS/<id>/APP.JSON` with the same validator as a launch and returns only that metadata
+  (`ok: false` and a `reason` for a bad manifest, a newer API or a missing entry). It gives no access to another app's files, and
+  a folder with neither `APP.JSON` nor `MAIN.JS` is not listed. At most 32 apps.
+- `apps.launch(id, {args})` throws `RangeError` when 4 apps are already waiting (the launch stack is 4 deep). The caller is
+  not resumed: it starts again from the top when something returns to it, with its own `launchArgs` and with `sandbox.returned`
+  (who exited and with what code), so keep state you need in a save file or in the arguments.
+- `sandbox.launchDepth` is how many apps wait for this one (0 when nothing launched it), so an app can offer "back" only when there is somewhere to go.
+- `apps.exit(code)` returns to the app that launched this one. With nobody on the stack it goes to the AUTORUN app (unless that is
+  this app) or the picker. `sys.exit` and F10 still go to the picker and clear the stack.
+- A launch that does not start (bad manifest, newer API, missing entry, a script that throws) returns to the caller with
+  `sandbox.launchError = {id, reason}`; `apps.on('launcherror', fn)` calls `fn` once, right after the start, if there is one.
+  An unstartable app never leaves a blank screen.
+- Give back the e-ink panel, sound and anything else you hold before launching when you can; the runtime releases what is left
+  and logs `app left N handle(s) open`.
+
+TINYOS (`examples/TINYOS`) is the worked example: its home lists its own pages and then every other app in `/OS/APPS`, and `HELLO`
+returns to it on Esc. Tests: `tests/launch_run.py` and `tests/os_run.py`.
 
 ## Files and storage (slice 4a)
 

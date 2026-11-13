@@ -31,9 +31,9 @@ For TINYOS, copy the folder `js/examples/TINYOS` to `/OS/APPS/TINYOS` and write 
 
 Rules that shape an OS written this way (all from [apps.md](apps.md)):
 
-- An app reads its own folder and its save folder only. It cannot read or launch a sibling app (contract gap G5), so a shell like TINYOS holds its "programs" as files inside its own folder (`ABOUT.JS`, `FILES.JS`, `SETTINGS.JS`; the first line `//! Name` is what home shows) and loads them with `fs.readFile` and `new Function`. A kernel or runtime change would be needed for a home screen that lists other apps' manifests.
+- An app reads its own folder and its save folder only, never a sibling's files. With the `apps.launch` capability it may list the other apps' manifests (`apps.list()`) and start one (`apps.launch(id, {args})`); the other app brings you back with `apps.exit()` ([apps.md](apps.md), gap G5). TINYOS does both: its own "programs" are files in its folder (`ABOUT.JS`, `FILES.JS`, `SETTINGS.JS`; the first line `//! Name` is what home shows, loaded with `fs.readFile` and `new Function`), and below them home lists every other app on the card. A launched app only returns home if it calls `apps.exit()` (for example on Esc); one that does not is left with F10, which goes to the picker.
 - Writes are whole files in `/sd/OS/SAVES/<id>/`, names 8.3 (`SETTINGS.CFG`), at most 256 KiB per app. The kernel has no subfolders, so keep your folder flat; the USB tool only installs flat folders.
-- Ask for the capabilities you use in `APP.JSON` and nothing else. TINYOS asks for `display`, `input`, `audio`, `eink`, `fs.read`, `fs.write.saves`.
+- Ask for the capabilities you use in `APP.JSON` and nothing else. TINYOS asks for `display`, `input`, `audio`, `eink`, `fs.read`, `fs.write.saves`, `apps.launch`.
 - Give back what you hold (`panel.release()`, `audio.close()`) before `sys.exit`; the runtime reports what is left open.
 
 ## 4. Check it
@@ -77,7 +77,7 @@ scripts/usb_kernel.py <port> run JS.ELF          # or reboot
 
 ## 7. Boot and look
 
-Power on. Expect the kernel's boot screens, then TinyOS's home list and a four-note chime; Up and Down choose, Enter opens, Esc goes back, Q quits to the picker. With an e-ink panel fitted it shows uptime as `HH:MM` and refreshes about every 30 seconds. `usb_kernel.py <port> tail` shows the log and `fbshot` / `einkshot` save what the screens show. A bad edit lands in the picker with the reason on screen; fix the file and reboot.
+Power on. Expect the kernel's boot screens, then TinyOS's home list and a four-note chime; Up and Down choose, Enter opens a page or starts an app, Esc goes back (inside an app that calls `apps.exit()` on Esc, back home), Q quits to the picker. With an e-ink panel fitted it shows uptime as `HH:MM` and refreshes about every 30 seconds. `usb_kernel.py <port> tail` shows the log and `fbshot` / `einkshot` save what the screens show. A bad edit lands in the picker with the reason on screen; fix the file and reboot.
 
 ## 8. Make it yours
 

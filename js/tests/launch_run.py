@@ -71,10 +71,10 @@ class Launch(unittest.TestCase):
         apps = {
             'A': app("""if (sandbox.returned) { console.log('T back ' + JSON.stringify(sandbox.returned) + ' ' + sandbox.launchArgs); sys.exit(0); }
                         else { console.log('T A start'); apps.launch('B', {args: {n: 7, s: 'hi'}}); }"""),
-            'B': app("""console.log('T B args ' + JSON.stringify(sandbox.launchArgs) + ' ' + sandbox.app.id); apps.exit(3);"""),
+            'B': app("""console.log('T B args ' + JSON.stringify(sandbox.launchArgs) + ' ' + sandbox.app.id + ' depth ' + sandbox.launchDepth); apps.exit(3);"""),
         }
         rc, lines = go(apps, 'A')
-        self.assertEqual(t(lines), ['A start', 'B args {"n":7,"s":"hi"} B', 'back {"id":"B","code":3} undefined'])
+        self.assertEqual(t(lines), ['A start', 'B args {"n":7,"s":"hi"} B depth 1', 'back {"id":"B","code":3} undefined'])
         self.assertEqual(rc, 0)
         self.assertNotIn('Uncaught', ' '.join(lines))
 

@@ -1045,7 +1045,7 @@ int jsapp_start(const char *dir, uint32_t heap_limit) {
 static int app_switch(const char *from_id) {
   char dir[64]; fail_id[0] = 0; ret_set = 0;
   if (pending == PEND_LAUNCH) {
-    snprintf(lstack[ldepth].id, sizeof lstack[0].id, "%s", from_id); snprintf(lstack[ldepth].args, sizeof lstack[0].args, "%s", cur_args);
+    snprintf(lstack[ldepth].id, sizeof lstack[0].id, "%.8s", from_id); snprintf(lstack[ldepth].args, sizeof lstack[0].args, "%s", cur_args);
     ldepth++;
     snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", pend_id);
     snprintf(cur_args, sizeof cur_args, "%s", pend_args);
@@ -1059,14 +1059,14 @@ static int app_switch(const char *from_id) {
     snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
     if (!try_start(dir, 1)) return 0;
   } else if (ldepth) {
-    ldepth--; snprintf(ret_id, sizeof ret_id, "%s", from_id); ret_code = exit_code; ret_set = 1;
+    ldepth--; snprintf(ret_id, sizeof ret_id, "%.8s", from_id); ret_code = exit_code; ret_set = 1;
     snprintf(cur_args, sizeof cur_args, "%s", lstack[ldepth].args);
     snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
     sayf("JS exit %s to %s, depth %u", from_id, lstack[ldepth].id, ldepth);
     if (!try_start(dir, 1)) return 0;
   } else if (autorun_dir[0] && strcmp(app_id_of(autorun_dir), from_id)) { /* nobody launched it: the AUTORUN app, or the picker */
     cur_args[0] = 0; ret_id[0] = 0;
-    snprintf(ret_id, sizeof ret_id, "%s", from_id); ret_code = exit_code; ret_set = 1;
+    snprintf(ret_id, sizeof ret_id, "%.8s", from_id); ret_code = exit_code; ret_set = 1;
     sayf("JS exit %s to the AUTORUN app", from_id);
     if (!try_start(autorun_dir, 1)) return 0;
   }
@@ -1078,7 +1078,7 @@ uint64_t jsapp_step(void) {
   if (wake) return wake;
   int picker = in_picker;
   char next[64]; snprintf(next, sizeof next, "%s", launch_dir);
-  char from[9]; snprintf(from, sizeof from, "%s", app_id);
+  char from[9]; snprintf(from, sizeof from, "%.8s", app_id);
   int req = pending;
   if (!picker) sayf("JS app returned status %d", exit_code);
   jsrt_stop();
