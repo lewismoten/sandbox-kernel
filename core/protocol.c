@@ -25,7 +25,7 @@ static unsigned used,phase;
 static uint32_t expected,received,transport_crc,activity,block_end,sector_index,install_since;
 static unsigned inactive;
 static uint8_t image_hash[32];
-static bool executing,overflow,session,putf,companion;
+static bool executing,overflow,session,putf,companion,line_held;
 static bool waiting_stop;
 static unsigned tx_left,tx_took;static uint32_t tx_since;
 #define TX_IDLE_US 2000000u /* a TX body that stalls this long is abandoned (docs/serial.md) */
@@ -41,8 +41,8 @@ static void get_close(void) {if(get_handle>=0)asset_close(get_handle);get_handle
 static char put_name[32];static uint8_t put_hash[32];
 /* 0 command, 1 payload, 2 VERIFY drain, 3 validation, 4 write, 5 readback,
  * 6 metadata, 7 OK drain/reboot. Installation is not canceled by USB reset. */
-bool protocol_busy(void) {return phase!=0||shot_drain||get_pending;}
-void protocol_reset(void) {get_pending=false;usblog_cmd=false;get_close();shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
+bool protocol_busy(void) {return phase!=0||shot_drain||get_pending||line_held;}
+void protocol_reset(void) {line_held=false;get_pending=false;usblog_cmd=false;get_close();shot_drain=false;shot_limited=false;if(phase<=2) {phase=0;used=0;overflow=false;received=0;session=false;putf=false;tx_left=0;} }
 static void refuse(const char *s) {usb_reply("ERR ");usb_reply(s);usb_reply("\n");phase=0;used=0;overflow=false;putf=false;}
 /* ERR rule: a real error (bad command, storage, CRC, fault) goes through fail(),
    which also sets the e-ink "ERR:" line (sticky). A flow-control refusal, "not-ready"
@@ -203,7 +203,12 @@ static void get_command(const char *p,bool directory) {
   if(offset) {refuse("get range");return;}
   get_close();
   get_handle=asset_open(path,(uint32_t)strlen(path),0);
-  if(get_handle<0) {refuse("get open");return;}
+  if(get_handle<0) { /* the reply stays "get open" (old host tools match it); the log names the reason */
+   char t[96]="SD last ";unsigned k=8;for(const char *q=sd_fail;*q&&k<40;q++)t[k++]=*q;
+   for(const char *q=" (get open: ";*q;q++)t[k++]=*q;for(const char *q=asset_fail;*q&&k<93;q++)t[k++]=*q;t[k++]=')';t[k]=0;
+   if(strcmp(asset_fail,"ASSET NOT FOUND"))log_line(t);
+   refuse("get open");return;
+  }
   get_directory=directory;get_index=0;
   memcpy(get_path,path,strlen(path)+1);
   if(!++get_id)++get_id;
@@ -299,12 +304,28 @@ static void command_line(void) {
  phase=1;usb_reply("READY 1024\n"); /* no panel, hashing or storage here */
 }
 __attribute__((weak)) uint32_t card_busy;
+__attribute__((weak)) uint32_t sd_depth;
+/* The card has one owner at a time. protocol_task() also runs from service_io(), inside the waits of an SD
+   transfer that someone else began: an OS syscall (card_busy), or the kernel's own main-loop card work (the log
+   pump, BOOT.TXT and USB.TXT saves, a program load), which sd_depth shows. Card work that began there sent
+   commands into the transfer in progress and shared core/fatput.c's sector buffers with it (tests/
+   test_put_nested.py). That is the likely cause of the 2026-11-12 fault where a folder's first file installed,
+   the second failed with PUT READ and every later read failed until a restart (a log save follows the first
+   file); not yet confirmed on a board. So in that position the parser only takes what needs no card (INFO, STOP,
+   keys, a PUTF body into RAM); the rest waits for the main loop. */
+/* MV, RM, RMDIR, the paged LS and RUN use the card as soon as they are parsed. */
+static bool line_needs_card(void) {
+ if(!memcmp(line,"MV ",3)||!memcmp(line,"RM ",3)||!memcmp(line,"RMDIR ",6)) return true;
+ if(!memcmp(line,"LS ",3)) return !ls_is_old_form();
+ return !memcmp(line,"RUN ",4)&&os_can_start(); /* a RUN that would be refused anyway is refused at once */
+}
 #define CARD_WAIT_US 5000000u
 static uint32_t busy_since;static bool busy_waiting;
 /* True when no OS file operation is in flight. Otherwise the caller returns and tries again on the
    next pass; after 5 s of waiting it is a plain refusal ("card-busy"): nothing was written to a
    slot's control record, so updates stay ready. */
 static bool card_free(void) {
+ if(sd_depth) return false; /* inside someone's SD wait: over within that transfer, so no timer */
  if(!card_busy) {busy_waiting=false;return true;}
  if(!busy_waiting) {busy_waiting=true;busy_since=micros();}
  else if(expired(busy_since,CARD_WAIT_US)) {busy_waiting=false;fail("card-busy");}
@@ -384,6 +405,7 @@ static void work(void) {
  if(tx_left&&expired(tx_since,TX_IDLE_US)) { /* resynchronize: the host stopped mid-body; the next bytes are a command again */
   tx_left=0;tx_took=0;used=0;overflow=false;refuse("tx-timeout");
  }
+ if(line_held) {if(sd_depth)return;line_held=false;command_line();used=0;return;}
  unsigned budget=1024;
  while(budget--&&tud_cdc_available()) {
   uint8_t b;if(tud_cdc_read(&b,1)!=1)return;
@@ -396,6 +418,8 @@ static void work(void) {
    if(received==block_end) {usb_reply("ACK ");field(received);usb_reply("\n");block_end+=1024;if(block_end>expected)block_end=expected;return;}
   } else if(b=='\n') {
    if(overflow) {fail("command-too-long");used=0;return;}
+   line[used]=0;
+   if(sd_depth&&line_needs_card()) {line_held=true;return;} /* runs at the next main-loop pass */
    command_line();used=0;return;
   } else if(b<32||b>126) {overflow=true;} else if(used<255)line[used++]=(char)b;else overflow=true;
  }

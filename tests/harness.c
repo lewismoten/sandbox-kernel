@@ -35,9 +35,17 @@ static uint32_t nth_lba=~0u,nth_left;
 void fail_read_nth(uint32_t lba,uint32_t n) {nth_lba=lba;nth_left=n;}
 static bool nth_fails(uint32_t lba) {return lba==nth_lba&&nth_left&&!--nth_left;}
 void protocol_on_next_sd_read(void) {pump_read=true;}
-bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&!nth_fails(lba)&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+/* The board's SD driver calls service_io() (usb_task, protocol_task) inside every wait of a transfer. With
+   protocol_on_every_sd_op(1) each outermost read and write does the same here; an SD call that begins while
+   another one is in flight is counted (on the board it would send a command into a transfer in progress). */
+uint32_t sd_depth;static bool pump_every;static uint32_t nested_ops;
+void protocol_on_every_sd_op(int on) {pump_every=on!=0;}
+uint32_t nested_sd_ops(void) {return nested_ops;}
+static void sd_enter(void) {if(sd_depth++)nested_ops++;else if(pump_every)protocol_task();}
+bool sd_read(uint32_t lba,void *p) {reads++;sd_enter();if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}bool ok=lba!=read_fail_lba&&!nth_fails(lba)&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;sd_depth--;return ok;}
 static uint32_t once_at=~0u;void fail_write_once(uint32_t after) {once_at=writes+after;} /* the write `after` from now fails, once */
-bool sd_write(uint32_t lba,const void *p) {if(writes==once_at) {once_at=~0u;writes++;return false;}if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
+static bool write_raw(uint32_t lba,const void *p) {if(writes==once_at) {once_at=~0u;writes++;return false;}if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
+bool sd_write(uint32_t lba,const void *p) {sd_enter();bool ok=write_raw(lba,p);sd_depth--;return ok;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
 void usb_reply_bytes(const uint8_t *p,uint32_t n) {if(out+n>=sizeof(output))abort();memcpy(output+out,p,n);out+=n;}
