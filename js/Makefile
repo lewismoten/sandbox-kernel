@@ -96,6 +96,8 @@ test: host host-fault host-profiletest host-appcheck
 	$(PYTHON) tests/os_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/limits_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/alloc_run.py $(HOSTDIR)/jsrun-fault
+	$(PYTHON) tests/soak_run.py $(HOSTDIR)/jsrun
+	$(PYTHON) tests/fuzz_run.py $(HOSTDIR)/appcheck
 size: $(BUILD)/JS.ELF
 	$(SIZE) $(BUILD)/JS.full.elf
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF

@@ -63,7 +63,7 @@ def check_manifest(raw, api=None):
                 return False, "unsupported escape in a string"
         try:
             d = json.loads(text, object_pairs_hook=_pairs, parse_constant=lambda c: (_ for _ in ()).throw(ValueError("not JSON")),
-                           parse_float=lambda s: (_ for _ in ()).throw(ValueError("expected a whole number")))
+                           parse_float=float)   # a fraction is fine in an x- note; "api" and "schema" below refuse it
         except json.JSONDecodeError as e:
             return False, f"not valid JSON ({e.msg})"
         if not isinstance(d, dict):

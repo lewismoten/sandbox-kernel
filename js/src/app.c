@@ -58,7 +58,7 @@ static int whole(struct jp *p, uint32_t *v) {
 }
 static int skip(struct jp *p, int depth) {
   ws(p);
-  if (depth > 6) return bad(p, "nested too deeply%s", 0);
+  if (depth > 5) return bad(p, "nested too deeply%s", 0); /* the object is level 0: its values may nest 6 levels (tools/app_check.py's _depth) */
   if (p->s >= p->e) return bad(p, "unexpected end%s", 0);
   char c = *p->s;
   if (c == '"') return str(p, 0, 0);
@@ -77,9 +77,18 @@ static int skip(struct jp *p, int depth) {
   if (p->e - p->s >= 4 && !strncmp(p->s, "true", 4)) {p->s += 4; return 0;}
   if (p->e - p->s >= 5 && !strncmp(p->s, "false", 5)) {p->s += 5; return 0;}
   if (p->e - p->s >= 4 && !strncmp(p->s, "null", 4)) {p->s += 4; return 0;}
-  if (c == '-' || (c >= '0' && c <= '9')) {
+  if (c == '-' || (c >= '0' && c <= '9')) { /* JSON's number grammar, not any run of digit-like characters */
+    #define DIG (p->s < p->e && *p->s >= '0' && *p->s <= '9')
     if (c == '-') p->s++;
-    while (p->s < p->e && ((*p->s >= '0' && *p->s <= '9') || *p->s == '.' || *p->s == 'e' || *p->s == 'E' || *p->s == '+' || *p->s == '-')) p->s++;
+    if (!DIG) return bad(p, "not JSON%s", 0);
+    if (*p->s == '0') p->s++; else while (DIG) p->s++;
+    if (p->s < p->e && *p->s == '.') {p->s++; if (!DIG) return bad(p, "not JSON%s", 0); while (DIG) p->s++;}
+    if (p->s < p->e && (*p->s == 'e' || *p->s == 'E')) {
+      p->s++; if (p->s < p->e && (*p->s == '+' || *p->s == '-')) p->s++;
+      if (!DIG) return bad(p, "not JSON%s", 0);
+      while (DIG) p->s++;
+    }
+    #undef DIG
     return 0;
   }
   return bad(p, "not JSON%s", 0);
@@ -262,6 +271,7 @@ int app_autorun_parse(const char *text, uint32_t n, char *dir, size_t dircap, ch
   if (!strcmp(app, "PICKER")) return 0;
   if (!strncmp(app, "APPS/", 5) && app_id_of((snprintf(dir, dircap, "/sd/OS/%s", app), dir))) return 0;
   dir[0] = 0;
+  for (char *c = app; *c; c++) if ((unsigned char)*c < 0x20 || (unsigned char)*c > 0x7e) *c = '?'; /* the message goes to the log and the screen */
   if (errcap) snprintf(err, errcap, "AUTORUN names \"%.24s\": use APPS/NAME or PICKER", app);
   return -1;
 }
