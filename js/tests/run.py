@@ -44,7 +44,7 @@ class Fixtures(unittest.TestCase):
         out = cases.run(JSRUN, 'bench')['out']
         self.assertTrue(any('BENCH done' in l for l in out))
 
-    def test_game_profile_is_off(self):
+    def test_core_profile_has_no_game(self):
         # the <game> element stays in the DOM subset; play() reports the missing profile
         self.assertTrue(any('no game' in l for l in cases.run(JSRUN, 'bench')['out']))
 

@@ -94,14 +94,23 @@ int plat_event(uint16_t *type, uint16_t *code, int32_t *value) {
 void plat_reset_input(void) {
   while (next_key < nkeys && keys[next_key].at <= plat_clock_ns()) next_key++;
 }
+/* Live heap blocks, for --cycles (a leak check): the system allocator's own count. */
+#ifdef __APPLE__
+#include <malloc/malloc.h>
+static long blocks(void) {malloc_statistics_t st; malloc_zone_statistics(0, &st); return (long)st.blocks_in_use;}
+#else
+#include <malloc.h>
+static long blocks(void) {struct mallinfo2 m = mallinfo2(); return (long)m.uordblks;}
+#endif
 int main(int argc, char **argv) {
   if (argc < 3) {fprintf(stderr, "usage: jsrun <sd folder> <app folder> [--ms N] [--vclock] [--keys ms:code:value,...] [--shot out.rgb] [--heap bytes]\n"); return 2;}
   root = argv[1];
-  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = 3u << 20; int launcher = 0;
+  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = 3u << 20; int launcher = 0; unsigned cycles = 0;
   for (int i = 3; i < argc; i++) {
     if (!strcmp(argv[i], "--ms") && i + 1 < argc) ms = strtoull(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--vclock")) vclock = 1;
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
+    else if (!strcmp(argv[i], "--cycles") && i + 1 < argc) cycles = (unsigned)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
     else if (!strcmp(argv[i], "--heap") && i + 1 < argc) heap = (uint32_t)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--keys") && i + 1 < argc)
@@ -113,6 +122,23 @@ int main(int argc, char **argv) {
       }
   }
   start = real_ns();
+  if (cycles) { /* start, run for --ms and stop, again and again; prints the live heap blocks after the first and last */
+    long first = 0;
+    for (unsigned c = 0; c < cycles; c++) {
+      vnow = 0; next_key = 0;
+      if (jsrt_start(argv[2], heap)) {jsrt_stop(); printf("CYCLE %u start failed\n", c); return 1;}
+      for (;;) {
+        uint64_t wake = jsrt_step();
+        if (!wake || plat_clock_ns() >= ms * 1000000ull) break;
+        if (next_key < nkeys && keys[next_key].at < wake) wake = keys[next_key].at;
+        plat_sleep_until(wake < ms * 1000000ull ? wake : ms * 1000000ull);
+      }
+      jsrt_stop();
+      if (!c) first = blocks();
+    }
+    printf("CYCLES %u blocks first %ld last %ld\n", cycles, first, blocks());
+    return 0;
+  }
   const char *dir = !strcmp(argv[2], "--picker") ? 0 : argv[2];
   if (launcher ? jsapp_start(dir, heap) : jsrt_start(dir, heap)) {jsrt_stop(); return 1;}
   uint64_t end = ms * 1000000ull;

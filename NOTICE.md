@@ -214,7 +214,8 @@ its existing upstream/license inventory is unchanged.
 [js/IMPORT.md](js/IMPORT.md)), written there by Claude Sonnet 5.5 (Anthropic, Claude Code; see that
 repository's NOTICE.md) and imported and split here the same way. The import, the optional-profile guards, the
 standalone Makefile, the host fixtures, the size and reproducibility tools were made by Claude Sonnet 5.5
-(Anthropic, Claude Code) on 2026-11-13.
+(Anthropic, Claude Code) on 2026-11-13. The profile interface (`js/src/profile.h`, `profile_core.c`), the test
+profile and its tests, and `js/docs/profiles.md` are also by Claude Sonnet 5.5 (2026-11-13).
 
 - **QuickJS-ng** v0.18.0 (<https://github.com/quickjs-ng/quickjs>, commit d7215b0), MIT, copyright (c) 2017-2026 Fabrice Bellard,
   (c) 2017-2024 Charlie Gordon, (c) 2023-2026 Ben Noordhuis and the other QuickJS-ng authors. Unchanged, in

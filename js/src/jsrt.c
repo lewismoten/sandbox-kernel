@@ -12,20 +12,11 @@
 #include "dom.h"
 #include "plat.h"
 #include "gif.h"
-/* JS_GAME=1 adds the <game> element over the Game-Maker play core (session.h,
-   game.h, thumb.h from gamemaker-os, not imported here). Off by default: slice
-   2 of the plan owns that split. Off, play() throws and a <game> never draws. */
-#ifndef JS_GAME
-#define JS_GAME 0
-#endif
-#if JS_GAME
-#include "../game.h"
-#include "../session.h"
-#include "../thumb.h"
-#else
-#define GP_W 320u /* the play core's picture size, kept so screen.gameLowres() still validates */
-#define GP_H 200u
-#endif
+#include "profile.h"
+#define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
+#define GP_H JSRT_PIC_H
+#define PROF (jsrt_profile)
+static int prof_live;                  /* init ran and stop has not */
 
 extern const char jsrt_prelude[];
 extern const uint32_t jsrt_prelude_len;
@@ -46,10 +37,7 @@ static uint64_t next_frame_ns, t0_ns;
 /* One wrapper per element: the element, its object (not counted: the object
    owns the wrapper) and the objects it keeps alive. */
 struct jel {struct dom_el *e; JSValue self, style, ctx2d; uint32_t fill;};
-/* The game element's session (one game at a time: the play core is one). */
-#if JS_GAME
-static struct gs_session session;
-#endif
+/* The game element (one at a time); what plays in it is the profile's. */
 static struct dom_el *game_el;
 static char game_dir[64];
 static int game_started;
@@ -59,9 +47,7 @@ static int game_started;
 static uint32_t mode_w = PLAT_W, mode_h = PLAT_H, mode_d = 32, switch_us;
 static int lowres = 1, lowres_on;
 static uint32_t game_w = GP_W, game_h = GP_H; /* the game's mode: 320x200, or larger with the picture centered (384x216 is exactly 1080p / 5) */
-#if JS_GAME
-static uint8_t shown_pal[768];
-#endif
+static uint8_t shown_pal[768];         /* the palette last sent for the direct picture */
 static int set_mode(uint32_t w, uint32_t h, uint32_t d) {
   if (plat_set_mode(w, h, d, &switch_us)) return -1;
   if (d != 8) {mode_w = w; mode_h = h; mode_d = d; dom_screen((int32_t)w, (int32_t)h, d);}
@@ -69,6 +55,7 @@ static int set_mode(uint32_t w, uint32_t h, uint32_t d) {
 }
 
 static void say(const char *s) {plat_log(s, (uint32_t)strlen(s));}
+void jsrt_log(const char *s) {say(s);}
 static void sayf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void sayf(const char *fmt, ...) {
   char b[160]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); say(b);
@@ -91,28 +78,6 @@ static JSValue call_native(const char *name, int argc, JSValueConst *argv) {
 
 /* Files: "/sd/..." paths; the reader the play core and pictures use. */
 static uint8_t io[256 * 1024];
-#if JS_GAME
-static int32_t path_read(const char *dir, const char *name, uint8_t *buf, uint32_t cap) {
-  char path[96]; int n = snprintf(path, sizeof path, "%s/", dir);
-  for (; *name && n < (int)sizeof path - 1; name++) path[n++] = *name >= 'a' && *name <= 'z' ? (char)(*name - 32) : *name;
-  path[n] = 0;
-  plat_heartbeat();
-  return plat_read(path, buf, cap);
-}
-static int32_t dir_read(void *user, const char *name, uint8_t *buf, uint32_t cap) {
-  return path_read(user, name, buf, cap);
-}
-static int32_t picture_read(void *user, const char *name, uint8_t *buf, uint32_t cap) {
-  return path_read(*(const char *const *)user, name, buf, cap);
-}
-struct find {char gam[16];};
-static void find_gam(void *user, const char *name, uint32_t n, int dir, uint32_t size) {
-  (void)size; struct find *f = user;
-  if (dir || n < 5 || n > 12 || f->gam[0]) return;
-  const char *x = name + n - 4;
-  if (x[0] == '.' && (x[1] | 32) == 'g' && (x[2] | 32) == 'a' && (x[3] | 32) == 'm') {memcpy(f->gam, name, n); f->gam[n] = 0;}
-}
-#endif
 static int ends(const char *s, const char *x) {size_t a = strlen(s), b = strlen(x); if (a < b) return 0; for (size_t i = 0; i < b; i++) if ((s[a - b + i] | 32) != x[i]) return 0; return 1;}
 /* dom.h's picture loader: a .GIF, or a game folder's title screen. */
 static int load_picture(const char *src, uint8_t *px, uint8_t *pal) {
@@ -120,23 +85,9 @@ static int load_picture(const char *src, uint8_t *px, uint8_t *pal) {
     int32_t n = plat_read(src, io, sizeof io);
     return n > 0 ? gp_gif(io, (uint32_t)n, pal, px) : -1;
   }
-#if JS_GAME
-  if (game_started) return -1; /* the title reader uses the play core */
-  struct find f = {{0}};
-  if (plat_list(src, find_gam, &f) < 0 || !f.gam[0]) return -1;
-  /* gp_open retains the reader context until the next game is opened. */
-  static const char *picture_dir;
-  picture_dir = src;
-  return gm_title_picture(picture_read, &picture_dir, f.gam, px, pal);
-#else
-  (void)px; (void)pal; return -1; /* a game folder's title screen needs the play core */
-#endif
+  if (game_started) return -1; /* a profile's picture reader may share state with the playing element */
+  return PROF->picture ? PROF->picture(src, px, pal) : -1;
 }
-#if JS_GAME
-static void draw_game(void *game, uint32_t *fb, uint32_t stride) {gs_draw(game, fb, stride);}
-#else
-#define draw_game 0
-#endif
 
 /* Element objects. */
 static struct jel *jel_of(JSValueConst v) {return JS_GetOpaque(v, el_class);}
@@ -274,11 +225,7 @@ static JSValue el_get(JSContext *c, JSValueConst this, int magic) {
     }
     return JS_DupValue(c, j->style);
   case P_TABINDEX: return JS_NewInt32(c, e->focusable ? 0 : -1);
-#if JS_GAME
-  case P_TICKS: return JS_NewInt32(c, e == game_el ? (int32_t)session.total_ticks : 0);
-#else
-  case P_TICKS: return JS_NewInt32(c, 0);
-#endif
+  case P_TICKS: return JS_NewInt32(c, e == game_el && PROF->ticks ? (int32_t)PROF->ticks() : 0);
   case P_PLAYING: return JS_NewBool(c, e == game_el && game_started);
   }
   return JS_UNDEFINED;
@@ -331,27 +278,20 @@ static JSValue js_play(JSContext *c, JSValueConst this, int argc, JSValueConst *
   (void)argc; (void)argv; struct dom_el *e = el_of(c, this);
   if (!e) return JS_EXCEPTION;
   if (e->tag != DOM_GAME || e != game_el || !game_dir[0]) return JS_ThrowTypeError(c, "play(): a <game> with a src");
-#if !JS_GAME
-  return JS_ThrowTypeError(c, "play(): this build has no game profile (JS_GAME=0)");
-#else
-  struct find f = {{0}};
-  if (plat_list(game_dir, find_gam, &f) < 0 || !f.gam[0]) return JS_ThrowRangeError(c, "no .GAM in %s", game_dir);
-  session.say = say;
-  if (gs_start(&session, dir_read, game_dir, f.gam, plat_clock_ns())) return JS_ThrowRangeError(c, "cannot play %s", game_dir);
+  if (!PROF->play) return JS_ThrowTypeError(c, "play(): this build has no game profile");
+  char err[80] = ""; void *h = 0;
+  if (PROF->play(game_dir, &h, err, sizeof err)) return JS_ThrowRangeError(c, "%s", err[0] ? err : "cannot play");
   if (lowres && !set_mode(game_w, game_h, 8)) {lowres_on = 1; memset(shown_pal, 0xff, sizeof shown_pal);}
-  e->game = &session; game_started = 1; jsrt_stats.game_ticks = 0; jsrt_stats.game_play_ns = 0; jsrt_stats.game_late_max_us = jsrt_stats.game_step_max_us = 0;
-  sayf("JS game %s/%s", game_dir, f.gam);
+  static char no_handle; /* a profile with no state still needs a non-NULL e->game: it gates drawing */
+  e->game = h ? h : &no_handle; game_started = 1; jsrt_stats.game_ticks = 0; jsrt_stats.game_play_ns = 0; jsrt_stats.game_late_max_us = jsrt_stats.game_step_max_us = 0;
   focus_to(e); dom_changed(e);
   return JS_UNDEFINED;
-#endif
 }
 static void stop_game(void) {
   if (!game_el) return;
   struct dom_el *e = game_el;
   game_started = 0; e->game = 0; dom_changed(e);
-#if JS_GAME
-  gp_release_all();
-#endif
+  if (PROF->end) PROF->end();
   if (lowres_on) {lowres_on = 0; set_mode(mode_w, mode_h, mode_d);} /* the page's mode again: it all repaints */
   JSValue args[2] = {JS_DupValue(ctx, ((struct jel *)e->js)->self), JS_NewString(ctx, "ended")};
   JS_FreeValue(ctx, call_native("onEvent", 2, args));
@@ -367,11 +307,7 @@ static JSValue js_stop(JSContext *c, JSValueConst this, int argc, JSValueConst *
 static JSValue js_press(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
   struct dom_el *e = el_of(c, this); int32_t code, down = 1;
   if (!e || JS_ToInt32(c, &code, argv[0]) || (argc > 1 && JS_ToInt32(c, &down, argv[1]))) return JS_EXCEPTION;
-#if JS_GAME
-  if (e == game_el && game_started && gs_event(&session, 1, (uint16_t)code, down ? 1 : 0) & GS_EXIT) stop_game();
-#else
-  (void)down;
-#endif
+  if (e == game_el && game_started && PROF->key && PROF->key((uint16_t)code, down ? 1 : 0) & JSRT_END) stop_game();
   return JS_UNDEFINED;
 }
 static JSValue js_get_context(JSContext *c, JSValueConst this, int argc, JSValueConst *argv);
@@ -673,9 +609,7 @@ static const char *key_name(uint16_t k, const char **code) {
 }
 static void key_event(uint16_t code, int32_t value) {
   if (game_started && dom_focused == game_el) { /* the game has the keys */
-#if JS_GAME
-    if (gs_event(&session, 1, code, value) & GS_EXIT) stop_game();
-#endif
+    if (PROF->key && PROF->key(code, value) & JSRT_END) stop_game();
     return;
   }
   const char *cname, *k = key_name(code, &cname);
@@ -715,9 +649,8 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   in_picker = !dir; launch_dir[0] = 0;
   game_el = 0; game_started = lowres_on = 0; game_dir[0] = 0;
   lowres = 1; game_w = GP_W; game_h = GP_H; font_scale = 1;
-#if JS_GAME
-  memset(&session, 0, sizeof session);
-#endif
+  if (PROF->init) PROF->init();
+  prof_live = 1;
   memset(&jsrt_stats, 0, sizeof jsrt_stats);
   uint64_t t = plat_clock_ns();
   t0_ns = t;
@@ -732,7 +665,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   new_class(&style_class, "CSSStyleDeclaration", style_finalizer, style_mark, style_proto, (int)NSTYLE);
   new_class(&ctx2d_class, "CanvasRenderingContext2D", style_finalizer, ctx2d_mark, ctx2d_proto, (int)(sizeof ctx2d_proto / sizeof ctx2d_proto[0]));
   if (set_mode(PLAT_W, PLAT_H, 32)) {say("JS cannot restore page mode"); return -1;}
-  dom_init(load_picture, draw_game);
+  dom_init(load_picture, PROF->draw);
   native = JS_NewObject(ctx);
   JS_SetPropertyFunctionList(ctx, native, native_fns, (int)(sizeof native_fns / sizeof native_fns[0]));
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
@@ -798,29 +731,21 @@ uint64_t jsrt_step(void) {
     jsrt_stats.frames++;
   }
   if (exited) return 0;
-#if JS_GAME
-  if (game_started) {
-    uint64_t t = plat_clock_ns(), due = gs_wake(&session, t);
-    if (session.phase == GS_PLAY && t > due) {uint32_t l = (uint32_t)((t - due) / 1000u); if (l > jsrt_stats.game_late_max_us) jsrt_stats.game_late_max_us = l;}
-    static uint64_t last; if (session.phase == GS_PLAY && last && t > last) jsrt_stats.game_play_ns += t - last;
-    last = t;
-    int was = session.phase; uint32_t before = session.total_ticks;
-    int r = gs_step(&session, t);
-    uint32_t dt = (uint32_t)((plat_clock_ns() - t) / 1000u);
-    if (session.ran && dt > jsrt_stats.game_step_max_us) jsrt_stats.game_step_max_us = dt;
-    jsrt_stats.game_ticks += session.total_ticks - before;
-    if (was != GS_PLAY && session.phase == GS_PLAY) {session.t0 = plat_clock_ns(); session.ticks = 0;}
-    if (r & GS_DRAW && lowres_on) { /* 320x200 indices as they are; the palette only when it changed */
+  if (game_started && PROF->step) {
+    struct jsrt_direct d = {0, 0};
+    uint32_t r = PROF->step(plat_clock_ns(), &d);
+    if (r & JSRT_DRAW && lowres_on) { /* 320x200 indices as they are; the palette only when it changed */
       uint64_t d0 = plat_clock_ns();
-      if (memcmp(shown_pal, session.pal, 768)) {memcpy(shown_pal, session.pal, 768); plat_palette(session.pal);}
-      uint32_t ox = (game_w - GP_W) / 2, oy = (game_h - GP_H) / 2;
-      for (uint32_t y = 0; y < GP_H; y++) memcpy((uint8_t *)plat_fb() + (oy + y) * game_w + ox, session.px + y * GP_W, GP_W);
-      plat_present(ox, oy, GP_W, GP_H);
-      jsrt_stats.present_ns += plat_clock_ns() - d0; jsrt_stats.presents++;
-    } else if (r & GS_DRAW && game_el) {struct dom_rect all = {0, 0, PLAT_W, PLAT_H}; dom_damage(&all);}
-    if (r & GS_EXIT) stop_game();
+      if (d.px && d.pal) {
+        if (memcmp(shown_pal, d.pal, 768)) {memcpy(shown_pal, d.pal, 768); plat_palette(d.pal);}
+        uint32_t ox = (game_w - GP_W) / 2, oy = (game_h - GP_H) / 2;
+        for (uint32_t y = 0; y < GP_H; y++) memcpy((uint8_t *)plat_fb() + (oy + y) * game_w + ox, d.px + y * GP_W, GP_W);
+        plat_present(ox, oy, GP_W, GP_H);
+        jsrt_stats.present_ns += plat_clock_ns() - d0; jsrt_stats.presents++;
+      }
+    } else if (r & JSRT_DRAW && game_el) {struct dom_rect all = {0, 0, PLAT_W, PLAT_H}; dom_damage(&all);}
+    if (r & JSRT_END) stop_game();
   }
-#endif
   for (JSContext *c; !exited && JS_ExecutePendingJob(rt, &c) > 0;) {}
   if (exited) return 0;
   uint64_t t = plat_clock_ns();
@@ -836,9 +761,7 @@ uint64_t jsrt_step(void) {
   uint64_t wake = now + 10000000ull; /* look at input every 10 ms */
   if (want_frame && next_frame_ns < wake) wake = next_frame_ns;
   if (wake_at_ms < 1e300) {uint64_t w = t0_ns + (uint64_t)(wake_at_ms * 1e6); if (w < wake) wake = w;}
-#if JS_GAME
-  if (game_started) {uint64_t w = gs_wake(&session, now); if (w < wake) wake = w;}
-#endif
+  if (game_started && PROF->wake) {uint64_t w = PROF->wake(now); if (w && w < wake) wake = w;}
   return wake > now ? wake : now + 1;
 }
 
@@ -846,9 +769,8 @@ uint64_t jsrt_step(void) {
    those could restart timers or block the return path. Device handles belong
    to JS.ELF and survive; queued events and the page's state do not. */
 void jsrt_stop(void) {
-#if JS_GAME
-  if (game_started) {gp_release_all(); snd_end(&session.sound);}
-#endif
+  if (game_started && PROF->end) PROF->end();
+  if (prof_live) {prof_live = 0; if (PROF->stop) PROF->stop();}
   game_started = 0; game_el = 0;
   if (ctx) {JS_FreeValue(ctx, native); native = JS_UNDEFINED; JS_FreeContext(ctx); ctx = 0;}
   if (rt) {JS_FreeRuntime(rt); rt = 0;}
