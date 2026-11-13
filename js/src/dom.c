@@ -21,6 +21,7 @@
 #include <string.h>
 #include "font.h"
 #include "alloc.h"
+static uint32_t canvas_px; /* pixels held by all canvases (dom_set_canvas_size) */
 static int32_t W = 640, H = 480; /* the screen mode (dom_screen) */
 static uint32_t depth = 32;
 #define SLOTS 8
@@ -64,14 +65,16 @@ void dom_screen(int32_t w, int32_t h, uint32_t d) {
   need_layout = 1; ndirty = 0;
   struct dom_rect all = {0, 0, W, H}; dom_damage(&all);
 }
-void dom_init(dom_loader load, void (*draw_game)(void *, uint32_t *, uint32_t)) {
-  loader = load; game_draw = draw_game;
+int dom_init(dom_loader load, void (*draw_game)(void *, uint32_t *, uint32_t)) {
+  loader = load; game_draw = draw_game; canvas_px = 0;
   dom_body = dom_new(DOM_DIV);
+  if (!dom_body) return -1;
   dom_body->in_tree = 1;
   dom_body->st.width = W; dom_body->st.height = H;
   dom_body->st.has_background = 1; dom_body->st.background = 0;
   need_layout = 1; ndirty = 0;
   struct dom_rect all = {0, 0, W, H}; dom_damage(&all);
+  return 0;
 }
 int dom_tag(const char *name) {
   for (int i = 0; i < DOM_TAGS; i++) if (!strcmp(name, tags[i])) return i;
@@ -118,6 +121,7 @@ void dom_delete(struct dom_el *e) {
   dom_remove(e);
   while (e->first) dom_remove(e->first);
   unref_pic(e);
+  canvas_px -= e->pw * e->ph;
   free(e->text); free(e->pixels);
   free(e);
 }
@@ -152,11 +156,15 @@ int dom_set_src(struct dom_el *e, const char *src) {
   pics[s].refs++; pics[s].used = ++pic_clock; e->img = s;
   return 0;
 }
+/* All canvases together may hold DOM_CANVAS_PIXELS pixels (4 bytes each): they come out of the same 3 MiB pool as the JS heap, and
+   a 960x540 canvas alone is 2 MB. */
 int dom_set_canvas_size(struct dom_el *e, uint32_t w, uint32_t h) {
   if (w > 960 || h > 540) return -1;
+  uint32_t old = e->pw * e->ph, now = w * h;
+  if (canvas_px - old + now > DOM_CANVAS_PIXELS) return -1;
   uint32_t *p = calloc(w && h ? w * h : 1, 4);
   if (!p) return -1;
-  free(e->pixels); e->pixels = p; e->pw = w; e->ph = h;
+  free(e->pixels); e->pixels = p; e->pw = w; e->ph = h; canvas_px = canvas_px - old + now;
   dom_changed(e); return 0;
 }
 

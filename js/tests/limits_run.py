@@ -109,7 +109,7 @@ class Memory(unittest.TestCase):
         self.assertIn('limit 1536 KiB', r['err'])
         self.assertEqual(rc, 0, lines)
         self.assertEqual(soak['heap_blocks'], 0, 'the stopped app left its heap behind')
-        self.assertLessEqual(soak['heap_peak'], 1536 * 1024)
+        self.assertLessEqual(soak['heap_peak'], 1536 * 1024 + 192 * 1024)   # the limit, and what one burst may add before the stop
         return r, lines, soak
 
     def test_filling_the_heap_with_arrays(self):

@@ -361,10 +361,14 @@ static long blocks(void) {struct mallinfo2 m = mallinfo2(); return (long)m.uordb
 #ifdef JSRT_FAULT
 extern unsigned long fi_dcount, fi_qcount, fi_dfail, fi_qfail, fi_hits;
 extern long fi_dlive, fi_qlive;
+#include <sys/mman.h>
+#include <sys/wait.h>
 /* One start, run for ms and stop; the start's result. */
+static volatile int *phase; /* shared with the sweep's parent: 1 once the app's script has loaded */
 static int run_once(const char *dir, uint32_t heap, uint64_t ms) {
   vnow = 0; next_key = 0;
   int r = jsrt_start(dir, heap);
+  if (!r && phase) *phase = 1;
   if (!r) for (;;) {
     uint64_t wake = jsrt_step();
     if (!wake || plat_clock_ns() >= ms * 1000000ull) break;
@@ -378,7 +382,7 @@ static uint64_t step_max, s1, steps; static size_t heap_hi; static long blocks0;
 int main(int argc, char **argv) {
   if (argc < 3) {fprintf(stderr, "usage: jsrun <sd folder> <app folder> [--ms N] [--vclock] [--keys ms:code:value,...] [--shot out.rgb] [--heap bytes]\n"); return 2;}
   root = argv[1];
-  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = JSRT_HEAP_LIMIT; int launcher = 0, autorun = 0; unsigned cycles = 0; const char *alt = 0, *sweep = 0; unsigned stride = 1, rep_count = 1; int soak = 0; unsigned long long rep_period = 0;
+  uint64_t ms = 1000; const char *shot = 0; uint32_t heap = JSRT_HEAP_LIMIT; int launcher = 0, autorun = 0; unsigned cycles = 0; const char *alt = 0, *sweep = 0; unsigned stride = 1, rep_count = 1; int soak = 0; unsigned long from = 1, to = 0; unsigned long long rep_period = 0;
   for (int i = 3; i < argc; i++) {
     if (!strcmp(argv[i], "--ms") && i + 1 < argc) ms = strtoull(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--vclock")) vclock = 1;
@@ -424,6 +428,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--alt") && i + 1 < argc) alt = argv[++i]; /* with --cycles: alternate between argv[2] and this app */
     else if (!strcmp(argv[i], "--sweep") && i + 1 < argc) sweep = argv[++i]; /* fault build: fail the N-th allocation, for every N (direct or qjs), and check nothing crashes or leaks */
     else if (!strcmp(argv[i], "--stride") && i + 1 < argc) stride = (unsigned)strtoul(argv[++i], 0, 10);
+    else if (!strcmp(argv[i], "--from") && i + 1 < argc) from = (unsigned long)strtoul(argv[++i], 0, 10); /* with --sweep: start at this N (with --stride 0 or 1 and --to, one case) */
+    else if (!strcmp(argv[i], "--to") && i + 1 < argc) to = (unsigned long)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--soak")) soak = 1; /* after the run: HOST soak ... (the longest loop turn, the heap's high-water mark) */
     else if (!strcmp(argv[i], "--keys-repeat") && i + 1 < argc) sscanf(argv[++i], "%llu:%u", &rep_period, &rep_count); /* period_ms:count: the --keys schedule again, count times in all */
     else if (!strcmp(argv[i], "--cycles") && i + 1 < argc) cycles = (unsigned)strtoul(argv[++i], 0, 10);
@@ -443,27 +449,38 @@ int main(int argc, char **argv) {
     for (unsigned r = 1; r < rep_count; r++)
       for (int k = 0; k < base && nkeys < 16384; k++) {keys[nkeys] = keys[k]; keys[nkeys].at += r * rep_period * 1000000ull; nkeys++;}
   }
-  (void)sweep; (void)stride;
+  (void)sweep; (void)stride; (void)from; (void)to;
   start = real_ns();
   blocks0 = blocks();
 #ifdef JSRT_FAULT
-  if (sweep) { /* fail the N-th allocation of one series, for each N: nothing may crash or leak. One clean run first counts them. */
+  if (sweep) { /* fail the N-th allocation of one series, for each N, each run in a child process: a crash is counted, not fatal.
+                  Nothing may leak or crash once the app has loaded ("run"). A failure inside QuickJS's own compiler, while the
+                  runtime or the app's script loads ("load"), crashes or leaks in v0.18.0: counted apart (see the soft limit in jsrt.c). One clean run first counts them. */
     int qjs = !strcmp(sweep, "qjs");
-    unsigned long total, runs = 0, bad_starts = 0, leaks = 0;
+    unsigned long total, runs = 0, bad_starts = 0, leaks_load = 0, leaks_run = 0, crash_load = 0, crash_run = 0;
+    phase = mmap(0, sizeof *phase, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
     fi_dfail = fi_qfail = 0; fi_dcount = fi_qcount = 0;
     run_once(argv[2], heap, ms);
     total = qjs ? fi_qcount : fi_dcount;
     printf("SWEEP %s allocations %lu\n", sweep, total); fflush(stdout);
-    for (unsigned long n = 1; n <= total; n += (n < 300 || stride < 2) ? 1 : stride) {
-      fi_dcount = fi_qcount = 0; fi_hits = 0;
-      if (qjs) {fi_qfail = n; fi_dfail = 0;} else {fi_dfail = n; fi_qfail = 0;}
-      printf("SWEEP at %lu\n", n); fflush(stdout);
-      if (run_once(argv[2], heap, ms)) bad_starts++;
-      runs++;
-      if (fi_dlive || fi_qlive || jsrt_heap_blocks() || jsrt_handles_open()) {leaks++; printf("SWEEP LEAK at %lu direct %ld qjs %ld heap_blocks %zu handles %u\n", n, fi_dlive, fi_qlive, jsrt_heap_blocks(), jsrt_handles_open()); fi_dlive = fi_qlive = 0;}
+    for (unsigned long n = from; n <= (to && to < total ? to : total); n += (n < 300 || stride < 2) ? 1 : stride) {
+      *phase = 0; fflush(stdout);
+      pid_t pid = to && from == to ? 0 : fork(); /* one case (--from N --to N) runs in this process, for a debugger */
+      if (!pid) {
+        fi_dcount = fi_qcount = 0; fi_hits = 0;
+        if (qjs) {fi_qfail = n; fi_dfail = 0;} else {fi_dfail = n; fi_qfail = 0;}
+        int started = !run_once(argv[2], heap, ms);
+        int leak = fi_dlive || fi_qlive || jsrt_heap_blocks() || jsrt_handles_open();
+        if (leak) printf("SWEEP LEAK at %lu direct %ld qjs %ld heap_blocks %zu handles %u\n", n, fi_dlive, fi_qlive, jsrt_heap_blocks(), jsrt_handles_open());
+        fflush(stdout); _exit(leak ? 3 : started ? 0 : 4);
+      }
+      int st = 0; waitpid(pid, &st, 0); runs++;
+      if (WIFSIGNALED(st)) {if (*phase) crash_run++; else crash_load++; printf("SWEEP CRASH at %lu signal %d phase %s\n", n, WTERMSIG(st), *phase ? "run" : "load");}
+      else if (WEXITSTATUS(st) == 3) {if (*phase) leaks_run++; else leaks_load++;}
+      else if (WEXITSTATUS(st) == 4) bad_starts++;
     }
-    printf("SWEEP %s total %lu runs %lu failed_starts %lu leaks %lu\n", sweep, total, runs, bad_starts, leaks);
-    return leaks ? 1 : 0;
+    printf("SWEEP %s total %lu runs %lu app_did_not_start %lu leaks_load %lu leaks_run %lu crashes_load %lu crashes_run %lu\n", sweep, total, runs, bad_starts, leaks_load, leaks_run, crash_load, crash_run);
+    return leaks_run || crash_run ? 1 : 0;
   }
 #endif
   if (cycles) { /* start, run for --ms and stop, again and again; prints the live heap blocks after the first and last */

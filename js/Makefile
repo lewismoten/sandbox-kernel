@@ -84,7 +84,7 @@ $(HOSTDIR)/jsrun-pt: $(HOSTSRC) tests/host/profile_test.c $(wildcard src/*.h) Ma
 host-appcheck: $(HOSTDIR)/appcheck
 $(HOSTDIR)/appcheck: tests/host/appcheck.c src/app.c src/app.h Makefile | $(HOSTDIR)
 	$(HOSTCC) -O1 -std=gnu11 $(WARN) -Isrc tests/host/appcheck.c src/app.c -o $@
-test: host host-profiletest host-appcheck
+test: host host-fault host-profiletest host-appcheck
 	$(PYTHON) tests/run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/profile_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt
 	$(PYTHON) tests/app_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt $(HOSTDIR)/appcheck
@@ -95,6 +95,7 @@ test: host host-profiletest host-appcheck
 	$(PYTHON) tests/launch_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/os_run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/limits_run.py $(HOSTDIR)/jsrun
+	$(PYTHON) tests/alloc_run.py $(HOSTDIR)/jsrun-fault
 size: $(BUILD)/JS.ELF
 	$(SIZE) $(BUILD)/JS.full.elf
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF

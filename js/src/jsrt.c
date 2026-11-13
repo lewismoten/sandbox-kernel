@@ -114,10 +114,15 @@ static int q_oom, timed_out, in_start;
 static void pending_clear(void);
 static uint64_t deadline_ns;
 static char fault_why[96];
-static void q_note(size_t n) {q_used += n; q_blocks++; if (q_used > q_peak) q_peak = q_used;}
+/* The limit is soft by QRESERVE: passing it sets q_oom (the app stops at the next poll, within about 10,000 operations) but the
+   allocation succeeds, so the usual stop is never an allocation failing in the middle of QuickJS's compiler, which (in
+   v0.18.0, e.g. js_parse_class) does not survive one. Only a single request past limit + QRESERVE is refused. */
+#define QRESERVE (128u << 10)
+static void q_note(size_t n) {q_used += n; q_blocks++; if (q_used > q_peak) q_peak = q_used; if (q_limit && q_used > q_limit) q_oom = 1;}
+static int q_refuse(size_t grow) {return q_limit && q_used + grow > q_limit + QRESERVE;}
 static void *q_malloc(void *o, size_t n) {
   (void)o;
-  if (n > ~(size_t)0 - QHDR || (q_limit && q_used + n > q_limit)) {q_oom = 1; return 0;}
+  if (n > ~(size_t)0 - QHDR || q_refuse(n)) {q_oom = 1; return 0;}
   size_t *b = JSRT_QMALLOC(n + QHDR);
   if (!b) {q_oom = 1; return 0;}
   b[0] = n; q_note(n); return (char *)b + QHDR;
@@ -126,7 +131,7 @@ static void *q_calloc(void *o, size_t count, size_t size) {
   (void)o;
   if (size && count > (~(size_t)0 - QHDR) / size) {q_oom = 1; return 0;}
   size_t n = count * size;
-  if (q_limit && q_used + n > q_limit) {q_oom = 1; return 0;}
+  if (q_refuse(n)) {q_oom = 1; return 0;}
   size_t *b = JSRT_QCALLOC(1, n + QHDR);
   if (!b) {q_oom = 1; return 0;}
   b[0] = n; q_note(n); return (char *)b + QHDR;
@@ -141,10 +146,10 @@ static void *q_realloc(void *o, void *p, size_t n) {
   if (!p) return q_malloc(o, n);
   if (!n) {q_free(o, p); return 0;}
   size_t *b = (size_t *)((char *)p - QHDR), old = b[0];
-  if (n > ~(size_t)0 - QHDR || (q_limit && n > old && q_used + (n - old) > q_limit)) {q_oom = 1; return 0;}
+  if (n > ~(size_t)0 - QHDR || (n > old && q_refuse(n - old))) {q_oom = 1; return 0;}
   size_t *nb = JSRT_QREALLOC(b, n + QHDR);
   if (!nb) {q_oom = 1; return 0;}
-  nb[0] = n; q_used = q_used - old + n; if (q_used > q_peak) q_peak = q_used;
+  nb[0] = n; q_used = q_used - old + n; if (q_used > q_peak) q_peak = q_used; if (q_limit && q_used > q_limit) q_oom = 1;
   return (char *)nb + QHDR;
 }
 static size_t q_usable(const void *p) {return p ? *(const size_t *)((const char *)p - QHDR) : 0;}
@@ -386,7 +391,7 @@ static JSValue el_set(JSContext *c, JSValueConst this, JSValueConst v, int magic
     if (JS_ToInt32(c, &n, v)) return JS_EXCEPTION;
     if (e->tag == DOM_CANVAS) {
       if (n < 1) n = 1;
-      if (dom_set_canvas_size(e, magic == P_WIDTH ? (uint32_t)n : e->pw, magic == P_HEIGHT ? (uint32_t)n : e->ph)) return JS_ThrowRangeError(c, "canvas too big (640 x 480 at most)");
+      if (dom_set_canvas_size(e, magic == P_WIDTH ? (uint32_t)n : e->pw, magic == P_HEIGHT ? (uint32_t)n : e->ph)) return JS_ThrowRangeError(c, "canvas too big (960 x 540 at most, and 640 x 480 pixels in all canvases together)");
     } else {char b[16]; snprintf(b, sizeof b, "%d", (int)n); dom_set_style(e, magic == P_WIDTH ? "width" : "height", b);}
     break;
   case P_TABINDEX: if (JS_ToInt32(c, &n, v)) return JS_EXCEPTION; e->focusable = n >= 0; break;
@@ -967,7 +972,7 @@ static int start_inner(const char *dir, uint32_t heap_limit) {
   new_class(&style_class, "CSSStyleDeclaration", style_finalizer, style_mark, style_proto, (int)NSTYLE);
   new_class(&ctx2d_class, "CanvasRenderingContext2D", style_finalizer, ctx2d_mark, ctx2d_proto, (int)(sizeof ctx2d_proto / sizeof ctx2d_proto[0]));
   if (set_mode(PLAT_W, PLAT_H, 32)) {say("JS cannot restore page mode"); return -1;}
-  dom_init(load_picture, PROF->draw);
+  if (dom_init(load_picture, PROF->draw)) {say("JS no memory for the page"); return -1;}
   native = JS_NewObject(ctx);
   JS_SetPropertyFunctionList(ctx, native, native_fns, (int)(sizeof native_fns / sizeof native_fns[0]));
   jsfs_init(rt, ctx, native);
@@ -977,6 +982,7 @@ static int start_inner(const char *dir, uint32_t heap_limit) {
   jsserial_init(ctx, native);
   jspower_init(ctx, native);
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
+  if (JS_IsException(body)) {report(); return -1;}
   struct jel *bj = jel_of(body);
   dom_delete(bj->e); bj->e = dom_body; dom_body->js = bj;
   JS_SetPropertyStr(ctx, native, "body", body);
@@ -1117,8 +1123,10 @@ int jsrt_stop(void) {
   if (leaks) sayf("JS app left %u handle(s) open: %s", leaks, sum);
   unsigned holds = jspower_release_all(); /* power holds are tokens, not handles */
   if (holds) {sayf("JS app left %u power hold(s)", holds); leaks += holds;}
+  struct dom_el *orphan = dom_body && !dom_body->js ? dom_body : 0; /* a start that failed before the page's root got its wrapper */
   if (ctx) {JS_FreeValue(ctx, native); native = JS_UNDEFINED; JS_FreeContext(ctx); ctx = 0;}
   if (rt) {JS_FreeRuntime(rt); rt = 0;}
+  if (orphan) dom_delete(orphan);
   dom_body = dom_focused = 0;
   want_frame = lowres_on = orphan_mode = 0; wake_at_ms = 1e300;
   plat_reset_input();

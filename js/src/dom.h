@@ -35,7 +35,8 @@ extern struct dom_stats dom_stats;
 /* Pictures: the loader fills a 320 x 200 index picture and 6-bit palette for
    a src (a .GIF, or a game folder's title screen); 0, or -1 when it cannot. */
 typedef int (*dom_loader)(const char *src, uint8_t *px, uint8_t *pal);
-void dom_init(dom_loader load, void (*draw_game)(void *game, uint32_t *fb, uint32_t stride));
+#define DOM_CANVAS_PIXELS (640u * 480u)
+int dom_init(dom_loader load, void (*draw_game)(void *game, uint32_t *fb, uint32_t stride));
 /* The screen's size and depth (32: XRGB8888, 16: RGB565); everything repaints. */
 void dom_screen(int32_t w, int32_t h, uint32_t depth);
 int dom_tag(const char *name);                  /* DOM_* or -1 */
