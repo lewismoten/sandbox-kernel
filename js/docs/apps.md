@@ -1,4 +1,4 @@
-# Writing an app (slices 3 and 4a)
+# Writing an app (slices 3, 4a and 4b)
 
 An app is a folder, `/OS/APPS/<NAME>/` on the card (`NAME` is 1 to 8 letters, digits, `_` or `-`; it is the app's id).
 It holds an entry script (`MAIN.JS` unless the manifest says otherwise), any assets, and a manifest, `APP.JSON`:
@@ -45,10 +45,10 @@ A call an app has no grant for throws an `Error` that names the capability, for 
 | `fs.read.shared` | the same calls on the rest of the card outside `/sd/OS` (games, music). Add it to `fs.read`. |
 | `fs.write.saves` | `fs.write` and `fs.createWriter` in the save folder `/sd/OS/SAVES/<id>/` |
 | `fs.write.cache` | `fs.write` and `fs.createWriter` on the one file `/sd/OS/CACHE/<id>` |
-| `display` | `screen.setMode`, `screen.gameLowres`, `document.createElement`, `requestAnimationFrame`, `<game>.play()` |
-| `input` | key events (the host's F10 always works) |
+| `display` | `screen.setMode`, `screen.gameLowres`, `screen.lease`, `screen.modes`, `document.createElement`, `requestAnimationFrame`, `<game>.play()` |
+| `input` | the page's key events, and `input.open()` (raw queues). The host's F10 always works and is never delivered to an app. |
 | `audio`, `eink`, `serial`, `power` | named now; the bindings come in slices 4c and 4d, and `sandbox.require` already refuses them |
-| `log`, `time`, `memory`, `app.lifecycle` | always granted: `console`, timers, `sys.stats`, `sys.exit`, `sys.launch` |
+| `log`, `time`, `memory`, `app.lifecycle` | always granted: `console`, timers, `sandbox.now`, `sandbox.sleep`, `Math.random`, `sys.stats`, `sys.exit`, `sys.launch` (`time` is in the base set, so a manifest does not ask for it) |
 
 In JavaScript: `sandbox.version` (`{api, runtime}`), `sandbox.capabilities` (the granted names), `sandbox.has(name)`,
 `sandbox.require(name)` (throws if not granted) and `sandbox.app` (`{id, name, version, legacy}`).
@@ -77,7 +77,7 @@ is closed when the interpreter frees it; one it keeps is reported. 50 app switch
 (`tests/app_run.py`, `tests/files_run.py`). A staged writer is one entry too: left open at stop it is discarded, and reported.
 
 A `<game>` element that is freed while playing gets `end()` from its finalizer (the page's screen mode returns on the
-next turn). Timers and key listeners live inside the app's interpreter and vanish with it; they are not table entries yet.
+next turn). Timers and key listeners live inside the app's interpreter and vanish with it; they are not table entries. A screen lease (`display`), an input queue (`input`) and the sleep scheduler (`timer`, open only while a `sleep()` is waiting) are entries; stop releases them and reports what was left open.
 
 ## AUTORUN and recovery
 
@@ -136,3 +136,40 @@ How it works, and the limits that come from the kernel:
 - No append, no in-place update, no delete, no folders: the kernel has none (contract gaps G2 and G11 to G14).
 
 Status: all of this is host-tested (`make -C js test`); none of it has run on a board yet.
+
+## Display, time and input (slice 4b)
+
+```js
+// Modes. screen.setMode(w, h, 32|16) is the page's, as before; 8 bpp is only for a lease (or a game).
+screen.modes();                 // [{width, height, depth, pitch, bytes}]: common sizes that pass the kernel's rule
+screen.supports(960, 540, 16);  // the rule itself: width 16..1920 and a multiple of 4, height 16..1200, <= 1,228,800 bytes
+
+// A lease: the app draws pixels itself. The page (DOM-lite) stops drawing until release().
+const l = screen.lease({ width: 320, height: 200, depth: 8 });   // no argument: the page's current mode
+l.pixels;                       // Uint8Array (8 bpp), Uint16Array (RGB565) or Uint32Array (0x00RRGGBB), l.pitch bytes a row
+l.setPalette([0, 0, 0, 255, 255, 255], 0);   // 8 bpp: r,g,b bytes from entry `first`; the screen keeps the top 6 bits of each
+l.getPalette();                 // Uint8Array(768): what the screen shows (255 stays 255; 130 comes back 130 widened from 32)
+l.pixels.fill(1); l.present();  // or present(x, y, w, h); RangeError outside the surface
+l.release();                    // the page's mode returns and it repaints itself; l.pixels is detached (length 0)
+
+// Time.
+sandbox.now();                  // whole microseconds on the kernel's clock: exact, monotonic, since kernel start
+await sandbox.sleep(250);       // also the global sleep(ms); resolves in order of due time, at least `ms` later
+sandbox.seed; sandbox.seedRandom(7);   // Math.random's seed; the second makes a run reproducible
+
+// Input: raw events beside the page's own.
+const q = input.open();         // needs `input`; four queues at most
+q.on('key', (e) => e.code, e.value, e.repeat, e.time);   // Linux key code; value 1 down, 0 up, 2 repeat; e.time in microseconds
+q.on('attach', () => {}); q.on('detach', () => {});
+q.on('reset', (e) => e.reason, e.released);              // 'dropped' or 'detached', and the key codes that were let go
+q.pressed(103); q.down; q.attached; q.close();
+```
+
+- **Ownership.** A lease and the page never draw at once. While a lease is open, `screen.lease()` again and `screen.setMode()` fail with `EBUSY: ...`, `<game>.play()` too, and a lease fails with `EBUSY` while a `<game>` is playing. The page keeps its elements and timers and `requestAnimationFrame` still runs (draw there), but nothing of it reaches the screen. `release()` (or stop, or the collector freeing a dropped lease) puts the page's mode back and repaints all of it. A lease in the page's own mode starts with the page's pixels on it; a lease in another mode starts cleared. A view kept after `release()` has length 0, and every other call on the released lease throws `EBADF`.
+- **Palette.** An 8 bpp lease starts with a gray ramp so something shows; the kernel's palette stays set until the next one.
+- **Sleep.** The kernel's heartbeat limit is 2 s and `sleep_until` does not service it, so the loop never sleeps more than 100 ms at once and calls the health call between sleeps: a `sleep(60000)` is hundreds of small kernel sleeps. With a keyboard attached the loop looks at input every 10 ms anyway. Up to 64 sleeps may wait at once (`EMFILE`); `ms` is 0 to 2,147,483,647 (`RangeError`). `sleep(0)` yields: it resolves on the next turn, after already queued microtasks.
+- **Random.** `Math.random` is a 128-bit xorshift started from the best the kernel offers, which is only timer jitter: the clock at app start, the startup record and 64 back-to-back clock reads, with each key's timing mixed in as keys come. That is a handful of unpredictable bits, fine for variety, not for secrets. The kernel has no random source (contract gap G7). `sandbox.seedRandom(n)` makes the sequence reproducible and stops the mixing.
+- **Raw input.** Raw events arrive before the page's, for every key but F10. The page's `keydown` and `keyup` are unchanged. `SYN_DROPPED` (the kernel lost events) and a device that goes away both mean no key can be trusted: the runtime releases every held key, fires `reset` with their codes and sends the page a `keyup` for each. A key still held then shows nothing until it is pressed again (repeating keys resume). At most 128 events are handled a turn, so a flood cannot starve timers and frames; `sys.stats().inputMaxPerStep` shows the largest turn.
+- **Detach.** The kernel gives no notice: a read error means the device went away (`detach`, then `reset`), and the runtime tries to reopen it every 100 ms (`attach`). With no device the loop wakes every 100 ms instead of 10. Event times are stamped when the runtime reads them, up to 10 ms after the key.
+
+Status: all of this is host-tested (`make -C js test`, `tests/dev_run.py`); none of it has run on a board yet.

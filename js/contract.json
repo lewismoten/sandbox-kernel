@@ -82,14 +82,14 @@
    "kernel": "open (1) /dev/fb0",
    "number": 1,
    "abi": "1.0",
-   "js": "display.open() -> Display (one at a time)",
+   "js": "screen.lease({width,height,depth}) -> ScreenLease (one at a time, JSRT_H_DISPLAY); screen.setMode unchanged (page modes)",
    "shape": "sync",
    "errors": "ENODEV (no framebuffer), EBUSY (already open)",
    "capability": "display",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: second open EBUSY",
-   "notes": ""
+   "notes": "The page (DOM-lite) opens the device at start; a lease is exclusive with it: the page stops drawing, setMode and play() are refused (EBUSY) until release()."
   },
   {
    "id": "sys.open.input",
@@ -97,14 +97,14 @@
    "kernel": "open (1) /dev/input/event0, RDONLY|NONBLOCK",
    "number": 1,
    "abi": "1.0",
-   "js": "input.open() -> InputQueue; document-level keydown/keyup in the DOM-lite profile",
+   "js": "input.open() -> InputQueue (JSRT_H_INPUT, 4 at most) with on(key|attach|detach|reset); document keydown/keyup unchanged",
    "shape": "sync",
    "errors": "EACCES (not read-only), EINVAL (blocking open), EBUSY (second reader), ENODEV",
    "capability": "input",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: blocking open EINVAL; second reader EBUSY",
-   "notes": "Blocking reads do not exist (see gaps G1)."
+   "notes": "The runtime owns the one kernel reader (EBUSY for a second); queues fan its events out in JS. The device is reopened every 100 ms after it goes away."
   },
   {
    "id": "sys.open.audio",
@@ -162,9 +162,9 @@
    "errors": "EAGAIN -> returns 0 bytes / null, EBADF, EINVAL (input count < 16), EFAULT",
    "capability": "per handle",
    "status": "bound",
-   "why": "slice 4a: tests/files_run.py",
+   "why": "slice 4a: tests/files_run.py; slice 4b: tests/dev_run.py",
    "test": "host: each device kind; count > 1 MiB EINVAL",
-   "notes": "Files only so far (slice 4a): one read is at most 256 KiB in JS and 1 MiB in the kernel; devices bind in 4b to 4d."
+   "notes": "Files (slice 4a): one read is at most 256 KiB in JS and 1 MiB in the kernel. The input device (slice 4b) is read inside the runtime, at most 128 events a turn, never by the app; serial binds in 4d."
   },
   {
    "id": "sys.write",
@@ -217,12 +217,12 @@
    "kernel": "mmap (6) /dev/fb0 only",
    "number": 6,
    "abi": "1.0",
-   "js": "display.surface -> ArrayBuffer view of the mapped pixels (Uint8/Uint16/Uint32 by format)",
+   "js": "ScreenLease.pixels: Uint32Array/Uint16Array/Uint8Array over the mapped surface; detached (length 0) at release",
    "shape": "sync",
    "errors": "EINVAL (offset/flags/length), EACCES (executable), ENOSYS (anonymous)",
    "capability": "display",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: wrong protection EACCES; anonymous mapping ENOSYS",
    "notes": "Always maps the whole surface at 0x40000000; staying mapped after close means JS must never keep a view across a mode change."
   },
@@ -277,14 +277,14 @@
    "kernel": "clock_gettime (13)",
    "number": 13,
    "abi": "1.1",
-   "js": "performance.now() (ms, float), time.monotonicNs() -> BigInt",
+   "js": "sandbox.now() -> whole microseconds (a Number, exact); performance.now() (ms, since app start) as before",
    "shape": "sync",
    "errors": "EINVAL (clock != 0)",
    "capability": "time",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: monotonic, microsecond steps",
-   "notes": "Only a monotonic clock since boot; no wall time (gap G10)."
+   "notes": "No BigInt: a double holds microseconds exactly for 285 years."
   },
   {
    "id": "sys.sleep",
@@ -292,14 +292,14 @@
    "kernel": "sleep_until (14)",
    "number": 14,
    "abi": "1.1",
-   "js": "setTimeout/timers driven by the loop; sleepUntil(ns) in the core only",
+   "js": "sandbox.sleep(ms) / sleep(ms) -> Promise; setTimeout as before; the loop sleeps at most 100 ms at a time (JSDEV_SLEEP_CHUNK_NS)",
    "shape": "sync (yields to kernel)",
    "errors": "none",
    "capability": "time",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: past deadline returns at once; heartbeat still due while asleep",
-   "notes": "Does not wake on input and does not extend the heartbeat deadline (gap G1, G3)."
+   "notes": "The heartbeat limit is 2 s and sleep does not service it, so the loop asks for the kernel sleep in chunks of at most 100 ms and calls the health call between them (G3)."
   },
   {
    "id": "sys.exit",
@@ -547,12 +547,12 @@
    "kernel": "FB_PRESENT 0x10001",
    "number": 65537,
    "abi": "1.0",
-   "js": "display.present(x,y,w,h) (whole screen by default)",
+   "js": "ScreenLease.present(x?,y?,w?,h?) (whole surface by default; RangeError outside)",
    "shape": "sync (copies to GPU surface)",
    "errors": "EINVAL (outside mode or nothing mapped)",
    "capability": "display",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: rectangle out of range; present before mmap",
    "notes": ""
   },
@@ -562,14 +562,14 @@
    "kernel": "FB_SET_MODE 0x10002",
    "number": 65538,
    "abi": "1.2",
-   "js": "display.setMode(width,height,'xrgb8888'|'rgb565'|'index8') -> actual mode",
+   "js": "screen.lease({width,height,depth}) switches mode for the lease and restores the page mode at release; screen.modes() and screen.supports(w,h,d) give the rule",
    "shape": "sync",
    "errors": "EINVAL, EIO (firmware refused); firmware may return a smaller mode so always re-query",
    "capability": "display",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: width not multiple of 4; > 1,228,800 bytes; 1.1 kernel ENOTTY falls back to 640x480",
-   "notes": "Old kernels (<1.2) return ENOTTY: the wrapper reports modes=[640x480 xrgb8888]."
+   "notes": "The kernel offers no mode list (G15): the runtime lists common sizes that pass the documented rule. The firmware may still refuse one (RangeError)."
   },
   {
    "id": "ioc.fb.palette",
@@ -577,12 +577,12 @@
    "kernel": "FB_PALETTE 0x10003",
    "number": 65539,
    "abi": "1.2",
-   "js": "display.setPalette(first, rgbArray)",
+   "js": "ScreenLease.setPalette(rgb, first?) / getPalette() (8 bpp leases; 8-bit values keep their top 6 bits)",
    "shape": "sync",
    "errors": "EINVAL (range), ENOTTY (old kernel)",
    "capability": "display",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: count 0, first+count > 256",
    "notes": "Entries are 0x00RRGGBB; has no effect unless the mode is index8."
   },
@@ -622,14 +622,14 @@
    "kernel": "INPUT_STATE 0x30001",
    "number": 196609,
    "abi": "1.0",
-   "js": "input.snapshot() -> {keys:Set<number>, axes:number[32]}; the loop calls it after a dropped-events marker",
+   "js": "after SYN_DROPPED the platform reads the state (it empties the queue) and the runtime releases every key: a \"reset\" event, then keyup for the page",
    "shape": "sync",
    "errors": "ENODEV",
    "capability": "input",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4b: tests/dev_run.py",
    "test": "host: overflow -> SYN_DROPPED -> state -> resume",
-   "notes": "Also empties the queue."
+   "notes": "The state itself is not used: after a drop the runtime cannot tell which keys are really down, so it lets all go (a key still held sends no new keydown until it is pressed again; repeating keys, arrows and Page keys, resume)."
   },
   {
    "id": "ioc.eink.query",
@@ -756,7 +756,7 @@
   {
    "id": "G1",
    "title": "Input wait",
-   "problem": "No blocking read or poll: input must be opened nonblocking and sleep_until does not wake on input. JS must poll between sleeps, costing latency or power.",
+   "problem": "No blocking read or poll: input must be opened nonblocking and sleep_until does not wake on input. JS must poll between sleeps, costing latency or power. Slice 4b hides this in the runtime: input is polled every 10 ms (100 ms with no device), at most 128 events a turn; the cost is the wakeups, about 100 a second while idle.",
    "owner": "kernel",
    "proposal": "A wake-on-input flag for sleep_until, or a blocking input read that still serves the heartbeat",
    "priority": "high"
@@ -772,7 +772,7 @@
   {
    "id": "G3",
    "title": "Heartbeat during sleeps",
-   "problem": "sleep_until does not extend the heartbeat deadline and the allowed interval is not in the ABI. A long timer wait must be chopped into slices by the runtime.",
+   "problem": "sleep_until does not extend the heartbeat deadline and the allowed interval is not in the ABI. A long timer wait must be chopped into slices by the runtime. Slice 4b chops every wait into kernel sleeps of at most 100 ms (JSDEV_SLEEP_CHUNK_NS) and services the heartbeat between them; the 2 s limit is from docs/os-authors.md, not the ABI.",
    "owner": "docs + kernel",
    "proposal": "Publish the heartbeat limit in the startup record; let sleep_until count as progress up to it",
    "priority": "medium"
@@ -804,7 +804,7 @@
   {
    "id": "G7",
    "title": "Entropy and wall time",
-   "problem": "No random source and no real-time clock. Math.random needs a seed from boot jitter; Date is meaningless.",
+   "problem": "No random source and no real-time clock. Math.random needs a seed from boot jitter; Date is meaningless. Slice 4b seeds Math.random from the clock at app start, the startup record, 64 back-to-back clock reads and key timings as they come: little more than timer jitter, a handful of bits, never for secrets. sandbox.seed shows the seed; sandbox.seedRandom(n) makes a run reproducible.",
    "owner": "kernel",
    "proposal": "getrandom-style call; optionally a time source or a way for the host to set it over USB",
    "priority": "medium"
@@ -863,6 +863,30 @@
    "problem": "The kernel reports EDQUOT and ENOSPC only when a commit fails, so the JS quota (default 256 KiB per app) is a guess made in the runtime, and an app cannot ask how much card is left.",
    "owner": "kernel",
    "proposal": "a query for free bytes and the used/limit counts of games and files in SAVES",
+   "priority": "low"
+  },
+  {
+   "id": "G15",
+   "title": "No list of display modes",
+   "problem": "The kernel documents a rule (width 16 to 1920 and a multiple of 4, height 16 to 1200, 1,228,800 bytes at most) but has no call that lists the modes, so screen.modes() offers common sizes that pass the rule and the firmware may still refuse one.",
+   "owner": "kernel",
+   "proposal": "a query that returns the supported modes, or at least the rule and the display's native size",
+   "priority": "low"
+  },
+  {
+   "id": "G16",
+   "title": "No input hot-plug notice and no event time",
+   "problem": "The queue says nothing when the device goes away or comes back: the runtime infers a detach from a read error and tries to reopen every 100 ms. Events carry no timestamp, so the runtime stamps them when it reads (up to 10 ms late).",
+   "owner": "kernel",
+   "proposal": "an attach/detach marker event on the queue, and a time field on each event",
+   "priority": "low"
+  },
+  {
+   "id": "G17",
+   "title": "No vertical blank or present-complete",
+   "problem": "A lease draws straight into the mapped surface and present() copies synchronously, so an app that animates cannot tell where the display is in its refresh and may tear.",
+   "owner": "kernel",
+   "proposal": "a vblank timestamp or a present call that returns after the copy is on screen (extends G9)",
    "priority": "low"
   }
  ]

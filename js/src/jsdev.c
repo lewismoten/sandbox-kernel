@@ -46,7 +46,8 @@ static void lease_finalizer(JSRuntime *r, JSValueConst v) {
   if (id) jsrt_handle_close((uint32_t)id);
 }
 static struct lease *lease_of(JSContext *c, JSValueConst t) {
-  uintptr_t id = (uintptr_t)JS_GetOpaque2(c, t, lease_class);
+  if (JS_GetClassID(t) != lease_class) {JS_ThrowTypeError(c, "ScreenLease object expected"); return 0;}
+  uintptr_t id = (uintptr_t)JS_GetOpaque(t, lease_class);
   struct lease *l = id ? jsrt_handle_get((uint32_t)id, JSRT_H_DISPLAY) : 0;
   if (!l && !JS_HasException(c)) JS_ThrowPlainError(c, "EBADF: the screen lease was released");
   return l;
@@ -104,9 +105,10 @@ static JSValue js_lease_present(JSContext *c, JSValueConst t, int n, JSValueCons
   return JS_UNDEFINED;
 }
 static JSValue js_lease_release(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
-  (void)n; (void)a; uintptr_t id = (uintptr_t)JS_GetOpaque2(c, t, lease_class);
-  if (!id) return JS_EXCEPTION;
-  if (jsrt_handle_close((uint32_t)id) == 0) JS_SetOpaque(t, 0);
+  (void)n; (void)a;
+  if (JS_GetClassID(t) != lease_class) return JS_ThrowTypeError(c, "ScreenLease object expected");
+  uintptr_t id = (uintptr_t)JS_GetOpaque(t, lease_class);
+  if (id && jsrt_handle_close((uint32_t)id) == 0) JS_SetOpaque(t, 0);
   return JS_UNDEFINED; /* releasing twice is fine */
 }
 /* setPalette(rgb, first = 0): rgb is r,g,b bytes (0 to 255) from entry `first`; the screen keeps the top 6 bits of each. */
@@ -171,6 +173,7 @@ static JSValue js_leased(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 struct sleeper {uint64_t due; JSValue resolve;};
 struct timer {struct sleeper s[SLEEPS_MAX]; unsigned n; uint32_t total;};
 static struct timer *tm;
+static uint32_t tm_id;
 static void timer_release(void *u) {
   struct timer *t = u;
   for (unsigned i = 0; i < t->n; i++) if (dctx) JS_FreeValue(dctx, t->s[i].resolve);
@@ -188,7 +191,8 @@ static JSValue js_sleep(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   if (!tm) {
     struct timer *x = calloc(1, sizeof *x);
     if (!x) return JS_ThrowOutOfMemory(c);
-    if (!jsrt_handle_open(JSRT_H_TIMER, timer_release, x)) {free(x); return JS_ThrowRangeError(c, "EMFILE: too many open handles");}
+    tm_id = jsrt_handle_open(JSRT_H_TIMER, timer_release, x);
+    if (!tm_id) {free(x); return JS_ThrowRangeError(c, "EMFILE: too many open handles");}
     tm = x;
   }
   if (tm->n == SLEEPS_MAX) return JS_ThrowRangeError(c, "EMFILE: %u sleeps are already waiting", (unsigned)SLEEPS_MAX);
@@ -205,6 +209,7 @@ void jsdev_sleeps_due(uint64_t now) {
     if (best == tm->n) return;
     JSValue f = tm->s[best].resolve; tm->s[best] = tm->s[--tm->n];
     JS_FreeValue(dctx, JS_Call(dctx, f, JS_UNDEFINED, 0, 0)); JS_FreeValue(dctx, f);
+    if (tm && !tm->n) {jsrt_handle_close(tm_id); return;} /* nothing waiting: the entry goes, the next sleep() opens another */
   }
 }
 
@@ -250,9 +255,10 @@ static JSValue js_input_open(JSContext *c, JSValueConst t, int n, JSValueConst *
   return o;
 }
 static JSValue js_queue_close(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
-  (void)n; (void)a; uintptr_t id = (uintptr_t)JS_GetOpaque2(c, t, queue_class);
-  if (!id) return JS_EXCEPTION;
-  if (jsrt_handle_close((uint32_t)id) == 0) JS_SetOpaque(t, 0);
+  (void)n; (void)a;
+  if (JS_GetClassID(t) != queue_class) return JS_ThrowTypeError(c, "InputQueue object expected");
+  uintptr_t id = (uintptr_t)JS_GetOpaque(t, queue_class);
+  if (id && jsrt_handle_close((uint32_t)id) == 0) JS_SetOpaque(t, 0);
   return JS_UNDEFINED;
 }
 static JSValue js_key_down(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
@@ -328,7 +334,7 @@ static const JSCFunctionListEntry dev_fns[] = {
   JS_CFUNC_DEF("inputAttached", 0, js_attached),
 };
 void jsdev_init(JSRuntime *rt, JSContext *c, JSValueConst native) {
-  dctx = c; lease_on = 0; lease_id = 0; tm = 0; queues = 0; rng_fixed = 0;
+  dctx = c; lease_on = 0; lease_id = 0; tm = 0; tm_id = 0; queues = 0; rng_fixed = 0;
   memset(down, 0, sizeof down); memset(released, 0, sizeof released);
   attached = plat_input_attached();
   int fixed = 0; uint64_t e = plat_entropy(&fixed);

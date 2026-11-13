@@ -85,6 +85,7 @@ test: host host-profiletest host-appcheck
 	$(PYTHON) tests/profile_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt
 	$(PYTHON) tests/app_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt $(HOSTDIR)/appcheck
 	$(PYTHON) tests/files_run.py $(HOSTDIR)/jsrun
+	$(PYTHON) tests/dev_run.py $(HOSTDIR)/jsrun
 size: $(BUILD)/JS.ELF
 	$(SIZE) $(BUILD)/JS.full.elf
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF

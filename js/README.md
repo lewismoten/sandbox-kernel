@@ -4,7 +4,7 @@ Working name. A layer on top of sandbox-kernel so you can write your own OS for 
 
 You write apps in JavaScript. Sandbox JS is one ELF (QuickJS-ng inside) that the kernel boots like any program; it turns the kernel's small system-call surface (files, display, input, audio, e-ink, serial, power) into plain JavaScript objects, plus a DOM-lite UI profile (elements, a small CSS subset, a 2D canvas) for people who want a page-shaped shell. Your OS is a folder of `.js` files copied to the card.
 
-**Status: slice 4a of 7.** The contract ([docs/contract.md](docs/contract.md)) lists every kernel call and what it becomes in JavaScript, with the gaps. The runtime now lives here too: a clean import of `JS.ELF` from `gamemaker-os` ([IMPORT.md](IMPORT.md) has the source commit, every change and what slice 2 must split), with slice 3's `sandbox` and manifest, and slice 4a's files: handles with binary reads and seek, `fs.stat`, listings with types and sizes, and a staged writer with a quota. How to write an app: [docs/apps.md](docs/apps.md). `gamemaker-os` keeps its own copy for now ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
+**Status: slice 4b of 7.** The contract ([docs/contract.md](docs/contract.md)) lists every kernel call and what it becomes in JavaScript, with the gaps. The runtime now lives here too: a clean import of `JS.ELF` from `gamemaker-os` ([IMPORT.md](IMPORT.md) has the source commit, every change and what slice 2 must split), with slice 3's `sandbox` and manifest, slice 4a's files (handles with binary reads and seek, `fs.stat`, listings with types and sizes, a staged writer with a quota) and slice 4b's display, time and input (a surface lease for direct pixels, modes and palettes, a microsecond clock, `sleep`, a seeded `Math.random`, raw input queues). How to write an app: [docs/apps.md](docs/apps.md). `gamemaker-os` keeps its own copy for now ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
 
 ## What v1 is, and is not
 
@@ -23,7 +23,7 @@ These are defaults picked for Lewis on 2026-11-13; he can change them (the list 
 | 1 | Standalone extraction of JS.ELF here: reproducible builds, notices, current apps work, size reported. |
 | 2 | Generic core and profile split: no game dependency in the base; the Game-Maker profile stays optional. |
 | 3 | Versioning, package manifest, capabilities, path policy, handle accounting, app teardown. |
-| 4a (done) to 4d | Files and storage; display, time and input; audio; e-ink and serial. |
+| 4a, 4b (done) to 4d | Files and storage; display, time and input; audio; e-ink and serial. |
 | 5 | Execution limits and hardening (script budgets, allocation failure, soak). |
 | 6 | Release and maker path: drift checks against the kernel ABI, prebuilt artifacts, a JS-only example OS another author can boot. |
 | 7 | Optional adoption by gamemaker-os. |
@@ -40,7 +40,7 @@ make -C js size      # ELF bytes and each PT_LOAD against the 1 MiB ceiling and 
 make -C js repro     # two clean builds at different paths must match byte for byte
 ```
 
-Current size (2026-11-13, toolchain 15.3.rel2, core profile, slice 4a): `JS.ELF` 780,916 bytes (74.5% of 1 MiB, 267,660 spare; slice 3: 768,620); two PT_LOADs, R-X 770,704 bytes and RW- 2,348 file bytes with 3,965,028 in memory (the 3 MiB heap, a 256 KiB read buffer and QuickJS's data); loaded image 4.52 MiB of the 8 MiB quota. Run on the host, not yet on a board. Third-party notices: [third_party/README.md](third_party/README.md). Nothing here is flashed by the tests.
+Current size (2026-11-13, toolchain 15.3.rel2, core profile, slice 4b): `JS.ELF` 793,204 bytes (75.6% of 1 MiB, 255,372 spare; slice 4a: 780,916; slice 3: 768,620); two PT_LOADs, R-X 784,016 bytes and RW- 2,348 file bytes with 3,966,068 in memory (the 3 MiB heap, a 256 KiB read buffer and QuickJS's data); loaded image 4.54 MiB of the 8 MiB quota. Run on the host, not yet on a board. Third-party notices: [third_party/README.md](third_party/README.md). Nothing here is flashed by the tests.
 
 ## Slice 1 needs (done)
 
@@ -68,3 +68,7 @@ An app folder carries an `APP.JSON` manifest (name, version, entry, the API it n
 python3 js/tools/contract.py check   # schema, every syscall and ioctl covered, ABI minor current
 python3 js/tools/contract.py md      # print the tables for docs/contract.md
 ```
+
+## Slice 4b (done): display, time and input
+
+`src/jsdev.c` holds the bindings (the same pattern as 4a). `screen.lease()` hands the mapped surface to the app as a typed array, exclusive with the DOM-lite page (`JSRT_H_DISPLAY`); `screen.modes()` and `screen.supports()` give the kernel's mode rule; an 8 bpp lease has `setPalette`/`getPalette`. `sandbox.now()` is exact microseconds, `sandbox.sleep(ms)` a promise the loop wakes in chunks of at most 100 ms (`JSRT_H_TIMER`), and `Math.random` starts from a seed built from what the kernel offers (timer jitter only; `sandbox.seed`, `sandbox.seedRandom`). `input.open()` gives raw queues (`JSRT_H_INPUT`) with key (including repeat), attach, detach and reset events; recovery after `SYN_DROPPED` releases every held key. The page's own key events are unchanged. [docs/apps.md](docs/apps.md) has the API and the rules. New kernel wishes: G15 to G17 (the contract also notes what the runtime does about G1, G3 and G7). Slice 4c (audio) needs: a handle kind already exists (`JSRT_H_AUDIO`), a `need()` for `audio`, a refill pump in `jsrt_step` bounded like the input one (the 100 ms chunk is also the refill budget) and a host model of the 48 kHz ring in `tests/host/jsrun.c`; see the report for the details.
