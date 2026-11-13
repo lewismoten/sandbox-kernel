@@ -55,21 +55,21 @@ int32_t plat_list(const char *path, void (*fn)(void *, const char *, uint32_t, i
   return count;
 }
 int plat_fopen(const char *path, uint64_t *fd) {return sbx_open(path, (uint32_t)strlen(path), SBX_O_RDONLY, fd);}
-int plat_fread(uint64_t fd, void *buf, uint32_t n, uint32_t *got) {
-  uint64_t d = 0; int32_t s = sbx_read(fd, buf, n > (1u << 20) ? 1u << 20 : n, &d);
+int plat_fread(uint64_t fd, void *buf, uint32_t count, uint32_t *got) {
+  uint64_t d = 0; int32_t s = sbx_read(fd, buf, count > (1u << 20) ? 1u << 20 : count, &d);
   *got = s ? 0 : (uint32_t)d; plat_heartbeat();
   return s;
 }
-int plat_fseek(uint64_t fd, uint32_t pos) {uint64_t at; return sbx_seek(fd, (int64_t)pos, &at);}
+int plat_fseek(uint64_t fd, uint32_t pos) {uint64_t where; return sbx_seek(fd, (int64_t)pos, &where);}
 void plat_fclose(uint64_t fd) {sbx_close(fd);}
-int plat_write_file(const char *path, const void *buf, uint32_t n) {
+int plat_write_file(const char *path, const void *buf, uint32_t bytes) {
   uint64_t fd, done; int32_t s = sbx_open(path, (uint32_t)strlen(path), SBX_O_WRONLY | SBX_O_CREAT | SBX_O_TRUNC, &fd);
   if (s) return s;
-  for (uint32_t at = 0; !s && at < n;) {
-    uint32_t chunk = n - at > 65536u ? 65536u : n - at;
-    s = sbx_write(fd, (const uint8_t *)buf + at, chunk, &done);
+  for (uint32_t off = 0; !s && off < bytes;) {
+    uint32_t chunk = bytes - off > 65536u ? 65536u : bytes - off;
+    s = sbx_write(fd, (const uint8_t *)buf + off, chunk, &done);
     if (!s && !done) s = -SBX_EIO;
-    if (!s) at += (uint32_t)done;
+    if (!s) off += (uint32_t)done;
     plat_heartbeat();
   }
   if (!s) s = sbx_fsync(fd); /* the commit; a close without it discards the bytes */
