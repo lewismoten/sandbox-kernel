@@ -1,4 +1,4 @@
-# Writing an app (slice 3)
+# Writing an app (slices 3 and 4a)
 
 An app is a folder, `/OS/APPS/<NAME>/` on the card (`NAME` is 1 to 8 letters, digits, `_` or `-`; it is the app's id).
 It holds an entry script (`MAIN.JS` unless the manifest says otherwise), any assets, and a manifest, `APP.JSON`:
@@ -41,10 +41,10 @@ A call an app has no grant for throws an `Error` that names the capability, for 
 
 | Capability | What it opens today |
 | --- | --- |
-| `fs.read` | `fs.readFile`, `fs.readdir`, `fs.open` on the app's own folder (read-only) and its save folder |
+| `fs.read` | `fs.readFile`, `fs.readdir`, `fs.open`, `fs.stat`, `fs.readBytes` on the app's own folder (read-only) and its save folder |
 | `fs.read.shared` | the same calls on the rest of the card outside `/sd/OS` (games, music). Add it to `fs.read`. |
-| `fs.write.saves` | the save folder `/sd/OS/SAVES/<id>/` (writing arrives with slice 4a) |
-| `fs.write.cache` | the one file `/sd/OS/CACHE/<id>` (slice 4a) |
+| `fs.write.saves` | `fs.write` and `fs.createWriter` in the save folder `/sd/OS/SAVES/<id>/` |
+| `fs.write.cache` | `fs.write` and `fs.createWriter` on the one file `/sd/OS/CACHE/<id>` |
 | `display` | `screen.setMode`, `screen.gameLowres`, `document.createElement`, `requestAnimationFrame`, `<game>.play()` |
 | `input` | key events (the host's F10 always works) |
 | `audio`, `eink`, `serial`, `power` | named now; the bindings come in slices 4c and 4d, and `sandbox.require` already refuses them |
@@ -74,8 +74,7 @@ tagged with a generation that never repeats, so a closed or older handle never r
 `EBADF: the file handle is closed or stale`). `jsrt_stop` runs the profile's `end` and `stop` hooks, then releases every
 entry still open, logs `JS app left N handle(s) open: file 2` and returns N. A file handle the app drops without closing
 is closed when the interpreter frees it; one it keeps is reported. 50 app switches leave the heap flat and zero handles open
-(`tests/app_run.py`). `fs.open(path)` returns `{size, text(), close()}` holding the file's bytes: a stand-in that slice 4a
-replaces with binary reads and seeking, so the handle rules (not the shape) are what it proves.
+(`tests/app_run.py`, `tests/files_run.py`). A staged writer is one entry too: left open at stop it is discarded, and reported.
 
 A `<game>` element that is freed while playing gets `end()` from its finalizer (the page's screen mode returns on the
 next turn). Timers and key listeners live inside the app's interpreter and vanish with it; they are not table entries yet.
@@ -87,5 +86,53 @@ default is `APPS/HELLO`. (Slice 3 narrowed line 2 from "a folder under /OS" to `
 If line 2 is bad, or the app is refused (bad or newer manifest, missing entry, a script that throws), the runtime logs why
 and starts the always-embedded picker, which shows the reason on two rows ("Could not start APPS/NAME", then the reason).
 The picker lists a folder that has a `MAIN.JS` or an `APP.JSON`.
+
+## Files and storage (slice 4a)
+
+```js
+// Read a binary file in pieces.
+const f = fs.open('/sd/OS/APPS/MYAPP/LEVEL1.DAT');   // needs fs.read
+f.size; f.position;                                  // bytes
+f.seek(16);                                          // 0 to size (the end is allowed); RangeError outside
+const head = f.read(64);                             // Uint8Array, fewer bytes at the end, empty at the end
+const buf = new Uint8Array(4096);
+const n = f.readInto(buf, 0, 4096);                  // into your own buffer; returns the count
+const line = f.text(80);                             // UTF-8 text
+f.close();                                           // or let it go; stop closes it and reports it
+const all = fs.readBytes('/sd/OS/APPS/MYAPP/LEVEL1.DAT');  // the whole file (at most 1 MiB)
+
+fs.stat(path);                                       // {name, type: 'file' | 'dir', size, modified, created}
+fs.readdir(path);                                    // names, as before
+fs.readdir(path, { meta: true });                    // [{name, type, size, modified, created}] with long names
+
+// Save: stage in memory, publish at commit (needs fs.write.saves).
+fs.write('/sd/OS/SAVES/MYAPP/SLOT1.SAV', bytesOrString);        // one call
+const w = fs.createWriter('/sd/OS/SAVES/MYAPP/SLOT1.SAV');
+w.write(header); w.write(body);                      // returns the staged size
+try { w.commit(); } catch (e) { if (e.code === 'EBUSY') { /* close readers in the save folder, retry */ } else w.abort(); }
+```
+
+How it works, and the limits that come from the kernel:
+
+- **Reads** are real kernel handles. Reads of a long-name file work with its long name. A read returns at most 256 KiB;
+  loop for more. `modified` and `created` are the card's FAT date and time words, kept as opaque numbers.
+- **Writes** are whole files. The kernel can only write a complete file (create or replace) to a canonical name under
+  `/sd/OS/SAVES/<id>/` (the app's folder name) or the one file `/sd/OS/CACHE/<id>`. So a writer keeps its bytes in the
+  app's memory and `commit()` does the kernel's single write (open, write, flush, close). Nothing touches the card before
+  that. `abort()`, a dropped writer, or the app stopping discards the bytes and leaves the card as it was. The kernel replaces
+  a save by writing new data, then one directory entry, so a power cut leaves the old file or the new one.
+- **Names** are 8.3: 1 to 8 letters, digits, `_` or `-`, optionally a dot and 1 to 3 more. Lowercase is turned into
+  uppercase. One folder deep, no subfolders, no `.` or `..`.
+- **Quota.** An app may keep 256 KiB in its save folder (all its files together; the file being replaced does not count
+  against itself), and a staged file may not exceed it: `EDQUOT`. The kernel's own limit of 1 MiB per file (`ENOSPC`) and
+  its 64 games and 32 files per game (`EDQUOT`) still apply. The default is `jsrt_write_quota` in `src/jsfs.c`.
+- **One writer** at a time (the kernel has one): a second `createWriter` is `EBUSY` until the first commits or aborts.
+- **Readers block commits.** While any file handle is open in the save folder (or cache), a commit fails with `EBUSY`; close
+  it and call `commit()` again (a failed commit keeps the writer open).
+- **Errors** are `Error`s with `code` and a message that starts with it: `ENOENT`, `EACCES` (no capability, or a path
+  outside the grant for a read), `EROFS` (a write outside the save or cache path, including the app's own folder),
+  `EINVAL` and `ENAMETOOLONG` (name rules), `EBUSY`, `EDQUOT`, `ENOSPC`, `EBADF` (closed handle), `EMFILE`/RangeError (too
+  many handles, 12 per app). `fs.readFile` and `fs.readdir` keep their slice 1 messages.
+- No append, no in-place update, no delete, no folders: the kernel has none (contract gaps G2 and G11 to G14).
 
 Status: all of this is host-tested (`make -C js test`); none of it has run on a board yet.

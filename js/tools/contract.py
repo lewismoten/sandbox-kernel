@@ -9,7 +9,7 @@ Run from anywhere; paths are found from this file. Exit 1 on any problem."""
 import json, re, sys, pathlib
 root = pathlib.Path(__file__).resolve().parents[2]
 data = json.loads((root / "js/contract.json").read_text())
-STATUS = {"v1", "later", "not-exposed"}
+STATUS = {"v1", "bound", "later", "not-exposed"}
 KEYS = ["id","kind","kernel","number","abi","js","shape","errors","capability","status","why","test","notes"]
 
 def check():
@@ -22,7 +22,7 @@ def check():
         ids.add(e["id"])
         if e["status"] not in STATUS: bad.append(f"{e['id']}: status {e['status']}")
         if not e["test"].strip(): bad.append(f"{e['id']}: no test plan")
-        if e["status"] != "v1" and not e["why"].strip(): bad.append(f"{e['id']}: non-v1 needs why")
+        if e["status"] not in ("v1",) and not e["why"].strip(): bad.append(f"{e['id']}: non-v1 needs why")
     for g in data["gaps"]:
         for k in ("id","title","problem","owner","proposal","priority"):
             if not g.get(k): bad.append(f"gap {g.get('id')}: missing {k}")

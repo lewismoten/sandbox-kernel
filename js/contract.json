@@ -22,14 +22,14 @@
    "kernel": "open (1) /sd/...",
    "number": 1,
    "abi": "1.0",
-   "js": "fs.open(path) -> FileHandle (read only); fs.readFile / fs.readdir wrap it",
+   "js": "fs.open(path) -> FileHandle {size, position, read(n), readInto(view, off, n), text(n), seek(pos), close()}; fs.readBytes(path); fs.stat(path); fs.readFile",
    "shape": "sync",
    "errors": "ENOENT, EACCES, EMFILE, ENAMETOOLONG (path < 256 bytes)",
    "capability": "fs.read",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: open existing/missing/too-long path; 16-handle exhaustion",
-   "notes": "Handles are generation-tagged; stale fd gives EBADF. 16 handles shared by all kinds."
+   "notes": "Handles are generation-tagged; stale fd gives EBADF. 16 handles shared by all kinds (the table keeps 12 for the app). The size comes from the parent folder's entry (the kernel has no stat)."
   },
   {
    "id": "sys.open.cache",
@@ -37,14 +37,14 @@
    "kernel": "open (1) /sd/OS/CACHE/NAME, WRONLY|CREAT|TRUNC",
    "number": 1,
    "abi": "1.4",
-   "js": "fs.writeFile(path, bytes) via a staged writer: fs.createWriter(path) -> Writer {write, commit, abort}",
+   "js": "fs.createWriter(path) / fs.write(path, data): staged in the app's memory, published by one whole-file write at commit()",
    "shape": "sync commit (blocks on card)",
-   "errors": "EINVAL (other flags), EBUSY (another writer or reader open), ENOSPC/EDQUOT, EROFS(30 outside scope)",
+   "errors": "EACCES (no capability), EROFS (outside the app's cache or save path), EINVAL and ENAMETOOLONG (8.3 rules), EBUSY (another writer, or a reader open in the save area), ENOSPC, EDQUOT",
    "capability": "fs.write.cache",
-   "status": "v1",
-   "why": "",
-   "test": "host: second writer EBUSY; flags other than 0x601 EINVAL; path outside scope",
-   "notes": "8.3 names only. One writer at a time; the whole file is held in kernel RAM (<=1 MiB) and written at fsync or close."
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
+   "test": "tests/files_run.py: names and scope, one writer, quota, abort at stop",
+   "notes": "8.3 names only, uppercased by the runtime. One writer at a time, in JS too. The app's own quota (default 256 KiB, jsrt_write_quota) is checked before the kernel's 1 MiB limit."
   },
   {
    "id": "sys.open.saves",
@@ -52,14 +52,14 @@
    "kernel": "open (1) /sd/OS/SAVES/GAME/NAME, WRONLY|CREAT|TRUNC",
    "number": 1,
    "abi": "1.7",
-   "js": "fs.createWriter('/sd/OS/SAVES/GAME/NAME'); sugar: save.write(game,name,bytes)",
+   "js": "fs.createWriter('/sd/OS/SAVES/<id>/NAME.EXT') / fs.write(path, data)",
    "shape": "sync commit",
    "errors": "as cache plus EDQUOT (-122) past 64 game folders or 32 files per game",
    "capability": "fs.write.saves",
-   "status": "v1",
-   "why": "",
-   "test": "host: 65th folder and 33rd file EDQUOT; power-cut behavior per docs/saves-storage.md",
-   "notes": "Scarce slots are shared by every OS on the card; a JS runtime must not spend them silently (see gaps)."
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
+   "test": "tests/files_run.py: 33rd file and 65th folder EDQUOT, full card ENOSPC",
+   "notes": "The id is the app's folder name. 64 game folders and 32 files per game are the kernel's (EDQUOT, tested against a host model)."
   },
   {
    "id": "sys.open.log",
@@ -161,10 +161,10 @@
    "shape": "sync (nonblocking)",
    "errors": "EAGAIN -> returns 0 bytes / null, EBADF, EINVAL (input count < 16), EFAULT",
    "capability": "per handle",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: each device kind; count > 1 MiB EINVAL",
-   "notes": "<=1 MiB per call; input <=16 events; serial <=256 bytes; files are read through whole-sector chunks."
+   "notes": "Files only so far (slice 4a): one read is at most 256 KiB in JS and 1 MiB in the kernel; devices bind in 4b to 4d."
   },
   {
    "id": "sys.write",
@@ -232,14 +232,14 @@
    "kernel": "seek (9)",
    "number": 9,
    "abi": "1.3",
-   "js": "FileHandle.seek(position) / read(into, {at})",
+   "js": "FileHandle.seek(position) -> position (0 to size)",
    "shape": "sync",
    "errors": "ESPIPE (not a file), EINVAL (whence != 0 or offset < 0)",
    "capability": "fs.read",
-   "status": "v1",
-   "why": "",
-   "test": "host: seek past end; seek on a device ESPIPE",
-   "notes": "Absolute offsets only, read-only files."
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
+   "test": "tests/files_run.py: seek bounds",
+   "notes": "Absolute offsets only, read-only files; a position past the size is a RangeError before the kernel is asked."
   },
   {
    "id": "sys.getdents",
@@ -247,14 +247,14 @@
    "kernel": "getdents (11)",
    "number": 11,
    "abi": "1.0",
-   "js": "superseded by call 20 in the wrapper",
+   "js": "fs.readdir(path) -> names (8.3 as the card lists them)",
    "shape": "sync",
    "errors": "ENOTDIR, EINVAL (buffer smaller than one entry)",
    "capability": "fs.read",
-   "status": "later",
-   "why": "8.3 names only; call 20 is the superset. Exposed as an option (readdir {short:true}) later.",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: only if a profile needs 8.3 aliases",
-   "notes": "8.3 names only; call 20 is the superset. Exposed as an option (readdir {short:true}) later."
+   "notes": "Plain readdir only; the long-name call is fs.readdir(path, {meta:true})."
   },
   {
    "id": "sys.fsync",
@@ -262,14 +262,14 @@
    "kernel": "fsync (12)",
    "number": 12,
    "abi": "1.4",
-   "js": "Writer.commit() (flushes and publishes)",
+   "js": "Writer.commit() (open, write, fsync, close in one step)",
    "shape": "sync, slow (waits per sector)",
    "errors": "EINVAL (not a writer), card errors",
    "capability": "fs.write.*",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: dirty then clean commit; non-writer EINVAL",
-   "notes": ""
+   "notes": "The runtime never holds a kernel writer open between JS calls, so a dropped or aborted writer costs the card nothing."
   },
   {
    "id": "sys.clock",
@@ -337,14 +337,14 @@
    "kernel": "getdents_meta (18)",
    "number": 18,
    "abi": "1.4",
-   "js": "fs.readdir(path, {meta:true}) -> {name,size,type,modified,created,cluster}",
+   "js": "the 8.3 fallback of fs.stat when a long-name listing has no match",
    "shape": "sync",
    "errors": "as getdents",
    "capability": "fs.read",
-   "status": "later",
-   "why": "Superseded by 20 for names; 18 is not needed once 20 is wrapped.",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: dates decode to the FAT epoch",
-   "notes": "Superseded by 20 for names; 18 is not needed once 20 is wrapped."
+   "notes": "Used only inside fs.stat."
   },
   {
    "id": "sys.rename",
@@ -352,14 +352,14 @@
    "kernel": "rename (19)",
    "number": 19,
    "abi": "1.4",
-   "js": "Writer.commit() publishes by rename; fs.rename(from,to) inside one folder",
+   "js": "not used in 4a: commit is a whole-file write; fs.rename(from, to) inside one folder is left for later",
    "shape": "sync",
    "errors": "EINVAL (different folders), EBUSY (writer or cache reader open), ENAMETOOLONG",
    "capability": "fs.write.*",
    "status": "v1",
    "why": "",
    "test": "host: cross-folder EINVAL; rename while a reader is open EBUSY",
-   "notes": "This is the only way to replace a file; there is no unlink (gap G2)."
+   "notes": "This is the only way to rename a file; there is no unlink (gap G2). The kernel's whole-file write already replaces a save in place (data first, then one directory entry)."
   },
   {
    "id": "sys.getdents_long",
@@ -367,14 +367,14 @@
    "kernel": "getdents_long_meta (20)",
    "number": 20,
    "abi": "1.5",
-   "js": "fs.readdir(path) -> [{name, type, size, modified, created}] (UTF-8 long names); fs.stat(path) via readdir of parent",
+   "js": "fs.readdir(path, {meta:true}) -> [{name, type, size, modified, created}]; fs.stat(path) by finding the name in the parent's listing",
    "shape": "sync",
    "errors": "ENOTDIR, ENOENT, EINVAL (buffer < 280 bytes for one entry)",
    "capability": "fs.read",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4a: tests/files_run.py",
    "test": "host: long names, non-ASCII names, entry that does not fit the buffer",
-   "notes": "Wrapper uses a 4 KiB buffer and handles the pending-entry rule."
+   "notes": "Wrapper uses a 4 KiB buffer. modified and created are the FAT date and time words (opaque fingerprints)."
   },
   {
    "id": "sys.arena",
@@ -764,9 +764,9 @@
   {
    "id": "G2",
    "title": "Writing files",
-   "problem": "Only whole-file WRONLY|CREAT|TRUNC to 8.3 names under CACHE or SAVES/GAME; no append, read-write, mkdir, unlink, stat, or writes elsewhere; 1 MiB per file held in kernel RAM; one writer. JS fs.writeFile and an OS that keeps its own data cannot be built on it.",
+   "problem": "Only whole-file WRONLY|CREAT|TRUNC to 8.3 names under CACHE or SAVES/GAME; no append, read-write, mkdir, unlink, stat, or writes elsewhere; 1 MiB per file held in kernel RAM; one writer. JS fs.writeFile and an OS that keeps its own data cannot be built on it. Slice 4a's JS file API is built on exactly this: reads with seek, whole-file staged writes to saves and the app's cache file.",
    "owner": "kernel",
-   "proposal": "unlink, mkdir, a per-OS data folder (for example /sd/OS/DATA/<OS>/), long names, append",
+   "proposal": "unlink, mkdir, a per-OS data folder (for example /sd/OS/DATA/<OS>/), long names, append; see the slice 4a proposals G11 to G14",
    "priority": "high"
   },
   {
@@ -832,6 +832,38 @@
    "owner": "JS (slice 5)",
    "proposal": "None needed; documented as the isolation limit of v1",
    "priority": "medium"
+  },
+  {
+   "id": "G11",
+   "title": "No stat",
+   "problem": "A file's size comes only from its parent folder's listing, which on a big folder (a games folder) costs a whole scan per fs.open or fs.stat.",
+   "owner": "kernel",
+   "proposal": "a stat call by path, or the size in the open record's output",
+   "priority": "medium"
+  },
+  {
+   "id": "G12",
+   "title": "Writers cannot start from the old file",
+   "problem": "Whole-file TRUNC writes mean an app that changes one byte of a 200 KiB save must keep the whole file in RAM and write all of it.",
+   "owner": "kernel",
+   "proposal": "open for read-write on a save (copy-on-write), or an append flag, with the same fsync commit",
+   "priority": "medium"
+  },
+  {
+   "id": "G13",
+   "title": "A reader in the save area blocks commits",
+   "problem": "Any open read handle on /OS/SAVES or /OS/CACHE (even a directory) makes a commit fail with EBUSY, so an app cannot stream-read one save while writing another.",
+   "owner": "kernel",
+   "proposal": "block only a reader of the same file, or document a read-then-close rule as the contract (the JS runtime documents it today)",
+   "priority": "low"
+  },
+  {
+   "id": "G14",
+   "title": "No remaining-space or quota query",
+   "problem": "The kernel reports EDQUOT and ENOSPC only when a commit fails, so the JS quota (default 256 KiB per app) is a guess made in the runtime, and an app cannot ask how much card is left.",
+   "owner": "kernel",
+   "proposal": "a query for free bytes and the used/limit counts of games and files in SAVES",
+   "priority": "low"
   }
  ]
 }
