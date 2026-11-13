@@ -61,6 +61,7 @@ int32_t plat_list(const char *path, void (*fn)(void *, const char *, uint32_t, i
       fn(user, (const char *)(dents + offset + sizeof *e), e->name_bytes, e->type == SBX_DT_DIR, e->size);
       count++; offset += e->length;
     }
+    plat_heartbeat(); /* a huge folder is progress too: each batch gets its own 2 s window */
   }
   sbx_close(fd);
   return count;
@@ -100,6 +101,7 @@ int32_t plat_list_meta(const char *path, int short_names,
       fn(user, (const char *)(dents + offset + sizeof *e), e->name_bytes, e->type == SBX_DT_DIR, e->size, e->modified, e->created);
       count++; offset += e->length;
     }
+    plat_heartbeat(); /* a huge folder is progress too: each batch gets its own 2 s window */
   }
   sbx_close(fd);
   return s ? s : count;

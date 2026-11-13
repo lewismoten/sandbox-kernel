@@ -198,6 +198,46 @@ sys.exit(0);
         self.assertTrue(t['other'].startswith('EROFS'), t['other'])
         self.assertEqual((d / 'OS/CACHE/FT').read_text(), 'tmp')
 
+    def test_cache_file_reads_back_for_its_owner_only(self):
+        code = PRE + """
+fs.write('/sd/OS/CACHE/FT', 'tmp');
+T('back', fs.readFile('/sd/OS/CACHE/FT') + ' ' + fs.stat('/sd/OS/CACHE/FT').size);
+const f = fs.open('/sd/OS/CACHE/FT'); T('open', f.size); f.close();
+E('other', () => fs.readFile('/sd/OS/CACHE/OTHER'));
+sys.exit(0);
+"""
+        t, _, d = run_ok(self, code, caps=('fs.write.cache',), files={'OS/CACHE/OTHER': 'x'})
+        self.assertEqual(t['back'], 'tmp 3'); self.assertEqual(t['open'], '3')
+        self.assertIn('path refused', t['other'])
+
+    def test_empty_writer_commit_makes_a_zero_length_file_and_discard_aborts(self):
+        code = PRE + """
+const w = fs.createWriter('/sd/OS/SAVES/FT/EMPTY.SAV'); T('commit', w.commit());
+T('size', fs.stat('/sd/OS/SAVES/FT/EMPTY.SAV').size);
+const v = fs.createWriter('/sd/OS/SAVES/FT/GONE.SAV'); v.write('x'); v.discard(); v.discard();
+E('gone', () => fs.stat('/sd/OS/SAVES/FT/GONE.SAV'));
+const c = fs.createWriter('/sd/OS/SAVES/FT/CLOSE.SAV'); c.write('hi'); T('close', c.close());
+sys.exit(0);
+"""
+        t, _, d = run_ok(self, code)
+        self.assertEqual(t['commit'], '0'); self.assertEqual(t['size'], '0'); self.assertTrue((d / 'OS/SAVES/FT/EMPTY.SAV').exists())
+        self.assertFalse((d / 'OS/SAVES/FT/GONE.SAV').exists()); self.assertIn('ENOENT', t['gone'])
+        self.assertEqual(t['close'], '2'); self.assertEqual((d / 'OS/SAVES/FT/CLOSE.SAV').read_text(), 'hi')
+
+    def test_huge_folder_feeds_the_heartbeat(self):
+        code = PRE + """
+T('n', fs.readdir('/sd/GAMES/BIG').length + ' ' + fs.readdir('/sd/GAMES/MID', { meta: true }).length);
+sys.exit(0);
+"""
+        files = {'GAMES/BIG/F%04d.DAT' % i: '' for i in range(5000)}
+        files.update({'GAMES/MID/F%04d.DAT' % i: '' for i in range(600)})
+        rc, t, rest, d = go(code, caps=('fs.read', 'fs.read.shared'), files=files, args=['--beats'], ms='2000')
+        self.addCleanup(shutil.rmtree, d, True)
+        self.assertEqual(rc, 0, rest)
+        self.assertIn('n 5000 600', t)
+        beats = int([l for l in rest if l.startswith('HOST beats')][0].split()[2])
+        self.assertGreaterEqual(beats, (5000 + 600) // 64 - 2, 'a beat at least every 64 names, per listing')
+
     def test_abort_drop_and_stop_leave_the_card_untouched(self):
         code = PRE + """
 const SAV = '/sd/OS/SAVES/FT/';

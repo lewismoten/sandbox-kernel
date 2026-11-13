@@ -236,6 +236,7 @@ int app_path_check(const struct app_policy *p, const char *path, int write, cons
   }
   if (under(path, p->saves) && p->caps & (APP_CAP_FS_READ | APP_CAP_FS_WRITE_SAVES)) return 0;
   if (under(path, p->dir) && p->caps & APP_CAP_FS_READ) return 0;
+  if (p->caps & APP_CAP_FS_WRITE_CACHE && strlen(path) == strlen(p->cache) && ieq(path, p->cache, strlen(path))) return 0; /* an app reads back its own cache file */
   if (under(path, "/sd/OS")) {
     *why = under(path, "/sd/OS/APPS") && !under(path, p->dir) ? "another app's folder is not readable" : "outside the app's own folders";
     return -1;

@@ -40,7 +40,8 @@ void plat_sleep_until(uint64_t ns) {
   uint64_t now = plat_clock_ns();
   if (ns > now) {struct timespec t = {(time_t)((ns - now) / 1000000000ull), (long)((ns - now) % 1000000000ull)}; nanosleep(&t, 0);}
 }
-void plat_heartbeat(void) {}
+static int beatstat; static unsigned beats; /* --beats: "HOST beats N" at exit (heartbeats fed) */
+void plat_heartbeat(void) {beats++;}
 static int blockstat; /* --blocks: after every app stop, "HOST blocks N open M" (live heap blocks and handles still open) */
 static long blocks(void);
 void plat_log(const char *s, uint32_t n) {
@@ -421,6 +422,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--old-power")) pw_old = 1;
     else if (!strcmp(argv[i], "--devstat")) devstat = 1;
     else if (!strcmp(argv[i], "--blocks")) blockstat = 1;
+    else if (!strcmp(argv[i], "--beats")) beatstat = 1;
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;
@@ -522,6 +524,7 @@ int main(int argc, char **argv) {
   jsrt_stop();
   if (soak) printf("HOST soak steps %llu max_step_us %llu heap_peak %zu blocks_start %ld blocks_end %ld heap_blocks %zu\n", (unsigned long long)steps, (unsigned long long)(step_max / 1000u), heap_hi, blocks0, blocks(), jsrt_heap_blocks());
   if (devstat) print_devstat();
+  if (beatstat) printf("HOST beats %u\n", beats);
   if (sleepstat) printf("HOST sleeps %llu max_us %llu\n", (unsigned long long)sleeps, (unsigned long long)(max_sleep / 1000u));
   return status;
 }

@@ -217,7 +217,7 @@ class Paths(unittest.TestCase):
             allowed, _ = self.run_policy('fs.read,fs.write.saves,fs.write.cache', 'r', paths, pid)
             for p, ok in zip(paths, allowed):
                 if ok:
-                    self.assertTrue(re.match(r'^/sd/os/(apps|saves)/%s(/|$)' % re.escape(pid.lower()), p.lower()), (pid, p))
+                    self.assertTrue(re.match(r'^/sd/os/((apps|saves)/%s(/|$)|cache/%s$)' % (re.escape(pid.lower()), re.escape(pid.lower())), p.lower()), (pid, p))
 
     def test_random_bytes_never_crash_the_policy(self):
         rnd = random.Random(9)

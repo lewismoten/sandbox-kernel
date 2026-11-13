@@ -1,5 +1,15 @@
 # Sandbox JS changelog
 
+## 0.1.1 (2026-11-13)
+
+Follow-ups from the adversarial review (`docs/apps.md`, Files and storage). Host-tested only; not run on a board.
+
+- `fs.readdir` (plain and `{ meta: true }`) feeds the kernel heartbeat per directory batch and every 64 names, so a huge folder cannot trip the 2 s heartbeat. Host test with a 5,000-entry folder (`--beats`).
+- Committing a writer with nothing staged writes a zero-length file (tested; the kernel's open marks the file dirty, so the flush publishes it).
+- `writer.discard()` is the explicit abort. `close()` stays the same as `commit()`; the docs now say so plainly.
+- An app with `fs.write.cache` can read back its own `/sd/OS/CACHE/<id>` (`fs.readFile`, `fs.open`, `fs.stat`), and nothing else.
+- Design note kept: saves do not use a temp file and rename.
+
 ## 0.1.0 (2026-11-13)
 
 First numbered release. Built and tested on the host only; **not yet run on a board.**

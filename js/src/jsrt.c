@@ -87,7 +87,7 @@ static int need(JSContext *c, uint32_t any, const char *what) { /* any: one capa
   JS_ThrowPlainError(c, "%s: capability '%s' is not granted to this app", what, app_cap_name(i));
   return -1;
 }
-#define APP_CAP_ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES)
+#define APP_CAP_ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES | APP_CAP_FS_WRITE_CACHE) /* the cache capability reads back its own file; the path check allows no more */
 static int path_allowed(const char *path, int write, const char **why) {
   return !restricted || !app_path_check(&policy, path, write, why);
 }
@@ -616,6 +616,7 @@ static JSValue js_read_file(JSContext *c, JSValueConst t, int n, JSValueConst *a
 struct lister {JSContext *c; JSValue a; uint32_t n;};
 static void list_one(void *user, const char *name, uint32_t n, int dir, uint32_t size) {
   (void)dir; (void)size; struct lister *l = user;
+  if ((l->n & 63u) == 63u) plat_heartbeat(); /* a folder of thousands of names must not trip the kernel's 2 s heartbeat */
   JS_SetPropertyUint32(l->c, l->a, l->n++, JS_NewStringLen(l->c, name, n));
 }
 static JSValue js_readdir(JSContext *c, JSValueConst t, int n, JSValueConst *a) {

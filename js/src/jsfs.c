@@ -12,7 +12,7 @@
 #include <string.h>
 #include "alloc.h"
 
-#define ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES)
+#define ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES | APP_CAP_FS_WRITE_CACHE) /* the cache capability reads back its own file; the path check allows no more */
 #define ANY_WRITE (APP_CAP_FS_WRITE_SAVES | APP_CAP_FS_WRITE_CACHE)
 uint32_t jsrt_write_quota = 256u * 1024u;
 /* A file handle (reader) or a staged writer; kind tells which. The handle table owns it. */
@@ -112,6 +112,7 @@ static JSValue entry_obj(JSContext *c, const char *name, uint32_t n, int dir, ui
 }
 static void list_cb(void *user, const char *name, uint32_t n, int dir, uint32_t size, uint32_t modified, uint32_t created) {
   struct lister *l = user;
+  if ((l->n & 63u) == 63u) plat_heartbeat(); /* a folder of thousands of names must not trip the kernel's 2 s heartbeat */
   if (name[0] == '.' && (n == 1 || (n == 2 && name[1] == '.'))) return;
   JS_SetPropertyUint32(l->c, l->a, l->n++, entry_obj(l->c, name, n, dir, size, modified, created));
 }
@@ -326,7 +327,7 @@ static void sum_cb(void *user, const char *name, uint32_t n, int dir, uint32_t s
   s->total += size;
 }
 /* commit() publishes the staged bytes with the kernel's whole-file write and closes the writer. On an error the writer
-   stays open (the app may retry, for EBUSY, or abort). close() is the same as commit(). */
+   stays open (the app may retry, for EBUSY, or abort). close() is the same as commit(); discard() is abort(). */
 static JSValue w_commit(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)n; (void)a;
   struct fobj *f = get(c, t, writer_class);
@@ -336,7 +337,7 @@ static JSValue w_commit(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   struct sum s = {slash + 1, strlen(slash + 1), 0};
   plat_list_meta(folder, 0, sum_cb, &s); /* a folder that does not exist yet holds nothing */
   if (s.total + f->n > jsrt_write_quota) return fail(c, "EDQUOT", "this app may hold %u bytes in its save folder (%u there, %u more committed)", (unsigned)jsrt_write_quota, (unsigned)s.total, (unsigned)f->n);
-  int r = plat_write_file(f->path, f->buf, f->n);
+  int r = plat_write_file(f->path, f->buf, f->n); /* f->n == 0 writes a zero-length file: the kernel's open (CREAT|TRUNC) already marks the file dirty, so the fsync publishes it */
   if (r) return fail_errno(c, r, "commit", f->path);
   uint32_t bytes = f->n;
   jsrt_handle_close((uint32_t)(uintptr_t)JS_GetOpaque(t, writer_class));
@@ -351,7 +352,7 @@ static JSValue w_abort(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 }
 static const JSCFunctionListEntry writer_proto[] = {
   JS_CGETSET_DEF("size", w_size, 0), JS_CGETSET_DEF("path", w_path, 0),
-  JS_CFUNC_DEF("write", 1, w_write), JS_CFUNC_DEF("commit", 0, w_commit), JS_CFUNC_DEF("close", 0, w_commit), JS_CFUNC_DEF("abort", 0, w_abort),
+  JS_CFUNC_DEF("write", 1, w_write), JS_CFUNC_DEF("commit", 0, w_commit), JS_CFUNC_DEF("close", 0, w_commit), JS_CFUNC_DEF("abort", 0, w_abort), JS_CFUNC_DEF("discard", 0, w_abort),
 };
 static JSValue js_quota(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; (void)a; return JS_NewUint32(c, jsrt_write_quota);}
 

@@ -44,7 +44,7 @@ A call an app has no grant for throws an `Error` that names the capability, for 
 | `fs.read` | `fs.readFile`, `fs.readdir`, `fs.open`, `fs.stat`, `fs.readBytes` on the app's own folder (read-only) and its save folder |
 | `fs.read.shared` | the same calls on the rest of the card outside `/sd/OS` (games, music). Add it to `fs.read`. |
 | `fs.write.saves` | `fs.write` and `fs.createWriter` in the save folder `/sd/OS/SAVES/<id>/` |
-| `fs.write.cache` | `fs.write` and `fs.createWriter` on the one file `/sd/OS/CACHE/<id>` |
+| `fs.write.cache` | `fs.write` and `fs.createWriter` on the one file `/sd/OS/CACHE/<id>`, and reading that same file back (`fs.readFile`, `fs.open`, `fs.stat`); no other read comes with it |
 | `display` | `screen.setMode`, `screen.gameLowres`, `screen.lease`, `screen.modes`, `document.createElement`, `requestAnimationFrame`, `<game>.play()` |
 | `input` | the page's key events, and `input.open()` (raw queues). The host's F10 always works and is never delivered to an app. |
 | `apps.launch` | `apps.list`, `apps.launch`, `apps.exit` (see Launching other apps) |
@@ -187,6 +187,7 @@ fs.write('/sd/OS/SAVES/MYAPP/SLOT1.SAV', bytesOrString);        // one call
 const w = fs.createWriter('/sd/OS/SAVES/MYAPP/SLOT1.SAV');
 w.write(header); w.write(body);                      // returns the staged size
 try { w.commit(); } catch (e) { if (e.code === 'EBUSY') { /* close readers in the save folder, retry */ } else w.abort(); }
+// w.commit() and w.close() PUBLISH the staged bytes. w.discard() and w.abort() THROW THEM AWAY. Never close() in a finally.
 ```
 
 How it works, and the limits that come from the kernel:
@@ -198,6 +199,20 @@ How it works, and the limits that come from the kernel:
   app's memory and `commit()` does the kernel's single write (open, write, flush, close). Nothing touches the card before
   that. `abort()`, a dropped writer, or the app stopping discards the bytes and leaves the card as it was. The kernel replaces
   a save by writing new data, then one directory entry, so a power cut leaves the old file or the new one.
+- **commit, close, discard, abort.** `commit()` and `close()` are the same call: both publish what is staged and close the
+  writer (`close` is kept because authors expect it to finish the file). To give up, call `discard()` (or its older name
+  `abort()`): the card is left as it was, and a second call does nothing. So do not close a writer in a `finally` after an
+  error; that would save a half-built file. Put `discard()` in the `catch` instead.
+- **An empty writer** commits a zero-length file (the kernel's open with create-and-truncate already marks the file to be
+  written, so its flush publishes an empty one). `fs.write(path, '')` does the same: it creates the file or empties it.
+- **Reading the cache back.** An app with `fs.write.cache` may read its own `/sd/OS/CACHE/<id>` (a read capability is implied
+  for that one path). It can not read another app's cache file, and the cache capability alone opens no other path.
+- **Big folders.** `fs.readdir` feeds the kernel's heartbeat as it goes, so a folder of thousands of files cannot trip the
+  2 s watchdog inside one call. The 1.5 MiB heap is the real limit: `{ meta: true }` builds an object per file, so list a
+  folder with thousands of entries without `meta`.
+- **Design note: no temp file and rename.** A commit is the kernel's single whole-file write (new data first, then one
+  directory entry), which already leaves the old file or the new one after a power cut. The cache's temp-file-then-rename
+  (`sbx_rename`) would add a copy and a window with two names, so the runtime does not use it for saves.
 - **Names** are 8.3: 1 to 8 letters, digits, `_` or `-`, optionally a dot and 1 to 3 more. Lowercase is turned into
   uppercase. One folder deep, no subfolders, no `.` or `..`.
 - **Quota.** An app may keep 256 KiB in its save folder (all its files together; the file being replaced does not count
