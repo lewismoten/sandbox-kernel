@@ -1,0 +1,142 @@
+{
+ "hello": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS screen 960x540x16 in 0 us",
+   "JS hello OS ready",
+   "JS started /sd/OS/APPS/HELLO/MAIN.JS in 0 us, heap 159480 bytes in 1960 blocks"
+  ],
+  "shot": {
+   "w": 960,
+   "h": 540,
+   "depth": 16,
+   "crc32": 33995214,
+   "bytes": 1037584
+  }
+ },
+ "hello-keys": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS screen 960x540x16 in 0 us",
+   "JS hello OS ready",
+   "JS started /sd/OS/APPS/HELLO/MAIN.JS in 0 us, heap 159480 bytes in 1960 blocks"
+  ],
+  "shot": {
+   "w": 960,
+   "h": 540,
+   "depth": 16,
+   "crc32": 2928572084,
+   "bytes": 1037584
+  }
+ },
+ "bench": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS BENCH objects 1000-object update 0.000 ms",
+   "JS BENCH memory 325856 bytes in 3961 blocks, 1332 objects after start",
+   "JS started /sd/OS/APPS/BENCH/MAIN.JS in 0 us, heap 337032 bytes in 4204 blocks",
+   "JS screen 640x480x32 in 0 us",
+   "JS BENCH switch 640x480x32 in 0 us",
+   "JS BENCH mode 640x480x32  0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 336944 px; n=1",
+   "JS BENCH 640x480x32 dom-keypress 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 57826 px; n=120",
+   "JS BENCH 640x480x32 dom-all-cards 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 12436 px; n=120",
+   "JS BENCH 640x480x32 dom-full-screen 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 331328 px; n=60",
+   "JS BENCH 640x480x32 canvas-grid 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 380843 px; n=120",
+   "JS screen 640x480x16 in 0 us",
+   "JS BENCH switch 640x480x16 in 0 us",
+   "JS BENCH mode 640x480x16  0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 0 px; n=1",
+   "JS BENCH 640x480x16 dom-keypress 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 57826 px; n=120",
+   "JS BENCH 640x480x16 dom-all-cards 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 12436 px; n=120",
+   "JS BENCH 640x480x16 dom-full-screen 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 331328 px; n=60",
+   "JS BENCH 640x480x16 canvas-grid 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 380843 px; n=120",
+   "JS screen 960x540x16 in 0 us",
+   "JS BENCH switch 960x540x16 in 0 us",
+   "JS BENCH mode 960x540x16  0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 0 px; n=1",
+   "JS BENCH 960x540x16 dom-keypress 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 57826 px; n=120",
+   "JS BENCH 960x540x16 dom-all-cards 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 12436 px; n=120",
+   "JS BENCH 960x540x16 dom-full-screen 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 550966 px; n=60",
+   "JS BENCH 960x540x16 canvas-grid 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 381664 px; n=120",
+   "JS screen 640x480x32 in 0 us",
+   "JS BENCH switch 640x480x32 in 0 us",
+   "JS BENCH back 0.000 ms/frame: js 0.000 paint 0.000 present 0.000; 0 px; n=1",
+   "JS BENCH game no game in /sd/GAMES",
+   "JS BENCH done 23 results"
+  ],
+  "shot": {
+   "w": 640,
+   "h": 480,
+   "depth": 32,
+   "crc32": 3074216541,
+   "bytes": 1229584
+  }
+ },
+ "clock": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS screen 960x540x16 in 0 us",
+   "JS CLOCK ready",
+   "JS started /sd/OS/APPS/CLOCK/MAIN.JS in 0 us, heap 158144 bytes in 1963 blocks"
+  ],
+  "shot": {
+   "w": 960,
+   "h": 540,
+   "depth": 16,
+   "crc32": 4177884239,
+   "bytes": 1037584
+  }
+ },
+ "probe": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS PASS innerHTML",
+   "JS PASS entities",
+   "JS PASS class query",
+   "JS PASS tag query",
+   "JS PASS px number",
+   "JS PASS short color",
+   "JS style.width = '50%' is outside the CSS subset; ignored",
+   "JS PASS outside subset ignored",
+   "JS PASS parent",
+   "JS PASS flex row layout",
+   "JS PASS readFile",
+   "JS PASS readdir",
+   "JS PASS unknown tag throws",
+   "JS started /sd/OS/APPS/PROBE/MAIN.JS in 0 us, heap 165104 bytes in 2043 blocks",
+   "JS PASS arrow moves focus",
+   "JS PASS bubbling",
+   "JS PASS enter clicks",
+   "JS PASS preventDefault keeps focus",
+   "JS PASS timers in order",
+   "JS PASS frames ran",
+   "JS PASS removed elements freed",
+   "JS DONE"
+  ],
+  "shot": {
+   "w": 640,
+   "h": 480,
+   "depth": 32,
+   "crc32": 1444335871,
+   "bytes": 1229584
+  }
+ },
+ "picker": {
+  "rc": 0,
+  "out": [
+   "JS runtime ready in 0 us (engine, browser-like globals), heap 142912 bytes",
+   "JS screen 640x480x32 in 0 us",
+   "JS app picker BENCH,CLOCK,HELLO,PROBE"
+  ],
+  "shot": {
+   "w": 640,
+   "h": 480,
+   "depth": 32,
+   "crc32": 4231596726,
+   "bytes": 1229584
+  }
+ }
+}
