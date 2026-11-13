@@ -73,13 +73,14 @@ static void sayf(const char *fmt, ...) {
   char b[160]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); say(b);
 }
 /* Capability and path checks: a thrown error names the capability or the reason. */
-static int need(JSContext *c, uint32_t cap, const char *what) {
-  if (!restricted || (caps & cap)) return 0;
-  const char *n = "?";
-  for (unsigned i = 0; app_cap_name(i); i++) if (cap == 1u << i) n = app_cap_name(i);
-  JS_ThrowPlainError(c, "%s: capability '%s' is not granted to this app", what, n);
+static int need(JSContext *c, uint32_t any, const char *what) { /* any: one capability, or several of which one is enough */
+  if (!restricted || (caps & any)) return 0;
+  unsigned i = 0;
+  while (!(any >> i & 1u)) i++;
+  JS_ThrowPlainError(c, "%s: capability '%s' is not granted to this app", what, app_cap_name(i));
   return -1;
 }
+#define APP_CAP_ANY_READ (APP_CAP_FS_READ | APP_CAP_FS_READ_SHARED | APP_CAP_FS_WRITE_SAVES)
 static int path_allowed(const char *path, int write, const char **why) {
   return !restricted || !app_path_check(&policy, path, write, why);
 }
@@ -511,7 +512,7 @@ static JSValue js_log(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 }
 static JSValue js_read_file(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; char path[96];
-  if (need(c, APP_CAP_FS_READ, "fs.readFile") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readFile")) return JS_EXCEPTION;
+  if (need(c, APP_CAP_ANY_READ, "fs.readFile") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readFile")) return JS_EXCEPTION;
   int32_t got = plat_read(path, io, sizeof io);
   if (got < 0) return JS_ThrowReferenceError(c, "fs.readFile: no file %s", path);
   return JS_NewStringLen(c, (const char *)io, (size_t)got);
@@ -523,7 +524,7 @@ static void list_one(void *user, const char *name, uint32_t n, int dir, uint32_t
 }
 static JSValue js_readdir(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; char path[96];
-  if (need(c, APP_CAP_FS_READ, "fs.readdir") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readdir")) return JS_EXCEPTION;
+  if (need(c, APP_CAP_ANY_READ, "fs.readdir") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readdir")) return JS_EXCEPTION;
   struct lister l = {c, JS_NewArray(c), 0};
   if (plat_list(path, list_one, &l) < 0) {JS_FreeValue(c, l.a); return JS_ThrowReferenceError(c, "fs.readdir: no folder %s", path);}
   return l.a;
@@ -623,7 +624,7 @@ static JSValue fh_close(JSContext *c, JSValueConst this, int n, JSValueConst *a)
 static const JSCFunctionListEntry fh_proto[] = {JS_CGETSET_DEF("size", fh_size, 0), JS_CFUNC_DEF("text", 0, fh_text), JS_CFUNC_DEF("close", 0, fh_close)};
 static JSValue js_open(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; char path[96];
-  if (need(c, APP_CAP_FS_READ, "fs.open") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.open")) return JS_EXCEPTION;
+  if (need(c, APP_CAP_ANY_READ, "fs.open") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.open")) return JS_EXCEPTION;
   int32_t got = plat_read(path, io, sizeof io);
   if (got < 0) return JS_ThrowReferenceError(c, "fs.open: no file %s", path);
   struct fdata *f = calloc(1, sizeof *f);

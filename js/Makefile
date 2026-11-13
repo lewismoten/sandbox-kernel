@@ -33,7 +33,7 @@ LFLAGS := -nostartfiles -T$(SDK)/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-i
 JSC := src/jsrt.c src/dom.c src/gif.c src/font_data.c src/app.c src/handle.c
 JSBOARD := src/main.c src/plat_sbx.c src/sys.c
 HOSTDIR := $(BUILD)/host
-.PHONY: all host host-profiletest test size repro clean
+.PHONY: all host host-profiletest host-appcheck test size repro clean
 all: $(BUILD)/JS.ELF
 $(BUILD) $(HOSTDIR) $(BUILD)/q:
 	mkdir -p $@
@@ -76,9 +76,14 @@ $(HOSTDIR)/jsrun: $(HOSTSRC) $(JS_PROFILE) $(wildcard src/*.h) Makefile | $(HOST
 host-profiletest: $(HOSTDIR)/jsrun-pt
 $(HOSTDIR)/jsrun-pt: $(HOSTSRC) tests/host/profile_test.c $(wildcard src/*.h) Makefile | $(HOSTDIR)
 	$(HOSTCC) $(HOSTCF) $(HOSTSRC) tests/host/profile_test.c -lm -o $@
-test: host host-profiletest
+# tests/host/appcheck.c: src/app.c on the command line, for tests/app_run.py to compare with tools/app_check.py.
+host-appcheck: $(HOSTDIR)/appcheck
+$(HOSTDIR)/appcheck: tests/host/appcheck.c src/app.c src/app.h Makefile | $(HOSTDIR)
+	$(HOSTCC) -O1 -std=gnu11 $(WARN) -Isrc tests/host/appcheck.c src/app.c -o $@
+test: host host-profiletest host-appcheck
 	$(PYTHON) tests/run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/profile_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt
+	$(PYTHON) tests/app_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt $(HOSTDIR)/appcheck
 size: $(BUILD)/JS.ELF
 	$(SIZE) $(BUILD)/JS.full.elf
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF

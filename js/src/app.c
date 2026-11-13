@@ -17,8 +17,11 @@ struct jp {const char *s, *e; char *err; size_t cap;};
 /* A message with one %s, which is replaced by a (no printf: the strings are all literals here). */
 static int bad(struct jp *p, const char *fmt, const char *a) {
   if (!p->cap) return -1;
+  char inner[96] = "";
+  if (!a && p->err[0]) snprintf(inner, sizeof inner, " (%s)", p->err); /* an outer message keeps the inner one as detail */
+  else if (a) snprintf(inner, sizeof inner, "%s", a);
   const char *at = strstr(fmt, "%s");
-  snprintf(p->err, p->cap, "%.*s%s%s", (int)(at ? (size_t)(at - fmt) : strlen(fmt)), fmt, a ? a : "", at ? at + 2 : "");
+  snprintf(p->err, p->cap, "%.*s%s%s", (int)(at ? (size_t)(at - fmt) : strlen(fmt)), fmt, inner, at ? at + 2 : "");
   return -1;
 }
 static void ws(struct jp *p) {while (p->s < p->e && (*p->s == ' ' || *p->s == '\t' || *p->s == '\r' || *p->s == '\n')) p->s++;}
@@ -229,7 +232,7 @@ int app_path_check(const struct app_policy *p, const char *path, int write, cons
     return -1;
   }
   if (p->caps & APP_CAP_FS_READ_SHARED) return 0;
-  *why = "outside the app's own folders (fs.read.shared would allow reading the card outside /sd/OS)";
+  *why = "outside the app's own folders (needs fs.read.shared)";
   return -1;
 }
 
