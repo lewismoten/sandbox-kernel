@@ -341,16 +341,16 @@
 +  static unsigned cursor;
 +  const unsigned count = TOTAL_DEVICES * CFG_TUH_ENDPOINT_MAX * 2;
 +  for (unsigned n = 0; n < count; n++) {
-+    if ((n & 15u) == 0 && !usbhost_work_allowed(begin)) break;
 +    unsigned slot = cursor;
 +    if (++cursor == count) cursor = 0;
 +    unsigned d = slot / (CFG_TUH_ENDPOINT_MAX * 2);
 +    unsigned ep = (slot / 2) % CFG_TUH_ENDPOINT_MAX, dir = slot % 2;
 +    usbh_device_t *dev = &_usbh_devices[d];
 +    if (!dev->connected || !dev->poll[ep][dir].pending) continue;
-+    if (!usbhost_work_allowed(begin)) break;
++    // The scan is memory only; read the timer for an endpoint that is waiting, and stop for the budget only when one is due.
 +    uint32_t now = usb_wait_now();
 +    if (dev->poll[ep][dir].issued && (int32_t)(now - dev->poll[ep][dir].next_us) < 0) continue;
++    if (!usbhost_work_allowed(begin)) break;
 +    uint8_t addr = tu_edpt_addr(ep, dir);
 +    dev->poll[ep][dir].pending = false;
 +    dev->poll[ep][dir].issued = true;
@@ -467,10 +467,10 @@
 +#include "usbhost_retry.h"
 +#include "usbhost_hooks.h"
 +void usbh_hub_poll_failed(uint8_t daddr);
-
+ 
  // Debug level, TUSB_CFG_DEBUG must be at least this level for debug message
  #define HUB_DEBUG   2
-@@ -49,6 +52,12 @@
+@@ -49,6 +52,13 @@
    uint8_t bPwrOn2PwrGood_2ms; // port power on to good, in 2ms unit
    // uint16_t wHubCharacteristics;
    bool mtt;
@@ -480,29 +480,30 @@
 +  uint32_t retry_at;
 +  uint8_t poll_retries;
 +  uint32_t poll_retry_at;
++  uint32_t poll_after; // ms: no status polling before the ports have had bPwrOn2PwrGood to settle
    hub_port_status_response_t port_status;
  } hub_interface_t;
-
-@@ -59,6 +68,8 @@
-
+ 
+@@ -59,6 +69,8 @@
+ 
  static tuh_xfer_cb_t user_complete_cb = NULL;
  static hub_interface_t hub_itfs[CFG_TUH_HUB];
 +static hub_interface_t root_retry;
 +static uint8_t root_retry_rhport;
  CFG_TUH_MEM_SECTION static hub_epbuf_t hub_epbufs[CFG_TUH_HUB];
-
-
-@@ -211,6 +222,7 @@
+ 
+ 
+@@ -211,6 +223,7 @@
  //--------------------------------------------------------------------+
  bool hub_init(void) {
    tu_memclr(hub_itfs, sizeof(hub_itfs));
 +  tu_memclr(&root_retry, sizeof(root_retry));
    return true;
  }
-
-@@ -266,6 +278,13 @@
+ 
+@@ -266,6 +279,13 @@
  }
-
+ 
  bool hub_edpt_status_xfer(uint8_t daddr) {
 +  hub_interface_t *h = get_hub_itf(daddr);
 +  h->processing = false;
@@ -513,27 +514,41 @@
 +static bool hub_status_poll(uint8_t daddr) {
    hub_interface_t* p_hub = get_hub_itf(daddr);
    hub_epbuf_t* p_epbuf = get_hub_epbuf(daddr);
-
-@@ -275,6 +294,7 @@
+ 
+@@ -275,6 +295,7 @@
      return false;
    }
-
+ 
 +  p_hub->poll_active = true;
    return true;
  }
-
-@@ -333,7 +353,7 @@
-
+ 
+@@ -333,8 +354,13 @@
+ 
    // only use the number of ports in the hub descriptor
    hub_desc_cs_t const* desc_hub = (hub_desc_cs_t const*) p_epbuf->ctrl_buf;
 -  p_hub->bNbrPorts = desc_hub->bNbrPorts;
 +  p_hub->bNbrPorts = tu_min8(desc_hub->bNbrPorts, 7);
    p_hub->bPwrOn2PwrGood_2ms = desc_hub->bPwrOn2PwrGood;
-
++  // A hub with no ports (or a damaged descriptor) would make the power loop below run past 255 ports.
++  if (p_hub->bNbrPorts == 0 || desc_hub->bLength < 7) {
++    tuh_hub_poll_retry_cb(daddr, 0, 0, "USB skipped: hub reports no ports");
++    return;
++  }
+ 
    // May need to GET_STATUS
-@@ -378,7 +398,19 @@
+ 
+@@ -352,6 +378,7 @@
+   if (xfer->setup->wIndex == p_hub->bNbrPorts) {
+     // All ports are power -> queue notification status endpoint and
+     // complete the SET CONFIGURATION
++    p_hub->poll_after = tusb_time_millis_api() + 2u * (uint32_t)p_hub->bPwrOn2PwrGood_2ms + 1u;
+     if (!hub_edpt_status_xfer(daddr)) {
+       TU_MESS_FAILED();
+       TU_BREAKPOINT();
+@@ -378,7 +405,19 @@
  static void process_new_status(tuh_xfer_t* xfer);
-
+ 
  // callback as response of interrupt endpoint polling
 +static void hub_poll_refused(uint8_t daddr);
 +
@@ -550,8 +565,8 @@
 +static bool hub_process_pending(uint8_t daddr, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
    (void) xferred_bytes;
    (void) ep_addr;
-
-@@ -387,7 +419,8 @@
+ 
+@@ -387,7 +426,8 @@
    if (result == XFER_RESULT_SUCCESS) {
      hub_interface_t* p_hub = get_hub_itf(daddr);
      hub_epbuf_t *p_epbuf = get_hub_epbuf(daddr);
@@ -559,11 +574,11 @@
 +    const uint8_t status_change = usbhost_change_take(&p_hub->pending, false);
 +    p_hub->processing = true;
      TU_LOG_DRV("  Hub Status Change = 0x%02X\r\n", status_change);
-
+ 
      if (status_change == 0) {
-@@ -472,6 +505,9 @@
+@@ -472,6 +512,9 @@
        break;
-
+ 
      case STATE_CHECK_CONN: {
 +      // A physical connect/disconnect starts a new bounded recovery budget.
 +      p_hub->retries[port_num] = 0;
@@ -571,7 +586,7 @@
        const hcd_event_t event = {
          .rhport     = usbh_get_rhport(daddr),
          .event_id   = p_hub->port_status.status.connection ? HCD_EVENT_DEVICE_ATTACH : HCD_EVENT_DEVICE_REMOVE,
-@@ -481,6 +517,7 @@
+@@ -481,6 +524,7 @@
          }
        };
        hcd_event_handler(&event, false);
@@ -579,10 +594,13 @@
        // skip status for attach event, usbh will do it after handled this enumeration
        processed = (event.event_id == HCD_EVENT_DEVICE_ATTACH);
        break;
-@@ -498,4 +535,87 @@
-   }
- }
-
+@@ -495,7 +539,91 @@
+ 
+   if (!processed) {
+     TU_ASSERT(hub_edpt_status_xfer(daddr),);
++  }
++}
++
 +// Called only with enumeration and EP0 idle. No shared port status can be overwritten.
 +// A deferred interrupt submission has the same recovery policy as an
 +// immediate refusal. Clear retry history only when the HCD really accepts it.
@@ -614,7 +632,7 @@
 +                        .connection={.hub_addr=0, .hub_port=0}};
 +    hcd_event_handler(&event, false);
 +    return;
-+  }
+   }
 +  for (uint8_t i=0; i<CFG_TUH_HUB; i++) {
 +    hub_interface_t *h = &hub_itfs[i];
 +    uint8_t daddr = i+1+CFG_TUH_DEVICE_MAX;
@@ -629,6 +647,7 @@
 +    }
 +    if (h->pending) {hub_process_pending(daddr, 0, XFER_RESULT_SUCCESS, 1); return;}
 +    if (h->want_poll) {
++      if ((int32_t)(tusb_time_millis_api() - h->poll_after) < 0) continue; // ports still powering up
 +      if (h->poll_retries && !usbhost_due(tusb_time_millis_api(), h->poll_retry_at)) continue;
 +      if (hub_status_poll(daddr)) {
 +        h->want_poll = false;
@@ -638,8 +657,8 @@
 +      }
 +    }
 +  }
-+}
-+
+ }
+ 
 +void hub_root_removed(uint8_t rhport) {
 +  if (rhport == root_retry_rhport) tu_memclr(&root_retry, sizeof(root_retry));
 +}

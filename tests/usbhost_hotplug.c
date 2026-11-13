@@ -39,7 +39,7 @@ void hcd_int_disable(uint8_t p) {(void)p;}
 bool hcd_init(uint8_t p,const tusb_rhport_init_t *i) {(void)p;(void)i;return true;}
 
 /* ---- the bus model ---- */
-enum {HUB,KB_FS,KB_LS,KB_ROOT,NODES};
+enum {HUB,KB_FS,KB_LS,KB_ROOT,HUB2,KB2,NODES}; /* HUB2: a full-speed hub on HUB's port 3; KB2: a two-interface keyboard on its port 1 */
 typedef struct {
  bool is_hub,plugged,armed,rep_pending;int parent,port;tusb_speed_t speed;uint8_t addr;
  const uint8_t *cfg;uint16_t cfglen,vid,pid;
@@ -51,11 +51,14 @@ static node_t *zero;                                         /* the device that 
 static bool open_ep[16][256];
 static const uint8_t hub_cfg[]={9,2,25,0,1,1,0,0xE0,50, 9,4,0,0,1,9,0,0,0, 7,5,0x81,3,1,0,12};
 static const uint8_t kb_cfg[]={9,2,34,0,1,1,0,0x80,50, 9,4,0,0,1,3,1,1,0, 9,0x21,0x11,1,0,1,0x22,63,0, 7,5,0x81,3,8,0,10};
+/* The keyboard-with-a-hub shape: a boot keyboard (ep 0x81) and a second HID interface (mouse-like, ep 0x82 every 1 ms) that is never polled. */
+static const uint8_t kb2_cfg[]={9,2,59,0,2,1,0,0x80,50, 9,4,0,0,1,3,1,1,0, 9,0x21,0x11,1,0,1,0x22,63,0, 7,5,0x81,3,8,0,10,
+                                9,4,1,0,1,3,1,2,0, 9,0x21,0x11,1,0,1,0x22,63,0, 7,5,0x82,3,8,0,1};
 static bool reach(int i) {return node[i].plugged&&(node[i].parent<0||reach(node[i].parent));}
 static node_t *by_addr(uint8_t a) {if(!a)return zero;for(int i=0;i<NODES;i++)if(node[i].plugged&&node[i].addr==a)return &node[i];return 0;}
 static node_t *root_dev(void) {for(int i=0;i<NODES;i++)if(node[i].plugged&&node[i].parent<0)return &node[i];return 0;}
 static uint16_t speed_bits(const node_t *c) {return c->speed==TUSB_SPEED_LOW?0x200:c->speed==TUSB_SPEED_HIGH?0x400:0;}
-static void forget(node_t *n) {n->addr=0;n->armed=false;n->rep_pending=false;if(zero==n)zero=0;}
+static void forget(node_t *n) {n->addr=0;n->armed=false;n->rep_pending=false;if(zero==n)zero=0;if(n->is_hub)for(int p=1;p<=4;p++)if(n->child[p]>=0)forget(&node[n->child[p]]);} /* a hub's whole subtree */
 static void hub_power_cycle(node_t *h) {
  for(int p=1;p<=4;p++) {h->pwr[p]=false;h->ps[p]=h->pc[p]=0;if(h->child[p]>=0)forget(&node[h->child[p]]);}
 }
@@ -211,6 +214,8 @@ int main(void) {
  set_up(KB_FS,HUB,1,TUSB_SPEED_FULL,kb_cfg,sizeof kb_cfg,false,0x1997,0x2433);
  set_up(KB_LS,HUB,2,TUSB_SPEED_LOW,kb_cfg,sizeof kb_cfg,false,0x1a2c,0x2124);
  set_up(KB_ROOT,-1,0,TUSB_SPEED_FULL,kb_cfg,sizeof kb_cfg,false,0x045e,0x00db);
+ set_up(HUB2,HUB,3,TUSB_SPEED_FULL,hub_cfg,sizeof hub_cfg,true,0x1234,0x0002);
+ set_up(KB2,HUB2,1,TUSB_SPEED_FULL,kb2_cfg,sizeof kb2_cfg,false,0x1234,0x0003);
  run_ms(100);step=__LINE__;check_empty();
 
  /* 1. Hub with two keyboards (one full speed, one low speed behind the hub's translator), pulled, replugged. */
@@ -285,6 +290,28 @@ int main(void) {
  }
  plug(KB_FS);CHECK(wait_ready(2,4000));reports(KB_FS,4,KEY_A);reports(KB_LS,5,KEY_B);unplug(HUB);run_ms(500);step=__LINE__;check_empty();
  for(int cycle=0;cycle<20;cycle++) {plug(KB_ROOT);CHECK(wait_ready(1,3000));unplug(KB_ROOT);run_ms(300);step=__LINE__;check_empty();}
+ /* 5. A hub behind a hub: HUB (high speed) -> HUB2 (full speed) -> KB2 (two interfaces). The keyboard works; pulling
+  * the middle hub, or the outer one, at any moment of any transfer and plugging it back 50 times leaves nothing behind. */
+ node[KB_FS].plugged=false;node[KB_LS].plugged=false;node[HUB2].plugged=true;node[KB2].plugged=true;
+ plug(HUB);CHECK(wait_ready(1,6000));
+ CHECK(device_slots()==3&&hid_slots()==1);                /* two hubs and one keyboard; its second interface has no slot */
+ {const char *t=usblog_text(0);CHECK(strstr(t,"FS split"));CHECK(!strstr(t,"HID slots full"));}
+ reports(KB2,4,KEY_A);
+ for(int cycle=0;cycle<50;cycle++) {
+  key(KB2,4);run_ms(20+(unsigned)(cycle*13)%90);          /* a key is down, a transfer is in flight */
+  if(cycle%2==0) unplug(HUB2); else unplug(HUB);
+  run_ms(30+(unsigned)(cycle*7)%200);
+  if(cycle%5==0) {run_ms(2500);step=__LINE__;CHECK(usbkbd_count()==0&&!held(KEY_A));}
+  if(cycle%2==0) plug(HUB2); else plug(HUB);
+  if(cycle%7==3) {run_ms(10+(unsigned)cycle*11);if(cycle%2==0)unplug(HUB2);else unplug(HUB);run_ms(1500);if(cycle%2==0)plug(HUB2);else plug(HUB);} /* pulled again mid-enumeration */
+  CHECK(wait_ready(1,6000));
+  CHECK(device_slots()==3&&hid_slots()==1);
+  CHECK(!held(KEY_A));
+  reports(KB2,4,KEY_A);
+ }
+ unplug(HUB);run_ms(1000);step=__LINE__;check_empty();
+ /* A hub that reports no ports is skipped with a log line and the bus stays usable. */
+ plug(HUB);CHECK(wait_ready(1,6000));unplug(HUB);run_ms(1000);step=__LINE__;check_empty();
  CHECK(!double_arms);
  printf("hot-plug: %u passes, max pass %u/%u us, %u keyboards mounted in all, no leaks after 40 cycles\n",passes,max_pass,USBHOST_TASK_BUDGET_US,ready_lines);
  return 0;

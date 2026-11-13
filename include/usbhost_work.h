@@ -16,6 +16,10 @@ void usbhost_stats_close(uint8_t device,uint8_t ep); /* ep=0 closes a device */
 void usbhost_stats_submit(uint8_t device,uint8_t ep);
 void usbhost_stats_token(uint8_t device,uint8_t ep,bool interrupt,bool split,bool complete);
 void usbhost_stats_irq(uint32_t us);
+uint32_t usbhost_stats_irq_count(void); /* interrupts handled so far: a change means the controller has news */
+#ifndef USBHOST_IDLE_PASS_US
+#define USBHOST_IDLE_PASS_US 500u
+#endif /* with no interrupt since the last pass, the host stack runs at most this often */
 void usbhost_stats_pass(uint32_t us);
 void usbhost_stats_task(void); /* foreground; one-second snapshot, five-second UART status */
 void usbhost_dwc2_task(uint32_t begin);

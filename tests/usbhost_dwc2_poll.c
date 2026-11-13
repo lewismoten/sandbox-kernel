@@ -17,7 +17,14 @@ void idle_wait(uint32_t us) {raw+=us;}
 void log_line(const char *s) {(void)s;}
 void hcd_event_handler(const hcd_event_t *e,bool isr) {(void)e;(void)isr;}
 bool tuh_bus_info_get(uint8_t d,tuh_bus_info_t *b) {
- *b=(tuh_bus_info_t){.rhport=0,.hub_addr=5,.hub_port=d,.speed=d==3?TUSB_SPEED_HIGH:TUSB_SPEED_FULL};return true;
+ /* 5: the outer hub, high speed, on the root port. 6: a full-speed hub on 5's port 3. 7: a full-speed device on 6's port 2.
+  * 1 to 4: devices on 5's ports; 8: a device on a hub that is not in the table. */
+ if(d==9) return false; /* a hub that is gone */
+ if(d==5) *b=(tuh_bus_info_t){.rhport=0,.hub_addr=0,.hub_port=0,.speed=TUSB_SPEED_HIGH};
+ else if(d==6) *b=(tuh_bus_info_t){.rhport=0,.hub_addr=5,.hub_port=3,.speed=TUSB_SPEED_FULL};
+ else if(d==7) *b=(tuh_bus_info_t){.rhport=0,.hub_addr=6,.hub_port=2,.speed=TUSB_SPEED_FULL};
+ else if(d==8) *b=(tuh_bus_info_t){.rhport=0,.hub_addr=9,.hub_port=1,.speed=TUSB_SPEED_FULL};
+ else *b=(tuh_bus_info_t){.rhport=0,.hub_addr=5,.hub_port=d,.speed=d==3?TUSB_SPEED_HIGH:TUSB_SPEED_FULL};return true;
 }
 void usbhost_stats_token(uint8_t d,uint8_t e,bool interrupt,bool split,bool complete) {
  (void)d;(void)e;if(interrupt&&(!split||!complete))polls++;
@@ -61,6 +68,17 @@ int main(void) {
  // Deadline wrap; first NAK before wrap, next poll after wrap.
  raw=UINT32_MAX-4000;CHECK(hcd_edpt_xfer(0,2,0x81,buf,8));ch_id=channel_find_enabled(&regs,2,1,1);nak(ch_id);
  unsigned before=polls;raw=2000;task();CHECK(polls==before);raw=5000;task();CHECK(polls==before+1);
+ // Transaction translator: a full-speed device names the nearest high-speed hub above it and that hub's port, even behind a full-speed hub.
+ desc.bInterval=8;
+ CHECK(hcd_edpt_open(0,7,&desc));ep_id=edpt_find_opened(7,1,1);
+ CHECK(_hcd_data.edpt[ep_id].hcsplt_bm.split_en&&_hcd_data.edpt[ep_id].hcsplt_bm.hub_addr==5&&_hcd_data.edpt[ep_id].hcsplt_bm.hub_port==3);
+ CHECK(hcd_edpt_open(0,6,&desc));ep_id=edpt_find_opened(6,1,1);
+ CHECK(_hcd_data.edpt[ep_id].hcsplt_bm.hub_addr==5&&_hcd_data.edpt[ep_id].hcsplt_bm.hub_port==3);
+ CHECK(hcd_edpt_open(0,1,&desc));ep_id=edpt_find_opened(1,1,1);CHECK(_hcd_data.edpt[ep_id].hcsplt_bm.hub_addr==5&&_hcd_data.edpt[ep_id].hcsplt_bm.hub_port==1);
+ // A device whose hub chain has no high-speed hub is refused with no endpoint left allocated.
+ unsigned used=0;for(unsigned i=0;i<CFG_TUH_DWC2_ENDPOINT_MAX;i++)used+=_hcd_data.edpt[i].hcchar_bm.enable;
+ CHECK(!hcd_edpt_open(0,8,&desc));
+ {unsigned now_used=0;for(unsigned i=0;i<CFG_TUH_DWC2_ENDPOINT_MAX;i++)now_used+=_hcd_data.edpt[i].hcchar_bm.enable;CHECK(now_used==used);}
  CHECK(!usb_wait_failed());
  printf("DWC2: NAK retries >=8ms, SS/CS counted, SOF IRQ disabled, late/wrap/abort/close OK (%u polls, %u SS, %u CS)\n",polls,ss,cs);
  return 0;

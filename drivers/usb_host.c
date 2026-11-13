@@ -174,6 +174,14 @@ void tuh_hub_poll_retry_cb(uint8_t hub,unsigned retry,unsigned delay_ms,const ch
 }
 void usb_task(void) {
  if(!initialized) return;
+ /* The main loop spins at tens of thousands of passes a second. A pass costs about 13 us on the Pi even when idle
+  * (a dozen timer reads), which kept the host task at 80 to 90 percent of every second for one idle keyboard.
+  * Everything the stack waits for is due in whole milliseconds or is announced by an interrupt, so a pass with no
+  * interrupt since the last one runs at most every USBHOST_IDLE_PASS_US; a pass that used its budget runs again at once. */
+ static uint32_t last_us,last_irq;static bool more=true;
+ uint32_t now_us=micros(),irqs=usbhost_stats_irq_count();
+ if(!more&&irqs==last_irq&&(uint32_t)(now_us-last_us)<USBHOST_IDLE_PASS_US) return;
+ last_us=now_us;last_irq=irqs;
  uint64_t begin=clock_us();
  /* Never wait for events; the host-only event budget also bounds a busy bus. */
  tuh_task_ext(0,false);
@@ -182,6 +190,7 @@ void usb_task(void) {
  os_usb_work(begin,end);
  usbhost_stats_pass((uint32_t)(end-begin));
  usbhost_stats_task();
+ more=end-begin>=USBHOST_TASK_BUDGET_US-USBHOST_WORK_RESERVE_US;
  /* Once per boot: retain evidence if a controller/callback still takes too long. */
  static bool warned;
  if(end-begin>=2000&&!warned) {

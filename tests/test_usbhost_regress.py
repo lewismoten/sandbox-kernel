@@ -35,7 +35,7 @@ class HostRegress(unittest.TestCase):
 
     def test_hub_and_several_devices(self):
         cfg = (ROOT / 'include/tusb_config.h').read_text()
-        self.assertEqual(int(re.search(r'#define CFG_TUH_HUB (\d+)', cfg).group(1)), 1)
+        self.assertEqual(int(re.search(r'#define CFG_TUH_HUB (\d+)', cfg).group(1)), 3)
         self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_DEVICE_MAX (\d+)', cfg).group(1)), 4)
         self.assertGreaterEqual(int(re.search(r'#define CFG_TUH_HID (\d+)', cfg).group(1)), 6)
 

@@ -13,7 +13,7 @@
 #define CFG_TUH_MAX_SPEED OPT_MODE_HIGH_SPEED
 #define CFG_TUH_DWC2_DMA_ENABLE 0
 #define CFG_TUH_DWC2_SLAVE_ENABLE 1
-#define CFG_TUH_HUB 1 /* one hub (tinyusb counts it apart from the devices) */
+#define CFG_TUH_HUB 3 /* hubs, counted apart from the devices: the outer hub, a hub behind it (the Raspberry Pi keyboard has one) and one spare */
 #define CFG_TUH_HID 8 /* R2: interfaces, not devices: a dongle may list mouse, consumer and keyboard in any order */
 #define CFG_TUH_DEVICE_MAX 4 /* keyboard, keyboard, a receiver, one spare; the hub is extra */
 #define CFG_TUH_ENUMERATION_BUFSIZE 512

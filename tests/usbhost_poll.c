@@ -12,7 +12,10 @@ static uint32_t raw;
 static unsigned control_requests,mounted,status_lines,maximum;
 static bool complete_reports=true,refuse;
 static struct {unsigned opens,transfers;uint32_t last,min_gap;uint8_t *buffer;uint16_t length;} ep[6][256];
-uint32_t usb_wait_now(void) {return raw++;}
+static unsigned reads_now,reads_micros;
+uint32_t usb_wait_now(void) {reads_now++;return raw++;}
+uint32_t micros(void) {reads_micros++;return raw++;} /* a timer read costs 1 us here, about what the Pi pays */
+static uint32_t busy_us,passes_run;
 bool usb_wait_failed(void) {return false;}
 uint32_t tusb_time_millis_api(void) {return raw/1000;}
 void tusb_time_delay_ms_api(uint32_t ms) {raw+=ms*1000;}
@@ -97,7 +100,7 @@ static void enumerate(uint8_t d,const uint8_t *config,uint16_t vid,uint16_t pid)
  mounted++;
 }
 static void pass(void) {
- uint32_t begin=raw;usb_task();uint32_t elapsed=raw-begin;
+ uint32_t begin=raw;usb_task();uint32_t elapsed=raw-begin;busy_us+=elapsed;passes_run++;
  CHECK(elapsed<=USBHOST_TASK_BUDGET_US);
  if(elapsed>maximum)maximum=elapsed;
 }
@@ -123,7 +126,11 @@ int main(void) {
  for(int i=0;i<count;i++)if(events[i].type==EV_KEY&&events[i].code==1)escape=true;
  CHECK(escape);input_close(instance);
  uint32_t begin=raw,stop=begin+1000000;
+ busy_us=passes_run=reads_now=reads_micros=0;
  while((int32_t)(raw-stop)<0) {pass();raw+=50;}
+ /* Benchmark: the host task over one second of a hub and two idle keyboards (the loop itself costs 50 us a spin here). */
+ printf("host task over 1 s with a hub and two idle keyboards: %u passes, task_us=%u (%u%% of the second), %u stack timer reads, %u pass-gate reads\n",passes_run,busy_us,busy_us/10000,reads_now,reads_micros);
+ CHECK(busy_us<100000); /* the same loop with no idle throttle and the old endpoint scan took 38 percent (383243 us); the rest here is the fake HCD paying 120 us a submit */
  unsigned first=ep[1][0x81].transfers,second=ep[2][0x81].transfers,hubs=ep[5][0x81].transfers;
  CHECK(first>=110&&first<=126&&second>=90&&second<=101&&hubs>=110&&hubs<=126);
  CHECK(!ep[1][0x82].transfers&&!ep[2][0x82].transfers);

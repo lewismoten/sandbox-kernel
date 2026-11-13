@@ -8,7 +8,7 @@ static struct endpoint {
  volatile uint32_t submits,polls,ss,cs;
  uint32_t old_submits,old_polls,old_ss,old_cs;
 } endpoints[ENDPOINTS];
-static volatile uint32_t splits,irq_us,irq_max;
+static volatile uint32_t splits,irq_us,irq_max,irq_count;
 static uint32_t task_us,pass_max,overruns,passes;
 static struct endpoint *find(uint8_t d,uint8_t ep) {
  for(unsigned i=0;i<ENDPOINTS;i++) if(endpoints[i].d==d&&endpoints[i].ep==ep)return &endpoints[i];
@@ -30,7 +30,8 @@ void usbhost_stats_token(uint8_t d,uint8_t ep,bool interrupt,bool split,bool com
  if(!split||!complete)p->polls++;
  if(split) {if(complete)p->cs++;else p->ss++;}
 }
-void usbhost_stats_irq(uint32_t us) {irq_us+=us;if(us>irq_max)irq_max=us;}
+uint32_t usbhost_stats_irq_count(void) {return irq_count;}
+void usbhost_stats_irq(uint32_t us) {irq_count++;irq_us+=us;if(us>irq_max)irq_max=us;}
 void usbhost_stats_pass(uint32_t us) {task_us+=us;passes++;if(us>pass_max)pass_max=us;if(us>USBHOST_TASK_BUDGET_US)overruns++;}
 /* All text work is foreground and outside the measured stack call. Lifetime
  * maxima and overruns survive the one-second windows. Explicit window length
