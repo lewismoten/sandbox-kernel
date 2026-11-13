@@ -54,3 +54,28 @@ int plat_audio_open(void);
 int plat_audio_write(const int16_t *lr, uint32_t frames, uint32_t *taken);
 int plat_audio_query(struct plat_audio_info *info);
 void plat_audio_close(void);
+/* E-ink (slice 4d, ABI 1.9 /dev/eink, docs/eink.md): one owner, write-only; a page is exactly 3904 bytes (250x122, 32-byte rows,
+   bit 7 leftmost, 1 = black). All return 0 or a negative errno: -11 EAGAIN (too soon: the kernel changed nothing), -16 EBUSY, -19 ENODEV
+   (no panel, or a kernel older than 1.9), -22 EINVAL, -9 EBADF. A close does not clear the panel; plat_eink_clear does. */
+struct plat_eink_info {uint64_t width, height, page_bytes, title_max, mark_bytes, min_interval_ms, max_per_minute;};
+int plat_eink_open(void);
+int plat_eink_query(struct plat_eink_info *info);
+int plat_eink_page(const uint8_t *page3904);
+int plat_eink_title(const char *name, uint32_t name_bytes, const uint8_t *mark200, const char *build /* NUL-terminated or NULL */);
+int plat_eink_clear(void);
+void plat_eink_close(void);
+/* Serial (slice 4d, ABI 1.10 /dev/serial0, docs/serial.md): opened nonblocking; one owner. plat_serial_read sets *got to 0 when
+   nothing is waiting (the kernel's EAGAIN is not an error); plat_serial_write sets *taken (the kernel takes every byte and counts
+   what does not fit as dropped; a host model may take fewer). */
+struct plat_serial_info {uint64_t transport, tx_bytes, tx_dropped, rx_bytes, rx_dropped, tx_pending, rx_pending;};
+int plat_serial_open(void);
+int plat_serial_read(void *buf, uint32_t n, uint32_t *got);
+int plat_serial_write(const void *buf, uint32_t n, uint32_t *taken);
+int plat_serial_query(struct plat_serial_info *info);
+void plat_serial_close(void);
+/* Power (slice 4d, ABI 1.11 power_hold, 1.12 the asleep query). Flags: 1 = no blank, 2 = no slowdown. Acquire gives a token (-24 EMFILE
+   when the 16-entry table is full, -22 EINVAL for no flags); release of a stale token is -9 EBADF. plat_power_asleep gives the
+   flag bits of what the kernel has put to sleep now (bit 0 set: the screen is blank); -22 EINVAL on a kernel older than 1.12. */
+int plat_power_acquire(uint32_t flags, uint64_t *token);
+int plat_power_release(uint64_t token);
+int plat_power_asleep(uint32_t *bits);

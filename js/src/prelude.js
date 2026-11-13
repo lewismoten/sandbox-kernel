@@ -392,6 +392,269 @@
       },
     };
   }
+  // E-ink (slice 4d): eink.open() -> the one owner of the 250x122 panel, or null when there is no panel (eink.available is false).
+  // A page is 3904 bytes, 32 bytes a row, bit 7 leftmost, 1 = black. page(bytes) / update(x,y,w,h,bits) / canvas() send a page; the
+  // result is true when it went to the panel now and false when it was queued (too soon: only the newest queued page is kept and the
+  // runtime sends it when the panel limits allow). release() gives the screen back to the kernel (also done at stop); close() keeps it up.
+  {
+    const PW = 250,
+      PH = 122,
+      RB = 32;
+    g.eink = {
+      get available() {
+        return !!N.einkProbe();
+      },
+      open() {
+        const id = N.einkOpen();
+        if (id === null) return null;
+        const info = Object.freeze(N.einkInfo(id));
+        const bits = new Uint8Array(RB * PH);
+        let closed = false;
+        const live = () => {
+          if (closed) throw new Error('EBADF: the e-ink panel is closed');
+        };
+        const send = () => N.einkPage(id, bits) === 1;
+        const int = (v, k) => {
+          if (!Number.isInteger(v)) throw new RangeError('EINVAL: ' + k + ' must be an integer');
+          return v;
+        };
+        const put = (x, y, black) => {
+          const i = y * RB + (x >> 3),
+            m = 0x80 >> (x & 7);
+          bits[i] = black ? bits[i] | m : bits[i] & ~m;
+        };
+        // Copies a 1-bit bitmap (rows of ceil(w/8) bytes, bit 7 leftmost, 1 = black) into the page at x, y; no clipping: out of bounds is EINVAL.
+        const blit = (x, y, w, h, src) => {
+          int(x, 'x');
+          int(y, 'y');
+          int(w, 'w');
+          int(h, 'h');
+          if (w < 1 || h < 1 || x < 0 || y < 0 || x + w > PW || y + h > PH) throw new RangeError('EINVAL: the region ' + x + ',' + y + ' ' + w + 'x' + h + ' is outside the 250x122 page');
+          const rb = (w + 7) >> 3;
+          if (!(src instanceof Uint8Array) || src.length !== rb * h) throw new RangeError('EINVAL: a ' + w + 'x' + h + ' bitmap is ' + rb * h + ' bytes (' + rb + ' a row)');
+          for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) put(x + c, y + r, src[r * rb + (c >> 3)] & (0x80 >> (c & 7)));
+        };
+        const fill = (x, y, w, h, black) => {
+          const x0 = Math.max(0, x),
+            y0 = Math.max(0, y),
+            x1 = Math.min(PW, x + w),
+            y1 = Math.min(PH, y + h);
+          for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) put(xx, yy, black);
+        };
+        const p = {
+          info,
+          get bits() {
+            return bits;
+          },
+          page(bytes) {
+            live();
+            if (!(bytes instanceof Uint8Array) || bytes.length !== RB * PH) throw new RangeError('EINVAL: a page is exactly 3904 bytes (a Uint8Array)');
+            bits.set(bytes);
+            return send();
+          },
+          // Changes one region of the page and sends it. {send: false} only edits (flush() sends).
+          update(x, y, w, h, src, opts) {
+            live();
+            blit(x, y, w, h, src);
+            return opts && opts.send === false ? undefined : send();
+          },
+          flush() {
+            live();
+            return send();
+          },
+          // A canvas-like drawing surface on the same page: draw, then flush(). Shapes are clipped to the page.
+          canvas() {
+            live();
+            const k = {
+              width: PW,
+              height: PH,
+              clear(black) {
+                bits.fill(black ? 0xff : 0);
+              },
+              setPixel(x, y, black = true) {
+                if (x >= 0 && y >= 0 && x < PW && y < PH) put(Math.floor(x), Math.floor(y), black);
+              },
+              fillRect(x, y, w, h, black = true) {
+                fill(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h), black);
+              },
+              drawBitmap(x, y, w, h, src) {
+                blit(x, y, w, h, src);
+              },
+              flush() {
+                return p.flush();
+              },
+            };
+            return k;
+          },
+          // The OS name (1 to 16 characters), an optional 40x40 mark (200 bytes) and a build line (up to 16 characters) on the kernel's status screen.
+          setTitle(name, o) {
+            live();
+            return N.einkTitle(id, String(name), o && o.mark, o && o.build) === 1;
+          },
+          stats() {
+            live();
+            return N.einkStats(id);
+          },
+          get closed() {
+            return closed;
+          },
+          release() {
+            if (closed) return;
+            closed = true;
+            N.einkClose(id, 1);
+          },
+          close() {
+            if (closed) return;
+            closed = true;
+            N.einkClose(id, 0);
+          },
+        };
+        return p;
+      },
+    };
+  }
+  // Serial (slice 4d): serial.open({mode: 'r' | 'w' | 'rw'}) -> the one owner of the kernel's byte channel. read(into) takes what is waiting (0
+  // when empty), write(bytes | string) returns how many bytes were taken (maybe fewer); port.on('data', fn) calls fn(Uint8Array) as bytes
+  // arrive (bounded reads, 256 bytes an event, 1 KiB a turn: what the kernel cannot hold it drops and counts in stats()).
+  {
+    let cur = null;
+    const utf8 = (s) => {
+      const out = [];
+      for (const ch of s) {
+        const c = ch.codePointAt(0);
+        if (c < 0x80) out.push(c);
+        else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+        else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+        else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      }
+      return new Uint8Array(out);
+    };
+    N.onSerial = (id, ab) => {
+      const s = cur;
+      if (!s || s._id !== id) return;
+      const data = new Uint8Array(ab);
+      for (const fn of [...s._on])
+        try {
+          fn(data);
+        } catch (err) {
+          report(err);
+        }
+    };
+    g.serial = {
+      open(opts) {
+        const m = (opts && opts.mode) || 'rw';
+        if (m !== 'r' && m !== 'w' && m !== 'rw') throw new RangeError("EINVAL: mode is 'r', 'w' or 'rw'");
+        const id = N.serialOpen(m === 'r' ? 1 : m === 'w' ? 2 : 3);
+        let closed = false;
+        const live = () => {
+          if (closed) throw new Error('EBADF: the serial port is closed');
+        };
+        const on = new Set();
+        const s = {
+          _id: id,
+          _on: on,
+          mode: m,
+          read(into) {
+            live();
+            return N.serialRead(id, into);
+          },
+          write(data) {
+            live();
+            return N.serialWrite(id, typeof data === 'string' ? utf8(data) : data);
+          },
+          on(type, fn) {
+            live();
+            if (type !== 'data') throw new RangeError("serial.on: the only event is 'data'");
+            if (typeof fn !== 'function') throw new TypeError('serial.on: a function');
+            on.add(fn);
+            N.serialWant(id, 1);
+          },
+          off(type, fn) {
+            if (type !== 'data' || closed) return;
+            on.delete(fn);
+            if (!on.size) N.serialWant(id, 0);
+          },
+          stats() {
+            live();
+            return N.serialStats(id);
+          },
+          get closed() {
+            return closed;
+          },
+          close() {
+            if (closed) return;
+            closed = true;
+            on.clear();
+            if (cur === s) cur = null;
+            N.serialClose(id);
+          },
+        };
+        cur = s;
+        return s;
+      },
+    };
+  }
+  // Power (slice 4d): power.hold(reason, {noBlank, noSlowdown}) -> a Hold (default: no blank only); hold.release() (twice is fine). Holds are
+  // given back at stop. power.asleep -> {blank, slowdown} (what the kernel has put to sleep now), power.screenDark -> true while the screen
+  // is blank and this app holds no blank; power.on('blank' | 'wake', fn). While the screen is dark the audio pump stops synthesizing and
+  // does not call onneed (the kernel drops audio then) unless the app holds noBlank; the pump starts again on wake.
+  {
+    const ev = { blank: new Set(), wake: new Set() };
+    const holds = new Map();
+    N.onPower = (dark) => {
+      for (const fn of [...ev[dark ? 'blank' : 'wake']])
+        try {
+          fn({ type: dark ? 'blank' : 'wake' });
+        } catch (err) {
+          report(err);
+        }
+    };
+    g.power = {
+      hold(reason, o) {
+        const f = o || {};
+        const flags = (f.noBlank === undefined || f.noBlank ? 1 : 0) | (f.noSlowdown ? 2 : 0);
+        const id = N.powerHold(flags, String(reason));
+        let released = false;
+        const h = {
+          reason: String(reason).slice(0, 40),
+          noBlank: !!(flags & 1),
+          noSlowdown: !!(flags & 2),
+          get released() {
+            return released;
+          },
+          release() {
+            if (released) return;
+            released = true;
+            holds.delete(id);
+            N.powerRelease(id);
+          },
+        };
+        holds.set(id, h);
+        return h;
+      },
+      get holds() {
+        return N.powerList().map(([id, flags, reason]) => ({ reason, noBlank: !!(flags & 1), noSlowdown: !!(flags & 2) }));
+      },
+      get asleep() {
+        const b = N.powerState();
+        return { blank: !!(b & 1), slowdown: !!(b & 2) };
+      },
+      get screenDark() {
+        return !!(N.powerState() & 1) && !N.powerList().some((h) => h[1] & 1);
+      },
+      on(type, fn) {
+        if (!ev[type]) throw new RangeError("power.on: 'blank' or 'wake'");
+        if (typeof fn !== 'function') throw new TypeError('power.on: a function');
+        ev[type].add(fn);
+        N.powerWatch(1);
+      },
+      off(type, fn) {
+        if (!ev[type]) return;
+        ev[type].delete(fn);
+        if (!ev.blank.size && !ev.wake.size) N.powerWatch(0);
+      },
+    };
+  }
   // The screen: setMode(width, height, depth 32|16) for the page; a playing
   // <game> uses 320x200 at 8 bpp unless screen.gameLowres(false), or a larger
   // 8 bpp mode with the picture centered: screen.gameLowres(true, 384, 216)

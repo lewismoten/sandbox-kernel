@@ -18,6 +18,9 @@
 #include "jsfs.h"
 #include "jsdev.h"
 #include "jsaudio.h"
+#include "jseink.h"
+#include "jspower.h"
+#include "jsserial.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
@@ -788,6 +791,9 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   jsfs_init(rt, ctx, native);
   jsdev_init(rt, ctx, native);
   jsaudio_init(ctx, native);
+  jseink_init(ctx, native);
+  jsserial_init(ctx, native);
+  jspower_init(ctx, native);
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
   struct jel *bj = jel_of(body);
   dom_delete(bj->e); bj->e = dom_body; dom_body->js = bj;
@@ -846,6 +852,9 @@ uint64_t jsrt_step(void) {
   if (exited) return 0;
   uint64_t now = plat_clock_ns();
   jsdev_sleeps_due(now);
+  jspower_pump(now); /* 'blank' and 'wake' events, only while a listener exists */
+  jsserial_pump(now); /* the 'data' event: bounded reads */
+  jseink_pump(now);   /* sends the newest queued e-ink update when the panel limits allow */
   jsaudio_pump(now); /* keeps the audio ring fed: onneed(frames), tones; bounded, never waits */
   if (now_ms() >= wake_at_ms) {
     wake_at_ms = 1e300;
@@ -890,7 +899,7 @@ uint64_t jsrt_step(void) {
   jsrt_stats.presents += n;
   if (exited) return 0;
   now = plat_clock_ns();
-  uint64_t wake = more ? now + 1 : jsaudio_wake(now, jsdev_wake(now)); /* input every 10 ms (100 ms with no device), or an earlier sleep; never past the chunk */
+  uint64_t wake = more ? now + 1 : jseink_wake(now, jsserial_wake(now, jspower_wake(now, jsaudio_wake(now, jsdev_wake(now))))); /* input every 10 ms (100 ms with no device), or an earlier sleep; never past the chunk */
   if (want_frame && next_frame_ns < wake) wake = next_frame_ns;
   if (wake_at_ms < 1e300) {uint64_t w = t0_ns + (uint64_t)(wake_at_ms * 1e6); if (w < wake) wake = w;}
   if (game_started && PROF->wake) {uint64_t w = PROF->wake(now); if (w && w < wake) wake = w;}
@@ -906,6 +915,8 @@ int jsrt_stop(void) {
   if (prof_live) {prof_live = 0; if (PROF->stop) PROF->stop();}
   char sum[80]; unsigned leaks = jsrt_handles_release_all(sum, sizeof sum); /* what the app did not close */
   if (leaks) sayf("JS app left %u handle(s) open: %s", leaks, sum);
+  unsigned holds = jspower_release_all(); /* power holds are tokens, not handles */
+  if (holds) {sayf("JS app left %u power hold(s)", holds); leaks += holds;}
   if (ctx) {JS_FreeValue(ctx, native); native = JS_UNDEFINED; JS_FreeContext(ctx); ctx = 0;}
   if (rt) {JS_FreeRuntime(rt); rt = 0;}
   dom_body = dom_focused = 0;

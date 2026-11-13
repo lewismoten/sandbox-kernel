@@ -6,6 +6,7 @@
 #include "app.h"
 #include "handle.h"
 #include "jsdev.h"
+#include "jspower.h"
 #include "plat.h"
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@ struct au {
   uint32_t id, factor, channels, target, vol, muted, want;
   struct tone t[TONES_MAX]; unsigned nt; uint32_t phase;
   uint64_t next_poll, fed;
-  uint64_t writes, refused, frames_in, refills, gaps, tone_frames;
+  uint64_t dark_polls, writes, refused, frames_in, refills, gaps, tone_frames;
 };
 static struct au *A;
 
@@ -118,7 +119,7 @@ static JSValue js_stats(JSContext *c, JSValueConst t, int n, JSValueConst *v) {
   U("rate", q.rate); U("capacity", q.capacity); U("queued", q.queued); U("played", q.played);
   U("underruns", q.underruns); U("overruns", q.overruns); U("overrunFrames", q.overrun_frames);
   U("appRate", KRATE / a->factor); U("channels", a->channels); U("pendingTones", a->nt);
-  U("writes", a->writes); U("refused", a->refused); U("framesIn", a->frames_in); U("refills", a->refills); U("gaps", a->gaps);
+  U("writes", a->writes); U("refused", a->refused); U("framesIn", a->frames_in); U("refills", a->refills); U("darkPolls", a->dark_polls); U("gaps", a->gaps);
   return o;
 #undef U
 }
@@ -174,6 +175,7 @@ void jsaudio_pump(uint64_t now) {
   struct au *a = A;
   if (!a || now < a->next_poll || (!a->nt && !a->want)) return;
   a->next_poll = now + JSAUDIO_POLL_NS;
+  if (jspower_dark(now)) {a->dark_polls++; return;} /* the kernel drops audio while the screen is blank: no synthesis, no onneed, until it wakes (or the app holds no-blank) */
   struct plat_audio_info q;
   if (plat_audio_query(&q)) return;
   uint64_t need = q.queued < a->target ? a->target - q.queued : 0;

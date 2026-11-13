@@ -171,3 +171,58 @@ int plat_audio_query(struct plat_audio_info *o) {
   o->underruns = i.underruns; o->overruns = i.overruns; o->overrun_frames = i.overrun_frames; return 0;
 }
 void plat_audio_close(void) {if (au_open) {sbx_close(au_fd); au_open = 0;}}
+/* E-ink, serial and power (slice 4d): thin wrappers; a missing device or a kernel older than the ABI that has it is -19 ENODEV. */
+static uint64_t ei_fd, se_fd; static int ei_open, se_open;
+int plat_eink_open(void) {
+  if (ei_open) return -SBX_EBUSY;
+  int32_t s = sbx_open("/dev/eink", 9, SBX_O_WRONLY, &ei_fd);
+  if (s == -SBX_ENOENT) return -SBX_ENODEV;
+  if (s) return s;
+  ei_open = 1; return 0;
+}
+int plat_eink_query(struct plat_eink_info *o) {
+  sbx_eink_info i; int32_t s = ei_open ? sbx_eink_query(ei_fd, &i) : -SBX_EBADF;
+  if (s) return s;
+  o->width = i.width; o->height = i.height; o->page_bytes = i.page_bytes; o->title_max = i.title_max; o->mark_bytes = i.mark_bytes;
+  o->min_interval_ms = i.min_interval_ms; o->max_per_minute = i.max_per_minute; return 0;
+}
+int plat_eink_page(const uint8_t *p) {return ei_open ? sbx_eink_page(ei_fd, p) : -SBX_EBADF;}
+int plat_eink_title(const char *name, uint32_t nb, const uint8_t *mark, const char *build) {
+  sbx_eink_title_rec r;
+  return ei_open ? sbx_eink_title(ei_fd, &r, name, nb, mark, build) : -SBX_EBADF;
+}
+int plat_eink_clear(void) {return ei_open ? sbx_eink_clear(ei_fd) : -SBX_EBADF;}
+void plat_eink_close(void) {if (ei_open) {sbx_close(ei_fd); ei_open = 0;}}
+int plat_serial_open(void) {
+  if (se_open) return -SBX_EBUSY;
+  int32_t s = sbx_open("/dev/serial0", 12, SBX_O_RDWR | SBX_O_NONBLOCK, &se_fd);
+  if (s == -SBX_ENOENT) return -SBX_ENODEV;
+  if (s) return s;
+  se_open = 1; return 0;
+}
+int plat_serial_read(void *buf, uint32_t n, uint32_t *got) {
+  uint64_t d = 0; *got = 0;
+  if (!se_open) return -SBX_EBADF;
+  int32_t s = sbx_read(se_fd, buf, n, &d);
+  if (s == -SBX_EAGAIN) return 0;
+  if (s) return s;
+  *got = (uint32_t)d; return 0;
+}
+int plat_serial_write(const void *buf, uint32_t n, uint32_t *taken) {
+  uint64_t d = 0; *taken = 0;
+  if (!se_open) return -SBX_EBADF;
+  int32_t s = sbx_write(se_fd, buf, n, &d);
+  if (s == -SBX_EAGAIN) return 0;
+  if (s) return s;
+  *taken = (uint32_t)d; return 0;
+}
+int plat_serial_query(struct plat_serial_info *o) {
+  sbx_serial_info i; int32_t s = se_open ? sbx_serial_query(se_fd, &i) : -SBX_EBADF;
+  if (s) return s;
+  o->transport = i.transport; o->tx_bytes = i.tx_bytes; o->tx_dropped = i.tx_dropped; o->rx_bytes = i.rx_bytes;
+  o->rx_dropped = i.rx_dropped; o->tx_pending = i.tx_pending; o->rx_pending = i.rx_pending; return 0;
+}
+void plat_serial_close(void) {if (se_open) {sbx_close(se_fd); se_open = 0;}}
+int plat_power_acquire(uint32_t flags, uint64_t *token) {return sbx_power_acquire(flags, token);}
+int plat_power_release(uint64_t token) {return sbx_power_release(token);}
+int plat_power_asleep(uint32_t *bits) {return sbx_power_asleep(bits);}

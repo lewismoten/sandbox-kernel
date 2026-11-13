@@ -6,6 +6,7 @@
  *   jsrun <sd folder> <app folder, e.g. /sd/OS/APPS/HELLO> [--ms N] [--vclock]
  *         [--keys ms:code:value,...] [--shot out.rgb] [--heap bytes] */
 #include <dirent.h>
+#include <ctype.h>
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -26,7 +27,7 @@ static uint32_t fb[PLAT_SURFACE / 4];
 static uint32_t mode_w = PLAT_W, mode_h = PLAT_H, mode_d = 32;
 static uint8_t palette[768];
 static struct {uint64_t at; uint16_t type, code; int32_t value;} keys[256];
-static int host_attached = 1, have_seed, seed_live, sleepstat;
+static int host_attached = 1, have_seed, seed_live, sleepstat, devstat;
 static uint64_t seed_value, max_sleep, sleeps;
 static int nkeys, next_key;
 static uint64_t start;
@@ -197,9 +198,10 @@ void plat_reset_input(void) {
    drained by the virtual clock at 48 frames a millisecond; a millisecond that finds the ring short counts one underrun, but only
    after the first write of an open. --no-audio: no /dev/audio (ENODEV); --audio-busy: another program holds it (EBUSY). */
 #define AU_CAP 16384u
+static int pw_dark(void);
 static int au_open, au_busy, au_none, au_first;
 static FILE *au_dump; /* --audio-dump file: every frame the ring accepted, as the kernel would get it (S16 stereo LE) */
-static uint64_t au_last, au_queued, au_played, au_under, au_over, au_over_frames;
+static uint64_t au_dark_frames, au_last, au_queued, au_played, au_under, au_over, au_over_frames;
 static void au_drain(void) {
   uint64_t now = plat_clock_ns(), ms = (now - au_last) / 1000000ull;
   if (!ms) return;
@@ -220,6 +222,7 @@ int plat_audio_write(const int16_t *lr, uint32_t frames, uint32_t *taken) {
   au_drain(); au_first = 1;
   uint64_t room = AU_CAP - au_queued, n = frames < room ? frames : room;
   if (n < frames) {au_over++; au_over_frames += frames - n;}
+  if (pw_dark()) {au_dark_frames += n; *taken = (uint32_t)n; return 0;} /* the kernel accepts and drops audio while the screen is blank */
   if (au_dump) {fwrite(lr, 4, n, au_dump); fflush(au_dump);}
   au_queued += n; *taken = (uint32_t)n; return 0;
 }
@@ -229,6 +232,118 @@ int plat_audio_query(struct plat_audio_info *o) {
   *o = (struct plat_audio_info){48000, AU_CAP, au_queued, au_played, au_under, au_over, au_over_frames}; return 0;
 }
 void plat_audio_close(void) {au_open = 0; au_queued = 0;}
+
+/* E-ink model (docs/eink.md): one write-only owner, a 3904-byte page; an update is accepted at least 1000 ms after the last accepted one
+   and at most 30 in any 60 s, otherwise -11 (EAGAIN) with nothing changed. --no-eink: no panel (ENODEV); --eink-busy: someone holds it (EBUSY);
+   --eink-dump FILE: one record per accepted update (u32 kind 0 page 1 clear 2 title, u32 virtual ms, 3904 bytes of the page). */
+static unsigned ei_min_ms = 1000;
+static int ei_has_last, ei_open, ei_busy, ei_none, ei_opens, ei_acc_n, ei_eagain, ei_clears;
+static uint64_t ei_last, ei_stamps[64]; static unsigned ei_ns;
+static FILE *ei_dump;
+static int ei_gate(void) {
+  uint64_t now = plat_clock_ns(), win = 60000000000ull; unsigned in = 0;
+  if (!ei_open) return -9;
+  for (unsigned i = 0; i < ei_ns; i++) if (now < ei_stamps[i] + win) in++;
+  if ((ei_has_last && now < ei_last + ei_min_ms * 1000000ull) || in >= 30) {ei_eagain++; return -11;}
+  unsigned k = 0;
+  for (unsigned i = 0; i < ei_ns; i++) if (now < ei_stamps[i] + win) ei_stamps[k++] = ei_stamps[i];
+  ei_stamps[k++] = now; ei_ns = k; ei_last = now; ei_has_last = 1; ei_acc_n++; return 0;
+}
+static void ei_rec(uint32_t kind, const uint8_t *page) {
+  static const uint8_t zero[3904]; uint32_t h[2] = {kind, (uint32_t)(plat_clock_ns() / 1000000ull)};
+  if (ei_dump) {fwrite(h, 4, 2, ei_dump); fwrite(page ? page : zero, 1, 3904, ei_dump); fflush(ei_dump);}
+}
+int plat_eink_open(void) {
+  if (ei_none) return -19;
+  if (ei_busy || ei_open) return -16;
+  ei_open = 1; ei_opens++; ei_has_last = 0; ei_ns = 0; return 0;
+}
+int plat_eink_query(struct plat_eink_info *o) {
+  if (!ei_open) return -9;
+  *o = (struct plat_eink_info){250, 122, 3904, 16, 200, 1000, 30}; return 0;
+}
+int plat_eink_page(const uint8_t *p) {int r = ei_gate(); if (!r) ei_rec(0, p); return r;}
+int plat_eink_title(const char *name, uint32_t nb, const uint8_t *mark, const char *build) {
+  (void)name; (void)nb; (void)mark; (void)build; int r = ei_gate(); if (!r) ei_rec(2, 0); return r;
+}
+int plat_eink_clear(void) {int r = ei_gate(); if (!r) {ei_clears++; ei_rec(1, 0);} return r;}
+void plat_eink_close(void) {ei_open = 0;}
+/* Serial model (docs/serial.md): nonblocking, one owner. --serial-rx at:hex,at:hex puts bytes in a 256-byte receive buffer at those
+   virtual ms (what does not fit is dropped and counted); read gives what is waiting up to the request (partial). A 256-byte transmit buffer
+   drains 64 bytes a millisecond; write takes what fits (the real kernel takes all and counts the excess dropped: a model of partial
+   writes, see G20); --serial-tx-stuck stops the drain. --serial-dump FILE gets every accepted byte. --no-serial: ENODEV. */
+#define SE_CAP 256u
+static int se_open, se_none, se_stuck; static unsigned se_opens;
+static struct {uint64_t at; uint8_t b[64]; unsigned n;} se_in[64]; static unsigned se_nin, se_next;
+static uint8_t se_rx[SE_CAP]; static unsigned se_rxn;
+static uint64_t se_txp, se_tx_last, se_txb, se_txd, se_rxb, se_rxd;
+static FILE *se_dump;
+static void se_sync(void) {
+  uint64_t now = plat_clock_ns();
+  while (se_next < se_nin && se_in[se_next].at <= now) {
+    for (unsigned i = 0; i < se_in[se_next].n; i++) {
+      if (se_rxn < SE_CAP) {se_rx[se_rxn++] = se_in[se_next].b[i]; se_rxb++;} else se_rxd++;
+    }
+    se_next++;
+  }
+  uint64_t ms = (now - se_tx_last) / 1000000ull;
+  if (ms) {se_tx_last += ms * 1000000ull; if (!se_stuck) {uint64_t d = ms * 64u; se_txp = d >= se_txp ? 0 : se_txp - d;}}
+}
+int plat_serial_open(void) {
+  if (se_none) return -19;
+  if (se_open) return -16;
+  se_open = 1; se_opens++; se_tx_last = plat_clock_ns(); return 0;
+}
+int plat_serial_read(void *buf, uint32_t n, uint32_t *got) {
+  *got = 0;
+  if (!se_open) return -9;
+  se_sync();
+  uint32_t k = n < se_rxn ? n : se_rxn;
+  memcpy(buf, se_rx, k); memmove(se_rx, se_rx + k, se_rxn - k); se_rxn -= k; *got = k; return 0;
+}
+int plat_serial_write(const void *buf, uint32_t n, uint32_t *taken) {
+  *taken = 0;
+  if (!se_open) return -9;
+  se_sync();
+  uint32_t room = SE_CAP - (uint32_t)se_txp, k = n < room ? n : room;
+  if (se_dump) {fwrite(buf, 1, k, se_dump); fflush(se_dump);}
+  se_txp += k; se_txb += k; *taken = k; return 0;
+}
+int plat_serial_query(struct plat_serial_info *o) {
+  if (!se_open) return -9;
+  se_sync();
+  *o = (struct plat_serial_info){1, se_txb, se_txd, se_rxb, se_rxd, se_txp, se_rxn}; return 0;
+}
+void plat_serial_close(void) {se_open = 0; se_rxn = 0; se_txp = 0;}
+/* Power model (docs/power-saving.md): a 16-entry token table (ids never repeat: 1000 up), flags 1 and 2 only, a stale or unknown release is -9,
+   a full table -24. --blank a:b,c:d: the screen is blank from virtual ms a to b ... unless a no-blank hold exists (a hold taken while blank
+   restores the screen at once). The query (1.12) gives bit 0 while blank; --old-power: the query is -22 (a kernel older than 1.12). */
+static struct {uint64_t tok; uint32_t flags;} pw[16]; static unsigned pw_n; static uint64_t pw_next = 1000;
+static unsigned pw_acq, pw_rel, pw_queries; static int pw_old;
+static struct {uint64_t a, b;} pw_blank[16]; static unsigned pw_nb;
+int plat_power_acquire(uint32_t flags, uint64_t *token) {
+  if (!flags || flags & ~3u) return -22;
+  if (pw_n == 16) return -24;
+  pw[pw_n].tok = pw_next; pw[pw_n].flags = flags; *token = pw_next++; pw_n++; pw_acq++; return 0;
+}
+int plat_power_release(uint64_t token) {
+  for (unsigned i = 0; i < pw_n; i++) if (pw[i].tok == token) {pw[i] = pw[--pw_n]; pw_rel++; return 0;}
+  return -9;
+}
+int plat_power_asleep(uint32_t *bits) {
+  uint64_t now = plat_clock_ns(); uint32_t held = 0; pw_queries++;
+  if (pw_old) return -22;
+  for (unsigned i = 0; i < pw_n; i++) held |= pw[i].flags;
+  *bits = 0;
+  for (unsigned i = 0; i < pw_nb; i++) if (now >= pw_blank[i].a * 1000000ull && now < pw_blank[i].b * 1000000ull && !(held & 1u)) *bits = 1;
+  return 0;
+}
+/* Whether the model screen is blank, for the audio model: audio written while blank is accepted and dropped. */
+static int pw_dark(void) {uint32_t b = 0; unsigned q = pw_queries; plat_power_asleep(&b); pw_queries = q; return b & 1u;}
+static void print_devstat(void) { /* after stop: what the app left behind, and what the models saw */
+  printf("HOST dev eink_open %d serial_open %d audio_open %d holds %u acquired %u released %u eink_accepted %d eink_eagain %d eink_clears %d serial_opens %u eink_opens %d dark_audio_frames %llu\n",
+         ei_open, se_open, au_open, pw_n, pw_acq, pw_rel, ei_acc_n, ei_eagain, ei_clears, se_opens, ei_opens, (unsigned long long)au_dark_frames);
+}
 /* Live heap blocks, for --cycles (a leak check): the system allocator's own count. */
 #ifdef __APPLE__
 #include <malloc/malloc.h>
@@ -250,6 +365,33 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--no-audio")) au_none = 1;
     else if (!strcmp(argv[i], "--audio-dump") && i + 1 < argc) au_dump = fopen(argv[++i], "wb");
     else if (!strcmp(argv[i], "--audio-busy")) au_busy = 1;
+    else if (!strcmp(argv[i], "--no-eink")) ei_none = 1;
+    else if (!strcmp(argv[i], "--eink-busy")) ei_busy = 1;
+    else if (!strcmp(argv[i], "--eink-dump") && i + 1 < argc) ei_dump = fopen(argv[++i], "wb");
+    else if (!strcmp(argv[i], "--eink-min-ms") && i + 1 < argc) ei_min_ms = (unsigned)strtoul(argv[++i], 0, 10); /* the kernel enforces more than it reports */
+    else if (!strcmp(argv[i], "--no-serial")) se_none = 1;
+    else if (!strcmp(argv[i], "--serial-dump") && i + 1 < argc) se_dump = fopen(argv[++i], "wb");
+    else if (!strcmp(argv[i], "--serial-tx-stuck")) se_stuck = 1;
+    else if (!strcmp(argv[i], "--serial-rx") && i + 1 < argc) { /* at_ms:hexbytes,... (up to 64 bytes each, in order) */
+      for (char *p = argv[++i]; *p && se_nin < 64;) {
+        unsigned long long at; int used = 0;
+        if (sscanf(p, "%llu:%n", &at, &used) < 1 || !used) {fprintf(stderr, "bad --serial-rx\n"); return 2;}
+        p += used; se_in[se_nin].at = at * 1000000ull; se_in[se_nin].n = 0;
+        while (isxdigit((unsigned char)p[0]) && isxdigit((unsigned char)p[1]) && se_in[se_nin].n < 64) {
+          unsigned v; sscanf(p, "%2x", &v); se_in[se_nin].b[se_in[se_nin].n++] = (uint8_t)v; p += 2;
+        }
+        se_nin++; if (*p == ',') p++;
+      }
+    }
+    else if (!strcmp(argv[i], "--blank") && i + 1 < argc) {
+      for (char *p = argv[++i]; *p && pw_nb < 16;) {
+        unsigned long long a, b; int used = 0;
+        if (sscanf(p, "%llu:%llu%n", &a, &b, &used) != 2) {fprintf(stderr, "bad --blank\n"); return 2;}
+        pw_blank[pw_nb].a = a; pw_blank[pw_nb].b = b; pw_nb++; p += used; if (*p == ',') p++;
+      }
+    }
+    else if (!strcmp(argv[i], "--old-power")) pw_old = 1;
+    else if (!strcmp(argv[i], "--devstat")) devstat = 1;
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;
@@ -283,6 +425,7 @@ int main(int argc, char **argv) {
       leaks += (unsigned)jsrt_stop();
       if (!c) first = blocks();
     }
+    if (devstat) print_devstat();
     printf("CYCLES %u blocks first %ld last %ld leaks %u open %u\n", cycles, first, blocks(), leaks, jsrt_handles_open());
     return 0;
   }
@@ -301,6 +444,7 @@ int main(int argc, char **argv) {
   }
   int status = jsrt_exit_code();
   jsrt_stop();
+  if (devstat) print_devstat();
   if (sleepstat) printf("HOST sleeps %llu max_us %llu\n", (unsigned long long)sleeps, (unsigned long long)(max_sleep / 1000u));
   return status;
 }
