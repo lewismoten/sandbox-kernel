@@ -9,7 +9,7 @@ class SdRecover(unittest.TestCase):
         cls.t = tempfile.TemporaryDirectory(); so = pathlib.Path(cls.t.name)/'sd.so'
         subprocess.run(['cc','-shared','-fPIC','-O1','-DHOST_TEST','-Wall','-Wextra','-Werror','-I'+str(hostlib.ROOT/'include'),
                         str(hostlib.ROOT/'tests/sd_sim.c'),'-o',str(so)],check=True)
-        cls.c = C.CDLL(str(so)); cls.c.sim_setup.argtypes=[C.c_uint32]; cls.c.sim_fail_reads.argtypes=[C.c_uint32]; cls.c.sim_cmd13_bad.argtypes=[C.c_uint32]; cls.c.sim_busy_after_write.argtypes=[C.c_uint32]; cls.c.sim_cmd13_lies.argtypes=[C.c_uint32]
+        cls.c = C.CDLL(str(so)); cls.c.sim_setup.argtypes=[C.c_uint32]; cls.c.sim_fail_reads.argtypes=[C.c_uint32]; cls.c.sim_cmd13_bad.argtypes=[C.c_uint32]; cls.c.sim_busy_after_write.argtypes=[C.c_uint32]; cls.c.sim_slow_service_once.argtypes=[C.c_uint32]; cls.c.sim_nested_read_once.argtypes=[C.c_uint32]; cls.c.sim_cmd13_lies.argtypes=[C.c_uint32]
     @classmethod
     def tearDownClass(cls): cls.t.cleanup()
     def setUp(self): self.c.sim_setup(1000); self.buf = C.create_string_buffer(512)
@@ -38,6 +38,18 @@ class SdRecover(unittest.TestCase):
         for lba in (10, 11, 12): self.assertTrue(self.c.sd_write(lba, self.buf), 'write %d' % lba)
         for lba in (10, 11): self.assertTrue(self.c.sd_read(lba, self.buf), 'read %d' % lba)
         self.assertEqual(self.c.sim_wedged(), 0)
+    def test_slow_usb_service_inside_a_wait_is_not_a_timeout(self):
+        self.c.sim_busy_after_write(40); self.c.sim_slow_service_once(600000)  # one service_io call takes 0.6 s; the card finished meanwhile
+        self.assertTrue(self.c.sd_write(10, self.buf)); self.assertEqual(self.c.sim_cmd12s(), 0, 'a healthy write was "recovered"')
+        self.assertTrue(self.c.sd_read(10, self.buf)); self.assertEqual(self.c.sim_wedged(), 0)
+    def test_a_transfer_asked_for_inside_another_ones_wait_is_refused_untouched(self):
+        self.c.sim_busy_after_write(40); self.c.sim_nested_read_once(7)        # service_io inside the write's busy wait reaches sd_read
+        self.assertTrue(self.c.sd_write(10, self.buf), C.c_char_p.in_dll(self.c, 'sd_fail').value)
+        self.assertEqual(self.c.sim_nested_result(), 0, 'the nested read must be refused')
+        self.assertEqual(C.c_char_p.in_dll(self.c, 'sd_fail').value, b'SD NESTED')
+        self.assertEqual(self.c.sim_wedged(), 0, 'a command reached the card while it was programming')
+        self.assertEqual(self.c.sim_cmd12s(), 0); self.assertEqual(C.c_uint32.in_dll(self.c, 'sd_depth').value, 0)
+        self.assertTrue(self.c.sd_read(7, self.buf)); self.assertTrue(self.c.sd_read(10, self.buf))
     def test_out_of_range_is_refused_without_recovery(self):
         self.assertFalse(self.c.sd_read(5000, self.buf)); self.assertEqual(self.c.sim_cmd12s(), 0)
 

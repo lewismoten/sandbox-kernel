@@ -35,7 +35,16 @@ if(o==0x30&&fifo_left==128) regs[0x30/4]|=0x20; /* write-1-to-clear is not model
 #define REG(a) (*sim(a))
 #include "../drivers/sd.c"
 uint32_t micros(void) {return now+=500;}
-void service_io(void) {}
+/* What the board's service_io() can do inside a wait: take a long time (USB work) while the card finishes, or
+ * reach code that asks for another transfer. */
+static uint32_t slow_once,nest_once;static int nest_result=-1;
+void service_io(void) {
+ if(slow_once) {now+=slow_once;slow_once=0;busy=0;}
+ if(nest_once) {uint8_t b[512];uint32_t lba=nest_once;nest_once=0;nest_result=sd_read(lba,b);}
+}
+void sim_slow_service_once(uint32_t us) {slow_once=us;}
+void sim_nested_read_once(uint32_t lba) {nest_once=lba;nest_result=-1;}
+int sim_nested_result(void) {return nest_result;}
 void delay_us(uint32_t us) {now+=us;}
 bool property(uint32_t t,uint32_t *v,unsigned w) {(void)t;(void)v;(void)w;full_inits++;return false;}
 void gpio_mode(unsigned p,unsigned m) {(void)p;(void)m;}

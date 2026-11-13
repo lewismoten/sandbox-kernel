@@ -5,8 +5,11 @@
 #define R(o) REG(SD+(o))
 static bool high_capacity;
 static uint32_t capacity,rca;
+/* service_io() (USB, the protocol parser) runs inside every wait and can take longer than the timeout itself.
+ * So a wait that expires looks at the register once more before it gives up: the card may have finished while
+ * USB was being served, and a false timeout would start a recovery (CMD12, re-init) on a healthy transfer. */
 static bool wait_bits(unsigned reg,uint32_t mask,uint32_t value,uint32_t timeout) {
- uint32_t t=micros(); while((R(reg)&mask)!=value) { service_io(); if(expired(t,timeout)) return false; } return true;
+ uint32_t t=micros(); while((R(reg)&mask)!=value) { service_io(); if(expired(t,timeout)) return (R(reg)&mask)==value; } return true;
 }
 /* After a write the card holds DAT0 low while it programs flash (tens of ms). STATUS (0x24) bit 20 is the DAT0 level.
  * Nothing may be sent to the card, not even a recovery CMD12 or a CMD0 re-init, until DAT0 is high again. */
@@ -14,7 +17,7 @@ static bool wait_not_busy(uint32_t timeout) { return wait_bits(0x24,1u<<20,1u<<2
 static bool command(unsigned idx,uint32_t arg,unsigned flags) {
  if(!wait_bits(0x24,1,0,100000)) return false;
  R(0x30)=~0u; R(0x08)=arg; barrier(); R(0x0c)=(idx<<24)|flags;
- uint32_t t=micros(); while(!(R(0x30)&0x8001)) { service_io(); if(expired(t,100000)) return false; }
+ uint32_t t=micros(); while(!(R(0x30)&0x8001)) { service_io(); if(expired(t,100000)&&!(R(0x30)&0x8001)) return false; }
  uint32_t s=R(0x30); R(0x30)=s&0xffff0001u;
  return !(s&0xffff8000u);
 }
@@ -93,14 +96,17 @@ bool sd_adopt(const uint32_t in[8]) {
  if(((R(0x10)>>9)&15)!=4) { sd_fail="SD NOTRAN"; return false; }
  return true;
 }
+uint32_t sd_depth; /* see transfer() */
 bool sd_init(void) {
  uint32_t keep_cap=capacity,keep_rca=rca; bool keep_hc=high_capacity;
  sd_fail="none";
+ sd_depth++; /* its delays service USB too: no transfer may start while the card is half initialized (capacity is 0) */
  /* Cold start: plain init. Later attempts power-cycle the card. */
  for(unsigned attempt=0;attempt<3;attempt++) {
-  if(sd_init_once(attempt>0)) return true;
+  if(sd_init_once(attempt>0)) { sd_depth--; return true; }
   delay_us(20000);
  }
+ sd_depth--;
  /* A failed re-init zeroed capacity and rca, so every later transfer was refused ("lba>=capacity") without
     ever reaching the card until a power cycle. Keep the old identity: the next transfer tries to recover again. */
  if(keep_cap&&keep_rca) { capacity=keep_cap; rca=keep_rca; high_capacity=keep_hc; }
@@ -109,8 +115,11 @@ bool sd_init(void) {
 bool sd_init_after_handoff(const uint32_t in[8]) {
  if(sd_adopt(in)) return true;
  /* Fall back: power-cycle first, then the full init. */
- for(unsigned attempt=0;attempt<3;attempt++) { if(sd_init_once(true)) return true; delay_us(20000); }
- return false;
+ sd_depth++;
+ bool ok=false;
+ for(unsigned attempt=0;attempt<3&&!ok;attempt++) { ok=sd_init_once(true); if(!ok) delay_us(20000); }
+ sd_depth--;
+ return ok;
 }
 uint32_t sd_sectors(void) { return capacity; }
 #define XFAIL(code) do { sd_fail=(code); return false; } while(0)
@@ -121,19 +130,20 @@ static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bo
  R(0x04)=(1<<16)|512;
  if(!command(write?24:17,lba,0x3a0000|(write?0:0x10))) XFAIL("SD XFER CMD");
  uint32_t t=micros(),ready=write?0x10:0x20;
- while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)) XFAIL("SD XFER READY TIMEOUT"); }
+ while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)&&!(R(0x30)&(ready|0xffff8000u))) XFAIL("SD XFER READY TIMEOUT"); }
  if(R(0x30)&0xffff8000u) XFAIL("SD XFER READY ERR");
  R(0x30)=ready;
  uint8_t *b=read_data;
  const uint8_t *out=write_data;
  for(unsigned i=0;i<128;i++) { uint32_t w; if(write) { memcpy(&w,out+i*4,4); R(0x20)=w; } else { w=R(0x20); memcpy(b+i*4,&w,4); } }
- t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)) XFAIL("SD XFER DATA TIMEOUT"); }
+ t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)&&!(R(0x30)&0xffff8002u)) XFAIL("SD XFER DATA TIMEOUT"); }
  if(R(0x30)&0xffff8000u) XFAIL("SD XFER DATA ERR");
  R(0x30)=2;
  /* CMD13 polls card programming state: host DATA_DONE alone is insufficient. */
  if(write) {
   if(!wait_not_busy(500000)) XFAIL("SD WRITE BUSY");
-  t=micros(); do { if(!command(13,rca,0x1a0000)) XFAIL("SD XFER CMD13"); uint32_t status=R(0x10); if(status&0xfdffe008u) XFAIL("SD XFER CARDERR"); if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); XFAIL("SD XFER BUSY");
+  t=micros(); for(bool last=false;;) { if(!command(13,rca,0x1a0000)) XFAIL("SD XFER CMD13"); uint32_t status=R(0x10); if(status&0xfdffe008u) XFAIL("SD XFER CARDERR"); if((status&0x1f00)==0x900) return true; if(last) break; service_io(); last=expired(t,1000000); } /* one more look after the time is up */
+  XFAIL("SD XFER BUSY");
  }
  return true;
 }
@@ -155,11 +165,18 @@ static void sd_recover(void) {
  sd_init();
  if(sd_fail[0]=='n') sd_fail=why; /* keep the reason the transfer failed, not "none" */
 }
+/* sd_depth: 1 while a transfer (its waits, its recovery) is in flight. Every wait calls service_io(), and
+ * whatever runs there must not start another transfer: a second command sent into a transfer in progress breaks
+ * both (the likely cause of the put-breaks-reads fault of 2026-11-12; not yet confirmed on a board).
+ * core/protocol.c holds its card work back while this is set; a
+ * caller that gets here anyway is refused untouched, with "SD NESTED" left in sd_fail for the log. */
 static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
- if(transfer_once(lba,read_data,write_data,write)) return true;
- if(lba>=capacity) return false;
- sd_recover();
- return transfer_once(lba,read_data,write_data,write);
+ if(sd_depth) { sd_fail="SD NESTED"; return false; }
+ sd_depth++;
+ bool ok=transfer_once(lba,read_data,write_data,write);
+ if(!ok&&lba<capacity) { sd_recover(); ok=transfer_once(lba,read_data,write_data,write); }
+ sd_depth--;
+ return ok;
 }
 bool sd_read(uint32_t lba,void *p) { return transfer(lba,p,NULL,false); }
 bool sd_write(uint32_t lba,const void *p) { return transfer(lba,NULL,p,true); }
