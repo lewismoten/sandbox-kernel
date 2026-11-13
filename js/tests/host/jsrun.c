@@ -95,6 +95,7 @@ int32_t plat_list(const char *path, void (*fn)(void *, const char *, uint32_t, i
 }
 /* ---- files with handles, and the kernel's write rules (docs/saves-storage.md, core/sys.c) as a host model ---- */
 static struct {FILE *f; int open, guarded; uint32_t size;} hf[16];
+static long read_fail_after = -1; /* --read-fail-after N: file reads give N bytes in all, then fail with EIO (-5) */
 static int disk_full; /* --disk-full: every commit fails with ENOSPC */
 static int guarded(const char *path) {return !strncasecmp(path, "/sd/OS/SAVES", 12) || !strncasecmp(path, "/sd/OS/CACHE", 12);}
 int plat_fopen(const char *path, uint64_t *fd) {
@@ -109,7 +110,11 @@ int plat_fopen(const char *path, uint64_t *fd) {
 }
 int plat_fread(uint64_t fd, void *buf, uint32_t n, uint32_t *got) {
   if (!fd || fd > 16 || !hf[fd - 1].open) return -9;
-  *got = (uint32_t)fread(buf, 1, n, hf[fd - 1].f); return 0;
+  if (read_fail_after == 0) return -5;
+  if (read_fail_after > 0 && n > (uint32_t)read_fail_after) n = (uint32_t)read_fail_after;
+  *got = (uint32_t)fread(buf, 1, n, hf[fd - 1].f);
+  if (read_fail_after > 0) read_fail_after -= (long)*got;
+  return 0;
 }
 int plat_fseek(uint64_t fd, uint32_t pos) {
   if (!fd || fd > 16 || !hf[fd - 1].open) return -9;
@@ -427,6 +432,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;
     else if (!strcmp(argv[i], "--write-quota") && i + 1 < argc) jsrt_write_quota = (uint32_t)strtoul(argv[++i], 0, 10);
+    else if (!strcmp(argv[i], "--read-fail-after") && i + 1 < argc) read_fail_after = strtol(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--disk-full")) disk_full = 1;
     else if (!strcmp(argv[i], "--alt") && i + 1 < argc) alt = argv[++i]; /* with --cycles: alternate between argv[2] and this app */
     else if (!strcmp(argv[i], "--sweep") && i + 1 < argc) sweep = argv[++i]; /* fault build: fail the N-th allocation, for every N (direct or qjs), and check nothing crashes or leaks */

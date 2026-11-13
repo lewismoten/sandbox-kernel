@@ -386,6 +386,33 @@ T('pos', f.position); f.close(); sys.exit(0);
         self.assertEqual(t['pos'], '0')
 
 
+class ReviewFixes(unittest.TestCase):
+    """Second pass of the 2026-11-13 review (items 4, 5, 6, 8)."""
+
+    def test_cache_quota_ignores_other_apps_cache_files(self):
+        code = PRE + "T('mine', fs.write('/sd/OS/CACHE/FT', new Uint8Array(100))); sys.exit(0);"
+        t, _, d = run_ok(self, code, caps=('fs.write.cache',), args=['--write-quota', '1000'], files={'OS/CACHE/OTHER': b'x' * 5000})
+        self.assertEqual(t['mine'], '100')
+
+    def test_eisdir_and_efbig_have_their_own_codes(self):
+        import re as _re
+        src = (pathlib.Path(__file__).parent.parent / 'src/jsfs.c').read_text()
+        self.assertIn('"EISDIR"', src); self.assertIn('"EFBIG"', src)
+
+    def test_a_failed_read_keeps_position_in_step_with_the_kernel(self):
+        code = PRE + """
+const f = fs.open('/sd/OS/APPS/FT/BIN.DAT');
+E('read', () => f.read(100)); T('pos', f.position); f.close(); sys.exit(0);
+"""
+        t, _, _ = run_ok(self, code, files={'OS/APPS/FT/BIN.DAT': b'y' * 200}, args=['--read-fail-after', '40'])
+        self.assertTrue(t['read'].startswith('EIO'), t); self.assertEqual(t['pos'], '40')
+
+    def test_gamelowres_size_product_does_not_wrap(self):
+        code = PRE + "E('huge', () => screen.gameLowres(true, 65536, 65536)); sys.exit(0);"
+        t, _, _ = run_ok(self, code, caps=('display',))
+        self.assertTrue(t['huge'].startswith('RangeError'), t)
+
+
 class Leaks(unittest.TestCase):
     def test_fifty_open_close_and_write_cycles_leave_nothing(self):
         code = PRE + """

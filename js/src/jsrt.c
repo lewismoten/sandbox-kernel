@@ -696,7 +696,7 @@ static JSValue js_lowres(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   if (need(c, APP_CAP_DISPLAY, "screen.gameLowres")) return JS_EXCEPTION;
   lowres = JS_ToBool(c, a[0]);
   if (n > 2 && (JS_ToInt32(c, &w, a[1]) || JS_ToInt32(c, &h, a[2]))) return JS_EXCEPTION;
-  if (w < (int32_t)GP_W || h < (int32_t)GP_H || w % 4 || w * h > 640 * 480) return JS_ThrowRangeError(c, "screen.gameLowres: at least 320x200, width a multiple of 4");
+  if (w < (int32_t)GP_W || h < (int32_t)GP_H || w % 4 || (int64_t)w * h > 640 * 480) return JS_ThrowRangeError(c, "screen.gameLowres: at least 320x200, width a multiple of 4");
   game_w = (uint32_t)w; game_h = (uint32_t)h;
   return JS_UNDEFINED;
 }

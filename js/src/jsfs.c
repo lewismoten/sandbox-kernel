@@ -34,9 +34,11 @@ static const char *errno_name(int e, const char **why) {
   switch (e) {
   case 2: *why = "no such file or folder"; return "ENOENT";
   case 13: *why = "not allowed"; return "EACCES";
+  case 21: *why = "that name is a folder, or the kernel will not save to it"; return "EISDIR";
   case 16: *why = "another file or writer is open on the save area; close read handles there and try again"; return "EBUSY";
   case 22: *why = "the kernel refused the request"; return "EINVAL";
   case 24: *why = "too many open files"; return "EMFILE";
+  case 27: *why = "the file is too big for the kernel to save"; return "EFBIG";
   case 28: *why = "the card is full, or the file is over the kernel's 1 MiB single-write limit"; return "ENOSPC";
   case 30: *why = "this path is read-only for apps"; return "EROFS";
   case 36: *why = "the name is too long"; return "ENAMETOOLONG";
@@ -159,7 +161,7 @@ static int32_t pull(struct fobj *f, uint8_t *dst, uint32_t len) {
   uint32_t have = 0;
   while (have < len) {
     uint32_t got; int r = plat_fread(f->fd, dst + have, len - have, &got);
-    if (r) return r;
+    if (r) {f->pos += have; return r;} /* the kernel's offset moved by what it did give; position follows it */
     if (!got) break;
     have += got;
   }
@@ -335,7 +337,8 @@ static JSValue w_commit(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   char folder[96]; const char *slash = strrchr(f->path, '/'); size_t fl = (size_t)(slash - f->path);
   memcpy(folder, f->path, fl); folder[fl] = 0;
   struct sum s = {slash + 1, strlen(slash + 1), 0};
-  plat_list_meta(folder, 0, sum_cb, &s); /* a folder that does not exist yet holds nothing */
+  if (strncmp(folder, "/sd/OS/CACHE", 12)) /* the cache folder is shared by every app; each may write only its own one file, so its limit is the staging limit */
+    plat_list_meta(folder, 0, sum_cb, &s); /* a folder that does not exist yet holds nothing */
   if (s.total + f->n > jsrt_write_quota) return fail(c, "EDQUOT", "this app may hold %u bytes in its save folder (%u there, %u more committed)", (unsigned)jsrt_write_quota, (unsigned)s.total, (unsigned)f->n);
   int r = plat_write_file(f->path, f->buf, f->n); /* f->n == 0 writes a zero-length file: the kernel's open (CREAT|TRUNC) already marks the file dirty, so the fsync publishes it */
   if (r) return fail_errno(c, r, "commit", f->path);

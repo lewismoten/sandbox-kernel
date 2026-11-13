@@ -1,5 +1,15 @@
 # Sandbox JS changelog
 
+## 0.1.2 (2026-11-13)
+
+Second pass over the adversarial review. Host-tested only; not run on a board. No ABI change.
+
+- A cache write no longer counts other apps' files in the shared cache folder against its quota (each app has one cache file, limited when staging).
+- A read that fails partway keeps `position` in step with the kernel's file offset.
+- `screen.gameLowres` size check uses a 64-bit product (65536 x 65536 wrapped to 0 and passed).
+- Kernel errors -21 and -27 reach the app as `EISDIR` and `EFBIG` instead of a generic `EIO`.
+- Left on purpose: `close()` still commits (use `discard()`); saves still have no temp-and-rename (needs a rename the kernel does not offer apps).
+
 ## 0.1.1 (2026-11-13)
 
 Follow-ups from the adversarial review (`docs/apps.md`, Files and storage). Host-tested only; not run on a board.
