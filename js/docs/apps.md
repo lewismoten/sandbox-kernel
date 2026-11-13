@@ -173,3 +173,36 @@ q.pressed(103); q.down; q.attached; q.close();
 - **Detach.** The kernel gives no notice: a read error means the device went away (`detach`, then `reset`), and the runtime tries to reopen it every 100 ms (`attach`). With no device the loop wakes every 100 ms instead of 10. Event times are stamped when the runtime reads them, up to 10 ms after the key.
 
 Status: all of this is host-tested (`make -C js test`, `tests/dev_run.py`); none of it has run on a board yet.
+
+## Audio (slice 4c)
+
+A short square-wave melody, played with the built-in tones (needs `audio`):
+
+```js
+const a = audio.open();                                 // stereo, 48 kHz: the kernel's only format
+a.volume = 0.6;                                         // 0 to 1, in software (the kernel has no volume)
+a.melody([[262, 200], [330, 200], [392, 200], [523, 400], [0, 100], [392, 200], [523, 600]]);   // [hz, ms], hz 0 is a rest
+sleep(2500).then(() => a.close());
+```
+
+The same device for your own samples. `onneed` is called when the ring has room, so the app does not schedule anything:
+
+```js
+const rate = 24000, pcm = new Int16Array(rate * 2);     // two seconds, mono
+for (let i = 0; i < pcm.length; i++) pcm[i] = (i % 60 < 30 ? 6000 : -6000);   // 400 Hz square
+let at = 0;
+const a = audio.open({ rate, channels: 1, onneed(frames) {
+  at += a.write(pcm.subarray(at, at + Math.min(frames, 512)));     // the frames taken; 0 is "full", not an error
+  if (at >= pcm.length) a.close();
+} });
+a.stats();   // {rate, capacity, queued, played, underruns, overruns, overrunFrames, appRate, channels, pendingTones, writes, refused, framesIn, refills, gaps}
+```
+
+- **One writer.** `audio.open({rate, channels, onneed, targetMs})` takes the kernel's `/dev/audio` (`EBUSY` if the app already holds it or another program does, `ENODEV` on a kernel older than 1.8). `close()` (or stop, which reports it as `audio 1`) drops what is queued and frees the device for the next app. The format is fixed at 48,000 stereo frames a second: `channels: 1` is doubled, and a `rate` that divides 48000 (8000, 12000, 16000, 24000, 48000) is repeated sample by sample. Other rates are `EINVAL`.
+- **Writes never block and may be partial.** `write(Int16Array)` (interleaved for two channels) queues what the 16,384-frame ring (341 ms) has room for, in whole frames, and returns how many frames it took: possibly fewer than you gave, possibly 0. Keep the rest and offer it later (`onneed` tells you when). The array must hold whole frames (`EINVAL`). A blanked screen drops audio silently (the call still succeeds); see `power.asleep` in a later slice.
+- **The refill pump.** With `onneed` set, the runtime looks at the ring every 20 ms and keeps it about `targetMs` (default 200, 20 to 300) full: it calls `onneed(frames)` with the room it sees, up to 4,096 kernel frames a turn, again while the app keeps writing, and not again until the next look when the app wrote nothing. The loop never sleeps more than 100 ms, so a ring that is a fifth full at worst still plays on through any single sleep. An exception in `onneed` is logged and the pump carries on.
+- **Tones.** `tone(hz, ms, volume = 1)` queues a square-wave beep (20 to 20,000 Hz; `hz` 0 is a rest; 32 queued at most, `EMFILE`); `melody(notes)` queues several. The runtime synthesizes them into the ring through the same pump (the kernel's own mixer tones are not an app call), so while tones are pending, `write()` returns 0 (tones own the ring) and `onneed` is not called. `stop()` forgets tones not yet written; what is already in the ring (up to `targetMs`) still plays.
+- **Counters.** `stats()` has the kernel's: `underruns` (one for each millisecond the ring ran dry, counted only after the first write), `queued`, `played`, `capacity`, in kernel frames; and the runtime's: `refused` (writes that took less than offered), `refills`, `gaps` (looks that found the ring empty), `writes`, `framesIn`. `overruns` stays 0 because the runtime asks for the room first and queues only that.
+- **Volume** is software on your writes and tones, `volume` 0 to 1 and `muted`; a muted app keeps its timing (frames still go through, as zeros).
+
+Status: all of this is host-tested against a model of the kernel's ring (`make -C js test`, `tests/audio_run.py`); none of it has run on a board, and the HDMI audio path itself is hardware-untested. Kernel wishes: G18 and G19.

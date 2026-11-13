@@ -112,14 +112,14 @@
    "kernel": "open (1) /dev/audio, WRONLY",
    "number": 1,
    "abi": "1.8",
-   "js": "audio.open() -> AudioOut",
+   "js": "audio.open({rate, channels, onneed, targetMs}) -> AudioOut (JSRT_H_AUDIO, one per app); rate 8000..48000 dividing 48000, channels 1 or 2",
    "shape": "sync",
    "errors": "EACCES (not write-only), EBUSY (second writer), ENODEV",
    "capability": "audio",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4c: tests/audio_run.py",
    "test": "host: second writer EBUSY; read access EACCES",
-   "notes": ""
+   "notes": "The kernel format is fixed (stereo S16, 48 kHz); the runtime doubles mono and repeats samples for a lower rate. ENOENT from a kernel older than 1.8 is reported as ENODEV. A second open in the same app is EBUSY before the kernel is asked."
   },
   {
    "id": "sys.open.eink",
@@ -179,7 +179,7 @@
    "status": "v1",
    "why": "",
    "test": "host: partial audio write; eink wrong size",
-   "notes": "Audio and serial writes can be partial or dropped; the JS wrapper returns counts, never loops silently."
+   "notes": "Audio and serial writes can be partial or dropped; the JS wrapper returns counts, never loops silently. Slice 4c: the audio part is bound (AudioOut.write, tests/audio_run.py); file, e-ink and serial parts follow their slices."
   },
   {
    "id": "sys.close",
@@ -592,14 +592,14 @@
    "kernel": "AUDIO_QUERY 0x20000",
    "number": 131072,
    "abi": "1.8",
-   "js": "audio.stats() -> {rate,capacity,queued,played,underruns,overruns,overrunFrames}",
+   "js": "audio.stats() -> {rate,capacity,queued,played,underruns,overruns,overrunFrames} in kernel frames, plus appRate, channels, pendingTones, writes, refused, framesIn, refills, gaps (the runtime's own counts)",
    "shape": "sync",
    "errors": "EINVAL (outputs not zero)",
    "capability": "audio",
-   "status": "v1",
-   "why": "",
+   "status": "bound",
+   "why": "slice 4c: tests/audio_run.py",
    "test": "host: counters after partial write and underrun",
-   "notes": "Counters are per open."
+   "notes": "Counters are per open. The runtime asks for the free room before each write and queues only that, so the kernel's overruns stay 0 and `refused` counts the short writes instead."
   },
   {
    "id": "ioc.input.query",
@@ -887,6 +887,22 @@
    "problem": "A lease draws straight into the mapped surface and present() copies synchronously, so an app that animates cannot tell where the display is in its refresh and may tear.",
    "owner": "kernel",
    "proposal": "a vblank timestamp or a present call that returns after the copy is on screen (extends G9)",
+   "priority": "low"
+  },
+  {
+   "id": "G18",
+   "title": "No volume, mute, flush or tone call for apps",
+   "problem": "The mixer's tone, tune and Q8 volume are kernel-internal (docs/audio-device.md slice 3) and close() is the only way to drop queued audio. The runtime therefore synthesizes square-wave tones itself, scales volume and mute in software on its own writes, and cannot cancel sound already in the ring (stop() only forgets tones not yet written; at most 200 ms stays queued).",
+   "owner": "kernel",
+   "proposal": "an AUDIO ioctl for master volume and mute, a flush (drop queued frames), and optionally the mixer's tone and tune as a syscall",
+   "priority": "low"
+  },
+  {
+   "id": "G19",
+   "title": "Audio counters are coarse and the rate is fixed",
+   "problem": "AUDIO_QUERY does not expose the silence frames the ring counted, so an app sees underruns (one per dry millisecond tick) but not how long the gap was, and a lower rate costs the runtime a repeat loop. A player cannot learn that the screen is blanked (writes are dropped silently) except through power.asleep.",
+   "owner": "kernel",
+   "proposal": "expose silence_frames and a dropped-while-blank counter in sbx_audio_info; optionally 24000 and 16000 Hz opens",
    "priority": "low"
   }
  ]
