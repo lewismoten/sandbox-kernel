@@ -67,4 +67,5 @@ bool eink_available(void) {return available;}
 /* The 24-hour deadline runs on its own: a screen that never changes still gets a full refresh. */
 bool eink_maintenance_due(uint64_t now) {return now-last_full>=EINK_FULL_MAX_US;}
 bool eink_full_due(uint64_t now) {return now-last_full>=EINK_FULL_MIN_US&&(partials>=EINK_FULL_PARTIALS||eink_maintenance_due(now));}
+bool eink_full_allowed(uint64_t now) {return now-last_full>=EINK_FULL_MIN_US;}
 void eink_note_refresh(bool full,uint64_t now) {if(full) {partials=0;last_full=now;} else partials++;}

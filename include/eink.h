@@ -26,6 +26,7 @@ void eink_set_available(bool on); /* the panel driver: running (true) or absent/
 bool eink_available(void);
 bool eink_maintenance_due(uint64_t now_us);   /* 23 h since the last full refresh: redraw even if nothing changed */
 bool eink_full_due(uint64_t now_us);          /* the next redraw should be a full refresh */
+bool eink_full_allowed(uint64_t now);       /* the 180 s floor since the last full refresh has passed */
 void eink_note_refresh(bool full,uint64_t now_us);
 uint32_t eink_generation(void);               /* changes whenever the OS asked for a new picture or the kernel error text changed */
 #define EINK_REDRAW_MIN_US 10000000ull   /* the kernel status screen redraws at most this often, unless eink_generation changed */

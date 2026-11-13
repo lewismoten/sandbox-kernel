@@ -150,6 +150,22 @@ class Panel(SupervisorBase):
         self.pump(11000)
         self.assertGreater(self.c.panel_probe_partial_count(), n2)  # the uptime still advances, no faster than every 10 s
 
+    def test_sleep_screen_gets_a_full_refresh(self):
+        # Partial refreshes can leave pixels missing, and SLEEP freezes the picture for hours: SLEEP must end in a full refresh.
+        self.c.power_timeouts.restype = C.c_int
+        self.boot()
+        self.pump(8000)
+        self.c.power_timeouts(C.c_uint64(0), C.c_uint64(20), C.c_uint64(self.c.clock_us()))
+        self.pump(18000)
+        self.pump(34000)  # SLEEP drawn, but the 180 s floor since the boot full refresh has not passed
+        self.assertEqual(self.c.panel_probe_full_count(), 1)
+        entered = self.glass()
+        self.pump(150000)  # now past 180 s: the owed full refresh runs once, same picture
+        self.assertEqual(self.c.panel_probe_full_count(), 2)
+        self.assertEqual(self.glass(), entered)
+        self.pump(30000)
+        self.assertEqual(self.c.panel_probe_full_count(), 2)
+
     def partials_and_fulls(self):
         return self.c.panel_probe_partial_count() + self.c.panel_probe_full_count()
 
@@ -190,6 +206,7 @@ class Panel(SupervisorBase):
         self.assertLessEqual(self.partials_and_fulls() - n0, 13)
         # Now let it hold: SLEEP shows once, with no more redraws while it stays idle.
         self.pump(45000)
+        self.pump(150000)  # the one full refresh SLEEP is owed lands after the 180 s floor
         n1 = self.partials_and_fulls()
         self.pump(60000)
         self.assertEqual(self.partials_and_fulls(), n1)
