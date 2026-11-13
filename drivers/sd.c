@@ -8,6 +8,9 @@ static uint32_t capacity,rca;
 static bool wait_bits(unsigned reg,uint32_t mask,uint32_t value,uint32_t timeout) {
  uint32_t t=micros(); while((R(reg)&mask)!=value) { service_io(); if(expired(t,timeout)) return false; } return true;
 }
+/* After a write the card holds DAT0 low while it programs flash (tens of ms). STATUS (0x24) bit 20 is the DAT0 level.
+ * Nothing may be sent to the card, not even a recovery CMD12 or a CMD0 re-init, until DAT0 is high again. */
+static bool wait_not_busy(uint32_t timeout) { return wait_bits(0x24,1u<<20,1u<<20,timeout); }
 static bool command(unsigned idx,uint32_t arg,unsigned flags) {
  if(!wait_bits(0x24,1,0,100000)) return false;
  R(0x30)=~0u; R(0x08)=arg; barrier(); R(0x0c)=(idx<<24)|flags;
@@ -113,6 +116,7 @@ uint32_t sd_sectors(void) { return capacity; }
 #define XFAIL(code) do { sd_fail=(code); return false; } while(0)
 static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bool write) {
  if(lba>=capacity) { sd_fail="SD LBA"; return false; }
+ if(!wait_not_busy(500000)) XFAIL("SD BUSY");
  if(!wait_bits(0x24,3,0,100000)) XFAIL("SD XFER INHIBIT");
  R(0x04)=(1<<16)|512;
  if(!command(write?24:17,lba,0x3a0000|(write?0:0x10))) XFAIL("SD XFER CMD");
@@ -128,6 +132,7 @@ static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bo
  R(0x30)=2;
  /* CMD13 polls card programming state: host DATA_DONE alone is insufficient. */
  if(write) {
+  if(!wait_not_busy(500000)) XFAIL("SD WRITE BUSY");
   t=micros(); do { if(!command(13,rca,0x1a0000)) XFAIL("SD XFER CMD13"); uint32_t status=R(0x10); if(status&0xfdffe008u) XFAIL("SD XFER CARDERR"); if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); XFAIL("SD XFER BUSY");
  }
  return true;
@@ -137,11 +142,16 @@ static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bo
  * cycle. Reset the CMD and DAT circuits, abort with CMD12, and if the card does not answer in
  * transfer state re-initialize it. One retry of the same block follows (sector I/O is idempotent). */
 static void sd_recover(void) {
+ const char *why=sd_fail;
+ bool idle=wait_not_busy(1000000); /* let a programming card finish before touching it */
  R(0x2c)|=3u<<25; wait_bits(0x2c,3u<<25,0,100000);
  R(0x30)=~0u;
- command(12,0,0x1b0000|0xc00000); wait_bits(0x24,3,0,100000);
- const char *why=sd_fail;
- if(command(13,rca,0x1a0000)&&((R(0x10)>>9)&15)==4) return;
+ if(idle) {
+  command(12,0,0x1b0000|0xc00000); wait_bits(0x24,3,0,100000);
+  idle=wait_not_busy(1000000);
+ }
+ /* Still busy after the wait: skip CMD13 and go to the re-init, the only thing left to try. */
+ if(idle&&command(13,rca,0x1a0000)&&((R(0x10)>>9)&15)==4&&(R(0x10)&0x100)) return;
  sd_init();
  if(sd_fail[0]=='n') sd_fail=why; /* keep the reason the transfer failed, not "none" */
 }
