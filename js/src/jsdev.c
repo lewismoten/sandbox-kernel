@@ -122,7 +122,7 @@ static JSValue js_lease_set_palette(JSContext *c, JSValueConst t, int n, JSValue
   int bad_len = JS_ToUint32(c, &len, ln); JS_FreeValue(c, ln);
   if (bad_len || !JS_IsObject(a[0])) {JS_FreeValue(c, JS_GetException(c)); return JS_ThrowTypeError(c, "setPalette(rgb): an array or typed array of r,g,b bytes");}
   if (n > 1 && JS_ToUint32(c, &first, a[1])) return JS_EXCEPTION;
-  if (len % 3 || !len || first + len / 3 > 256) return JS_ThrowRangeError(c, "setPalette: a multiple of 3 values, entries %u to 255 at most", (unsigned)first);
+  if (len % 3 || !len || (uint64_t)first + len / 3 > 256) /* 64-bit: first 4294967295 wrapped past this test and wrote outside pal6 and tmp */ return JS_ThrowRangeError(c, "setPalette: a multiple of 3 values, entries %u to 255 at most", (unsigned)first);
   uint8_t tmp[768];
   for (uint32_t i = 0; i < len; i++) {
     JSValue e = JS_GetPropertyUint32(c, a[0], i); uint32_t v;

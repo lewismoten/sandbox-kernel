@@ -311,6 +311,27 @@ q.on('key', (e) => { const n = sandbox.now(); T('k', (e.time > 4294967296) + ' '
         self.assertTrue(steps and steps[0] < 300, steps)
 
 
+class PaletteBounds(unittest.TestCase):
+    """Review 2026-11-13: setPalette's first + count wrapped in 32 bits, so a first near 2^32 passed the 256-entry check and wrote
+    outside the palette (and, with a long list, past a stack buffer)."""
+
+    def test_huge_first_is_a_range_error(self):
+        code = PRE + """
+const s = screen.lease({ width: 320, height: 200, depth: 8 });
+E('wrap1', () => s.setPalette([1, 2, 3], 4294967295));
+E('wrap2', () => s.setPalette(new Array(771).fill(5), 4294967295));
+E('edge', () => s.setPalette([9, 9, 9], 255));
+E('past', () => s.setPalette([9, 9, 9], 256));
+s.release(); sys.exit(0);
+"""
+        rc, t, rest, _ = go(code, caps=('display',))
+        self.assertEqual(rc, 0, rest)
+        self.assertTrue(t['wrap1'].startswith('RangeError'), t)
+        self.assertTrue(t['wrap2'].startswith('RangeError'), t)
+        self.assertTrue(t['edge'].startswith('ok 1'), t)
+        self.assertTrue(t['past'].startswith('RangeError'), t)
+
+
 class Leaks(unittest.TestCase):
     def cycles(self, code, caps=ALL):
         d = pathlib.Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, d, True)
