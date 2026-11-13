@@ -80,4 +80,8 @@ setInterval(() => {
   const s = Math.floor(performance.now() / 1000);
   clock.textContent = 'up ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }, 1000);
+// A launcher can start this app (apps.launch); Esc then hands the screen back to it.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && sandbox.has('apps.launch')) apps.exit(0);
+});
 console.log('hello OS ready');

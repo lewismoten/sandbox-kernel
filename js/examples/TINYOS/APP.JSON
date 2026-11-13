@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "api": 1,
   "entry": "MAIN.JS",
-  "capabilities": ["display", "input", "audio", "eink", "fs.read", "fs.write.saves"],
+  "capabilities": ["display", "input", "audio", "eink", "fs.read", "fs.write.saves", "apps.launch"],
   "description": "A small example OS shell in JavaScript: home, files, settings."
 }

@@ -14,9 +14,15 @@ UPDATE = False
 K = {'up': 103, 'down': 108, 'left': 105, 'right': 106, 'enter': 28, 'esc': 1, 'q': 16}
 
 
-def card():
+def card(others=True):
     d = pathlib.Path(tempfile.mkdtemp())
     shutil.copytree(JS / 'examples/TINYOS', d / 'OS/APPS/TINYOS')
+    (d / 'OS/AUTORUN.TXT').write_text('JS.ELF\nAPPS/TINYOS\n')
+    if not others:
+        return d
+    shutil.copytree(JS / 'apps/HELLO', d / 'OS/APPS/HELLO')   # a real app to list and launch
+    (d / 'OS/APPS/BROKEN').mkdir()   # an app that cannot run: listed, with the reason
+    (d / 'OS/APPS/BROKEN/APP.JSON').write_text('{"name": "Broken one", "api": 99}')
     (d / 'OS/AUTORUN.TXT').write_text('JS.ELF\nAPPS/TINYOS\n')
     return d
 
@@ -61,12 +67,14 @@ class Tiny(unittest.TestCase):
         self.assertEqual(bad, [], lines)
 
     def test_app_check_passes_on_the_card(self):
-        self.assertEqual(app_check.card(str(self.d), None), 0)
+        only = card(False)
+        self.addCleanup(shutil.rmtree, only, True)
+        self.assertEqual(app_check.card(str(only), None), 0)
 
     def test_boots_through_autorun_and_shows_home(self):
         rc, lines, crc, pages, au = boot(self.d, ms=1000)
         self.assertIn('autorun OS/APPS/TINYOS', lines)
-        self.assertIn('TINYOS ready, 3 programs', lines)
+        self.assertIn('TINYOS ready, 3 programs, 2 apps', lines)
         self.assertEqual(fixture('home', crc), crc, 'home screen framebuffer changed (--update to accept)')
         self.assertNotIn('picker', ' '.join(lines[-3:]))
 
@@ -82,6 +90,28 @@ class Tiny(unittest.TestCase):
         _, _, inside, _, _ = boot(self.d, ['down', 'enter'], ms=1500)
         self.assertNotEqual(inside, home)
         self.assertEqual(fixture('files', inside), inside)
+
+    def test_home_lists_the_real_apps_and_launches_hello_and_comes_back(self):
+        rc, lines, crc, _, _ = boot(self.d, ms=1000)
+        self.assertIn('TINYOS ready, 3 programs, 2 apps', lines)
+        self.assertEqual(fixture('home', crc), crc, 'home screen framebuffer changed (--update to accept)')
+        rc, lines, back, _, _ = boot(self.d, ['down'] * 4 + ['enter', 'esc'], ms=3000)   # Files, ... Broken one, HELLO: Enter, then Esc inside HELLO
+        self.assertIn('hello OS ready', lines)
+        self.assertIn('exit HELLO to TINYOS, depth 0', lines)
+        self.assertEqual(len([l for l in lines if l == 'TINYOS ready, 3 programs, 2 apps']), 2, lines)   # home, then home again
+        until = lines.index('exit HELLO to TINYOS, depth 0')   # TINYOS gave back the panel and sound before it launched HELLO; the run's end cuts the second TINYOS off
+        self.assertEqual([l for l in lines[:until] if 'left ' in l and 'open' in l or 'Uncaught' in l], [], lines)
+        self.assertNotEqual(back, crc)    # HELLO is selected on the way back
+        self.assertEqual(fixture('home-back-from-hello', back), back)
+        self.assertEqual(lines.count('TINYOS audio underruns 0'), 1)   # the chime plays once, not again on the way back
+
+    def test_an_app_that_cannot_run_is_listed_with_its_reason(self):
+        _, lines, note, _, _ = boot(self.d, ['down'] * 3 + ['enter'], ms=1500)
+        self.assertNotIn('hello OS ready', lines)
+        self.assertFalse([l for l in lines if l.startswith('launch ')], lines)
+        self.assertEqual(fixture('home-broken-note', note), note)
+        _, _, home, _, _ = boot(self.d, ms=1000)
+        self.assertNotEqual(note, home)
 
     def test_setting_is_saved_and_read_back_after_a_restart(self):
         _, _, home, _, _ = boot(self.d, ms=1000)
@@ -102,7 +132,7 @@ class Tiny(unittest.TestCase):
         self.assertGreater(len(au), 0)
         self.assertTrue(any(b for b in au))
         rc, lines, _, _, au = boot(self.d, ms=1500, extra=['--no-audio'])   # no sound device: still boots
-        self.assertIn('TINYOS ready, 3 programs', lines)
+        self.assertIn('TINYOS ready, 3 programs, 2 apps', lines)
 
     def test_eink_clock_is_drawn_and_updates_slowly(self):
         _, lines, _, pages, _ = boot(self.d, ms=1000)
@@ -115,7 +145,7 @@ class Tiny(unittest.TestCase):
         self.assertNotEqual(pages[0], pages[-1])
         _, lines, _, pages, _ = boot(self.d, ms=1000, extra=['--no-eink'])
         self.assertEqual(pages, [])
-        self.assertIn('TINYOS ready, 3 programs', lines)
+        self.assertIn('TINYOS ready, 3 programs, 2 apps', lines)
 
     def test_quit_leaves_nothing_open(self):
         rc, lines, _, _, _ = boot(self.d, ['q'], ms=3000)
