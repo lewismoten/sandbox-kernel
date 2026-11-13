@@ -4,7 +4,7 @@
 #include <string.h>
 
 static const char *const cap_names[] = {"log", "time", "memory", "app.lifecycle", "fs.read", "fs.read.shared", "fs.write.saves",
-  "fs.write.cache", "display", "input", "audio", "eink", "serial", "power"};
+  "fs.write.cache", "display", "input", "audio", "eink", "serial", "power", "apps.launch"};
 #define NCAPS ((unsigned)(sizeof cap_names / sizeof cap_names[0]))
 const char *app_cap_name(unsigned i) {return i < NCAPS ? cap_names[i] : 0;}
 uint32_t app_cap_bit(const char *name) {

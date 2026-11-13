@@ -651,6 +651,107 @@ static JSValue js_start_error(JSContext *c, JSValueConst t, int n, JSValueConst 
   JS_SetPropertyUint32(c, arr, 0, JS_NewString(c, start_who)); JS_SetPropertyUint32(c, arr, 1, JS_NewString(c, start_why));
   return arr;
 }
+
+/* ---- apps.*: list, launch and exit between JS apps (gap G5). The kernel has no exec, so the runtime switches the app inside
+   JS.ELF: the current app is stopped (every handle released), the target started, and a small stack remembers who launched
+   whom. The state below outlives an app; jsapp_step moves it. ---- */
+#define LAUNCH_DEPTH 4u
+#define ARGS_MAX 200u
+#define LIST_MAX 32u
+enum {PEND_NONE, PEND_LAUNCH, PEND_EXIT};
+static struct {char id[9]; char args[ARGS_MAX + 1];} lstack[LAUNCH_DEPTH]; /* the apps waiting for their callee to exit */
+static unsigned ldepth;
+static int pending;                    /* what the running app asked for when it stopped */
+static char pend_id[9], pend_args[ARGS_MAX + 1], cur_args[ARGS_MAX + 1];
+static char ret_id[9]; static int ret_code, ret_set;              /* who returned to this app, and with what */
+static char fail_id[9], fail_why[96];                              /* a launch that did not start, told to the caller */
+static char autorun_dir[48];
+static JSValue js_apps_launch(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; char id[9]; 
+  if (need(c, APP_CAP_APPS_LAUNCH, "apps.launch")) return JS_EXCEPTION;
+  if (copy_str(c, a[0], id, sizeof id)) return JS_EXCEPTION;
+  if (!id[0]) return JS_ThrowRangeError(c, "apps.launch: empty app id");
+  for (const char *p = id; *p; p++)
+    if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return JS_ThrowRangeError(c, "apps.launch: not an app id (a folder name in /OS/APPS)");
+  if (ldepth >= LAUNCH_DEPTH) return JS_ThrowRangeError(c, "apps.launch: apps are launched %u deep already (apps.exit() first)", LAUNCH_DEPTH);
+  if (pending) return JS_UNDEFINED; /* one request: the first one wins until the app stops */
+  char text[ARGS_MAX + 1] = "";
+  if (n > 1 && !JS_IsUndefined(a[1]) && copy_str(c, a[1], text, sizeof text)) return JS_EXCEPTION;
+  snprintf(pend_id, sizeof pend_id, "%s", id); snprintf(pend_args, sizeof pend_args, "%s", text);
+  pending = PEND_LAUNCH; exit_code = 0; exited = 1;
+  return JS_UNDEFINED;
+}
+static JSValue js_apps_exit(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; int32_t code = 0;
+  if (need(c, APP_CAP_APPS_LAUNCH, "apps.exit")) return JS_EXCEPTION;
+  if (n && JS_ToInt32(c, &code, a[0])) return JS_EXCEPTION;
+  if (!pending) {pending = PEND_EXIT; exit_code = code; exited = 1;}
+  return JS_UNDEFINED;
+}
+/* One app's metadata for apps.list(): the same validator as the launch, no access to the app's files. */
+static JSValue app_info(JSContext *c, const char *id) {
+  char dir[48], path[64], err[96] = "", reason[96] = "";
+  snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", id);
+  JSValue o = JS_NewObject(c);
+  struct app_manifest m; int have = 0, ok = 1;
+  snprintf(path, sizeof path, "%s/APP.JSON", dir);
+  int32_t n = plat_read(path, io, APP_MANIFEST_MAX + 1);
+  if (n < 0) {
+    snprintf(path, sizeof path, "%s/MAIN.JS", dir);
+    if (plat_read(path, io, 1) < 0) {JS_FreeValue(c, o); return JS_UNDEFINED;} /* not an app folder */
+    if (jsrt_require_manifest) {ok = 0; snprintf(reason, sizeof reason, "APP.JSON is missing");}
+    memset(&m, 0, sizeof m); strcpy(m.version, "0"); strcpy(m.entry, "MAIN.JS"); m.caps = APP_CAP_ALL; m.api = 0;
+  } else if (app_manifest_parse((const char *)io, (uint32_t)n, &m, err, sizeof err)) {
+    ok = 0; snprintf(reason, sizeof reason, "%s", err);
+  } else {
+    have = 1;
+    if (m.api > APP_API_VERSION) {ok = 0; snprintf(reason, sizeof reason, "needs runtime API %u, this is %u", (unsigned)m.api, APP_API_VERSION);}
+  }
+  if (ok) {
+    snprintf(path, sizeof path, "%s/%s", dir, m.entry);
+    if (plat_read(path, io, 1) < 0) {ok = 0; snprintf(reason, sizeof reason, "%s is not in the app folder", m.entry);}
+  }
+  JS_SetPropertyStr(c, o, "id", JS_NewString(c, id));
+  JS_SetPropertyStr(c, o, "name", JS_NewString(c, have ? m.name : id));
+  JS_SetPropertyStr(c, o, "version", JS_NewString(c, m.version));
+  JS_SetPropertyStr(c, o, "api", JS_NewUint32(c, m.api));
+  JSValue arr = JS_NewArray(c); uint32_t k = 0;
+  if (have) for (unsigned i = 0; app_cap_name(i); i++) if (m.caps & (1u << i)) JS_SetPropertyUint32(c, arr, k++, JS_NewString(c, app_cap_name(i)));
+  JS_SetPropertyStr(c, o, "capabilities", arr);
+  JS_SetPropertyStr(c, o, "ok", JS_NewBool(c, ok));
+  JS_SetPropertyStr(c, o, "reason", JS_NewString(c, reason));
+  return o;
+}
+struct idlist {char id[LIST_MAX][9]; unsigned n;};
+static void collect_id(void *user, const char *name, uint32_t n, int dir, uint32_t size) {
+  (void)size; struct idlist *l = user; char id[9];
+  if (!dir || n < 1 || n > 8 || l->n >= LIST_MAX) return;
+  memcpy(id, name, n); id[n] = 0;
+  for (const char *p = id; *p; p++) if (!((*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) return;
+  strcpy(l->id[l->n++], id);
+}
+static JSValue js_apps_list(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; (void)a;
+  if (need(c, APP_CAP_APPS_LAUNCH, "apps.list")) return JS_EXCEPTION;
+  static struct idlist ids; ids.n = 0;
+  plat_list("/sd/OS/APPS", collect_id, &ids);
+  JSValue arr = JS_NewArray(c); uint32_t k = 0;
+  for (unsigned i = 0; i < ids.n; i++) {
+    JSValue o = app_info(c, ids.id[i]);
+    if (!JS_IsUndefined(o)) JS_SetPropertyUint32(c, arr, k++, o);
+  }
+  return arr;
+}
+/* What happened before this app started: its launch arguments (JSON text or ""), who returned to it and with what code, and a
+   launch of its own that did not start. */
+static JSValue js_launch_info(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; (void)a; JSValue o = JS_NewObject(c);
+  JS_SetPropertyStr(c, o, "args", JS_NewString(c, cur_args));
+  JS_SetPropertyStr(c, o, "depth", JS_NewUint32(c, ldepth));
+  if (ret_set) {JSValue r = JS_NewObject(c); JS_SetPropertyStr(c, r, "id", JS_NewString(c, ret_id)); JS_SetPropertyStr(c, r, "code", JS_NewInt32(c, ret_code)); JS_SetPropertyStr(c, o, "returned", r);}
+  if (fail_id[0]) {JSValue r = JS_NewObject(c); JS_SetPropertyStr(c, r, "id", JS_NewString(c, fail_id)); JS_SetPropertyStr(c, r, "reason", JS_NewString(c, fail_why)); JS_SetPropertyStr(c, o, "failed", r);}
+  return o;
+}
 static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("caps", 0, js_caps), JS_CFUNC_DEF("app", 0, js_app), JS_CFUNC_DEF("require", 1, js_require),
   JS_CFUNC_DEF("startError", 0, js_start_error),
@@ -662,6 +763,8 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("readdir", 1, js_readdir), JS_CFUNC_DEF("exit", 1, js_exit), JS_CFUNC_DEF("stats", 0, js_stats),
   JS_CFUNC_DEF("memory", 0, js_memory), JS_CFUNC_DEF("exiting", 0, js_exiting),
   JS_CFUNC_DEF("launch", 1, js_launch),
+  JS_CFUNC_DEF("appsList", 0, js_apps_list), JS_CFUNC_DEF("appsLaunch", 2, js_apps_launch), JS_CFUNC_DEF("appsExit", 1, js_apps_exit),
+  JS_CFUNC_DEF("launchInfo", 0, js_launch_info),
 };
 
 /* Focus changes fire blur and focus. */
@@ -764,7 +867,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   native = JS_UNDEFINED;
   exited = exit_code = want_frame = 0;
   wake_at_ms = 1e300;
-  in_picker = !dir; launch_dir[0] = 0;
+  in_picker = !dir; launch_dir[0] = 0; pending = PEND_NONE;
   game_el = 0; game_started = lowres_on = 0; game_dir[0] = 0;
   lowres = 1; game_w = GP_W; game_h = GP_H; font_scale = 1;
   if (PROF->init) PROF->init();
@@ -924,21 +1027,66 @@ int jsrt_stop(void) {
   plat_reset_input();
   return (int)leaks;
 }
+static int try_start(const char *dir, int fresh) { /* one start, no fallback; a failed start is stopped. fresh: forget why the last app did not start */
+  if (fresh) start_who[0] = start_why[0] = 0;
+  if (!jsrt_start(dir, app_heap_limit)) return 0;
+  jsrt_stop(); return -1;
+}
+static void launch_state_clear(void) {ldepth = 0; cur_args[0] = fail_id[0] = ret_id[0] = 0; ret_set = 0;}
 int jsapp_start(const char *dir, uint32_t heap_limit) {
   app_heap_limit = heap_limit;
-  start_who[0] = start_why[0] = 0;
-  if (!jsrt_start(dir, heap_limit)) return 0;
-  jsrt_stop();
-  if (dir && !jsrt_start(0, heap_limit)) return 0;
-  jsrt_stop(); return -1;
+  launch_state_clear();
+  if (!try_start(dir, 1)) return 0;
+  if (dir && !try_start(0, 0)) return 0;
+  return -1;
+}
+/* The app asked to launch or exit: moves the stack and starts the next app; a launch that fails goes back to the caller with
+   the reason, and a caller that will not start either falls to the picker. 0, or -1 when nothing would start. */
+static int app_switch(const char *from_id) {
+  char dir[64]; fail_id[0] = 0; ret_set = 0;
+  if (pending == PEND_LAUNCH) {
+    snprintf(lstack[ldepth].id, sizeof lstack[0].id, "%s", from_id); snprintf(lstack[ldepth].args, sizeof lstack[0].args, "%s", cur_args);
+    ldepth++;
+    snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", pend_id);
+    snprintf(cur_args, sizeof cur_args, "%s", pend_args);
+    sayf("JS launch %s from %s, depth %u", pend_id, from_id, ldepth);
+    if (!try_start(dir, 1)) return 0;
+    snprintf(fail_id, sizeof fail_id, "%s", pend_id); /* back to the caller, with the reason */
+    snprintf(fail_why, sizeof fail_why, "%s", start_why[0] ? start_why : "it did not start (see the log)");
+    sayf("JS launch of %s failed: %s", fail_id, fail_why);
+    ldepth--;
+    snprintf(cur_args, sizeof cur_args, "%s", lstack[ldepth].args);
+    snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
+    if (!try_start(dir, 1)) return 0;
+  } else if (ldepth) {
+    ldepth--; snprintf(ret_id, sizeof ret_id, "%s", from_id); ret_code = exit_code; ret_set = 1;
+    snprintf(cur_args, sizeof cur_args, "%s", lstack[ldepth].args);
+    snprintf(dir, sizeof dir, "/sd/OS/APPS/%s", lstack[ldepth].id);
+    sayf("JS exit %s to %s, depth %u", from_id, lstack[ldepth].id, ldepth);
+    if (!try_start(dir, 1)) return 0;
+  } else if (autorun_dir[0] && strcmp(app_id_of(autorun_dir), from_id)) { /* nobody launched it: the AUTORUN app, or the picker */
+    cur_args[0] = 0; ret_id[0] = 0;
+    snprintf(ret_id, sizeof ret_id, "%s", from_id); ret_code = exit_code; ret_set = 1;
+    sayf("JS exit %s to the AUTORUN app", from_id);
+    if (!try_start(autorun_dir, 1)) return 0;
+  }
+  launch_state_clear();
+  return try_start(0, 0);
 }
 uint64_t jsapp_step(void) {
   uint64_t wake = jsrt_step();
   if (wake) return wake;
   int picker = in_picker;
   char next[64]; snprintf(next, sizeof next, "%s", launch_dir);
+  char from[9]; snprintf(from, sizeof from, "%s", app_id);
+  int req = pending;
   if (!picker) sayf("JS app returned status %d", exit_code);
   jsrt_stop();
+  sayf("JS app stopped");
+  if (!picker && req != PEND_NONE) {
+    if (app_switch(from)) {exit_code = 5; return 0;}
+    return plat_clock_ns() + 1;
+  }
   if (picker && !next[0]) return 0; /* quit host through existing entry return */
   if (jsapp_start(next[0] ? next : 0, app_heap_limit)) {exit_code = 5; return 0;}
   return plat_clock_ns() + 1;
@@ -955,5 +1103,6 @@ int jsapp_autorun(uint32_t heap_limit) {
     jsrt_stop(); return -1;
   }
   sayf("JS autorun %s", dir[0] ? dir + 4 : "PICKER");
+  snprintf(autorun_dir, sizeof autorun_dir, "%s", dir);
   return jsapp_start(dir[0] ? dir : 0, heap_limit);
 }

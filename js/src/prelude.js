@@ -222,7 +222,14 @@
   {
     const a = N.app();
     const caps = Object.freeze(N.caps());
+    // Launch state (apps.launch capability, see below): what the app that launched this one passed, who returned here, and a launch that failed.
+    const li = N.launchInfo();
+    let launchArgs;
+    if (li.args) { try { launchArgs = JSON.parse(li.args); } catch (e) { launchArgs = undefined; } }
     g.sandbox = Object.freeze({
+      launchArgs: launchArgs === undefined ? undefined : Object.freeze(launchArgs),
+      returned: li.returned && Object.freeze(li.returned),
+      launchError: li.failed && Object.freeze(li.failed),
       version: Object.freeze({ api: a.api, runtime: a.runtime }),
       app: Object.freeze({ id: a.id, name: a.name, version: a.version, legacy: a.legacy }),
       capabilities: caps,
@@ -239,6 +246,25 @@
     });
     g.sleep = N.sleep;
     g.Math.random = N.random;
+    // Apps (capability apps.launch; gap G5): list() -> [{id, name, version, api, capabilities, ok, reason}] from /OS/APPS/*/APP.JSON (metadata
+    // only); launch(id, {args}) stops this app (handles released) and starts that one, args (JSON, up to 200 bytes) arrive as
+    // sandbox.launchArgs; exit(code) returns to the app that launched this one (sandbox.returned = {id, code} there), or to the AUTORUN app or
+    // the picker. A launch that does not start returns to the caller with sandbox.launchError = {id, reason} and its 'launcherror' event.
+    g.apps = Object.freeze({
+      list: N.appsList,
+      launch(id, opts) {
+        const args = opts && opts.args;
+        const text = args === undefined ? '' : JSON.stringify(args);
+        if (text !== undefined && text.length > 200) throw new RangeError('apps.launch: args are over 200 bytes of JSON');
+        N.appsLaunch(String(id), text);
+      },
+      exit: N.appsExit,
+      on(type, fn) {
+        if (type !== 'launcherror') throw new RangeError("apps.on: 'launcherror'");
+        if (typeof fn !== 'function') throw new TypeError('apps.on: a function');
+        if (li.failed) setTimeout(() => fn(li.failed), 0);
+      },
+    });
   }
   // Raw input (slice 4b): input.open() -> a queue with on('key' | 'attach' | 'detach' | 'reset', fn), off, pressed(code),
   // down, attached, close(). The document's keydown and keyup are separate and unchanged.

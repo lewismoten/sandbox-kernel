@@ -14,7 +14,7 @@ import json, pathlib, re, sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 CAPS = ["log", "time", "memory", "app.lifecycle", "fs.read", "fs.read.shared", "fs.write.saves", "fs.write.cache",
-        "display", "input", "audio", "eink", "serial", "power"]
+        "display", "input", "audio", "eink", "serial", "power", "apps.launch"]
 KEYS = {"schema", "name", "version", "entry", "api", "capabilities", "description"}
 MAX = 2048
 

@@ -41,7 +41,13 @@ void plat_sleep_until(uint64_t ns) {
   if (ns > now) {struct timespec t = {(time_t)((ns - now) / 1000000000ull), (long)((ns - now) % 1000000000ull)}; nanosleep(&t, 0);}
 }
 void plat_heartbeat(void) {}
-void plat_log(const char *s, uint32_t n) {printf("%.*s\n", (int)n, s); fflush(stdout);}
+static int blockstat; /* --blocks: after every app stop, "HOST blocks N open M" (live heap blocks and handles still open) */
+static long blocks(void);
+void plat_log(const char *s, uint32_t n) {
+  printf("%.*s\n", (int)n, s);
+  if (blockstat && n == 14 && !strncmp(s, "JS app stopped", 14)) printf("HOST blocks %ld open %u\n", blocks(), jsrt_handles_open());
+  fflush(stdout);
+}
 /* "/sd/A/B" to a path under root, each name matched without case. */
 static int resolve(const char *path, char *out, size_t cap) {
   if (strncmp(path, "/sd", 3) || (path[3] && path[3] != '/')) return -1;
@@ -392,6 +398,7 @@ int main(int argc, char **argv) {
     }
     else if (!strcmp(argv[i], "--old-power")) pw_old = 1;
     else if (!strcmp(argv[i], "--devstat")) devstat = 1;
+    else if (!strcmp(argv[i], "--blocks")) blockstat = 1;
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;

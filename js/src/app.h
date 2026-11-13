@@ -15,7 +15,8 @@ enum {
   APP_CAP_FS_WRITE_CACHE = 1u << 7, /* "fs.write.cache": the file /sd/OS/CACHE/<id> */
   APP_CAP_DISPLAY = 1u << 8, APP_CAP_INPUT = 1u << 9, APP_CAP_AUDIO = 1u << 10, APP_CAP_EINK = 1u << 11,
   APP_CAP_SERIAL = 1u << 12, APP_CAP_POWER = 1u << 13,
-  APP_CAP_ALL = (1u << 14) - 1u, APP_CAP_BASE = 0xfu
+  APP_CAP_APPS_LAUNCH = 1u << 14, /* "apps.launch": apps.list(), apps.launch(), apps.exit() */
+  APP_CAP_ALL = (1u << 15) - 1u, APP_CAP_BASE = 0xfu
 };
 struct app_manifest {
   char name[33], version[16], entry[13];
