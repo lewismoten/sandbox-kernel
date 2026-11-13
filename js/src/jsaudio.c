@@ -177,13 +177,23 @@ void jsaudio_pump(uint64_t now) {
   struct plat_audio_info q;
   if (plat_audio_query(&q)) return;
   uint64_t need = q.queued < a->target ? a->target - q.queued : 0;
-  if (need > JSAUDIO_PER_STEP) need = JSAUDIO_PER_STEP;
+  uint64_t budget = JSAUDIO_PER_STEP; /* kernel frames synthesized or asked of the app in this turn */
+  if (need > budget) need = budget;
   if (a->nt) {synth(a, (uint32_t)need); return;}
-  if (need < MIN_REFILL) return;
-  if (a->fed && !q.queued) a->gaps++; /* the ring ran dry before this look: the kernel counted an underrun */
-  a->refills++;
-  JSValue args[2] = {JS_NewUint32(actx, a->id), JS_NewUint32(actx, (uint32_t)(need / a->factor))};
-  JS_FreeValue(actx, jsrt_call_native("onAudio", 2, args));
+  /* Ask the app again and again while it keeps writing and the ring has room, within one turn's budget: a player that
+     writes small pieces still keeps up. An app that wrote nothing is asked again at the next look, not in a loop. */
+  for (unsigned calls = 0; calls < 16 && need >= MIN_REFILL; calls++) {
+    uint64_t before = a->fed;
+    if (a->fed && !q.queued) a->gaps++; /* the ring ran dry before this look: the kernel counted an underrun */
+    a->refills++;
+    JSValue args[2] = {JS_NewUint32(actx, a->id), JS_NewUint32(actx, (uint32_t)(need / a->factor))};
+    JS_FreeValue(actx, jsrt_call_native("onAudio", 2, args));
+    if (A != a || a->fed == before || plat_audio_query(&q)) break; /* closed in the callback, or nothing written */
+    uint64_t used = a->fed - before;
+    budget = used < budget ? budget - used : 0;
+    need = q.queued < a->target ? a->target - q.queued : 0;
+    if (need > budget) need = budget;
+  }
 }
 uint64_t jsaudio_wake(uint64_t now, uint64_t wake) {
   if (A && (A->nt || A->want)) {

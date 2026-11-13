@@ -14,11 +14,11 @@ REF = None
 FIX = json.loads((cases.JS / 'tests/fixtures.json').read_text())
 
 
-# Slice 3 added the `sandbox` global, fs.open and the manifest natives, and slice 4a the file classes (budget 8 KiB to 12 KiB), and slice 4b the display, time and input bindings (budget 24 KiB), so the two heap figures in the log lines
+# Slice 3 added the `sandbox` global, fs.open and the manifest natives, and slice 4a the file classes (budget 8 KiB to 12 KiB), and slice 4b the display, time and input bindings (budget 24 KiB), and slice 4c the audio prelude (budget 40 KiB; it measured 32.8 KiB), so the two heap figures in the log lines
 # ("heap N bytes in M blocks") are a little larger than the recorded ones. They are compared as "within a budget of
 # growth" instead of exactly; every other byte of the log lines, the framebuffer CRCs and the exit codes stay exact.
 HEAP = re.compile(r'(?:heap|memory) (\d+) bytes(?: in (\d+) blocks)?(?:, \d+ objects)?')
-HEAP_GROWTH_BYTES, HEAP_GROWTH_BLOCKS = 24576, 330
+HEAP_GROWTH_BYTES, HEAP_GROWTH_BLOCKS = 40960, 400
 
 
 def heaps(lines):
