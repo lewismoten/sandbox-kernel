@@ -1,0 +1,7 @@
+quickjs-ng v0.18.0 (MIT)
+Upstream: https://github.com/quickjs-ng/quickjs, tag v0.18.0, commit d7215b0ad3fc2c562e8317fd9bca058fd4863804
+Release tarball (https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.18.0.tar.gz) SHA-256:
+  28bcd89aa3683fd2a946537e5ce3f11cc46b5cbf3383c7561aaef3df5ff9f1dd
+Files: the engine sources only (quickjs, libregexp, libunicode, dtoa, their headers, LICENSE), unchanged
+from the tarball; SHA256SUMS lists each file's SHA-256 (check with `shasum -a 256 -c SHA256SUMS`).
+Verified 2026-11-13 against a fresh download: quickjs.c, quickjs.h, libregexp.c, libunicode.c, dtoa.c, cutils.h and LICENSE are byte-identical.
