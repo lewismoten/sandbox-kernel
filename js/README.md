@@ -25,7 +25,7 @@ These are defaults picked for Lewis on 2026-11-13; he can change them (the list 
 | 3 | Versioning, package manifest, capabilities, path policy, handle accounting, app teardown. |
 | 4a, 4b, 4c, 4d (done) | Files and storage; display, time and input; audio; e-ink, serial and power. |
 | 5 (done) | Execution limits and hardening: a 500 ms script slice, a 1.5 MiB heap, stack and nesting limits, an allocation-failure sweep, a 500-cycle soak and a validator fuzz pass ([docs/apps.md](docs/apps.md), Limits). |
-| 6 | Release and maker path: drift checks against the kernel ABI, prebuilt artifacts, a JS-only example OS another author can boot. |
+| 6 (done) | Release and maker path: drift checks against the kernel ABI, prebuilt artifacts, a JS-only example OS another author can boot. |
 | 7 | Optional adoption by gamemaker-os. |
 
 Design and estimates: the owner's research note `2026-11-10-js-layer-design.md` (kept with Lewis's research folder, not in this repository).
@@ -35,6 +35,7 @@ Design and estimates: the owner's research note `2026-11-10-js-layer-design.md` 
 ```sh
 make -C js           # build/JS.ELF (JS_PROFILE=file.c picks another profile) (stripped), build/JS.full.elf; needs the Arm GNU Toolchain
 make -C js host      # build/host/jsrun, the same runtime over stdio
+make -C js bundle    # build/js-bundle/: the card folder (OS/JS.ELF, AUTORUN, TINYOS, HELLO, CLOCK, NOTICES.TXT, README.TXT), checked with app_check.py --card; licenses in LICENSES/, changes in CHANGELOG.md
 make -C js test      # (slice 5 added limits_run, alloc_run on build/host/jsrun-fault, soak_run and fuzz_run) host cases against tests/fixtures.json (log lines and framebuffer CRC-32 match the gamemaker-os build; only the heap-size figures may grow, within a budget), the profile interface tests (hook order, key routes, 50 start/stop cycles with a flat heap), tests/app_run.py (manifests, capabilities, paths, handles, 50 app switches, AUTORUN), tests/files_run.py, tests/dev_run.py, tests/audio_run.py and tests/devices_run.py
 make -C js size      # ELF bytes and each PT_LOAD against the 1 MiB ceiling and the 8 MiB image quota
 make -C js repro     # two clean builds at different paths must match byte for byte
