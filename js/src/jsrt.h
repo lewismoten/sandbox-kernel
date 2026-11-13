@@ -8,7 +8,7 @@
 struct jsrt_stats {
   uint64_t start_ns;                  /* runtime and context made, prelude and app run */
   uint64_t js_ns, render_ns, present_ns; /* time in JS, in layout and paint, presenting (totals) */
-  uint32_t frames, presents;
+  uint32_t frames, presents, input_max; /* input_max: the most input events handled in one turn */
   uint32_t game_ticks, game_late_max_us, game_step_max_us;
   uint64_t game_play_ns;              /* time in the play phase (ticks are due only then) */
 };

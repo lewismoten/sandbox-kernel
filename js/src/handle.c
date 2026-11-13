@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT; see handle.h. */
 #include "handle.h"
 #include <stdio.h>
-static const char *const kind_names[JSRT_H_KINDS] = {"?", "file", "audio", "input", "serial", "eink", "timer", "game"};
+static const char *const kind_names[JSRT_H_KINDS] = {"?", "file", "audio", "input", "serial", "eink", "timer", "game", "display"};
 static struct {uint32_t id; int kind; void (*release)(void *); void *user;} table[JSRT_H_MAX];
 static unsigned open_count;
 static uint32_t generation; /* never reset: a stale id from an earlier app cannot match */

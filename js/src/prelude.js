@@ -228,7 +228,80 @@
       capabilities: caps,
       has: (name) => caps.includes(name),
       require: N.require,
+      // Time (slice 4b): now() is whole microseconds on the kernel's clock (exact); sleep(ms) is a promise the loop
+      // wakes in chunks of at most 100 ms; seed is the number Math.random started from, seedRandom(n) restarts it.
+      now: N.nowUs,
+      sleep: N.sleep,
+      get seed() {
+        return N.seed();
+      },
+      seedRandom: N.seedRandom,
     });
+    g.sleep = N.sleep;
+    g.Math.random = N.random;
+  }
+  // Raw input (slice 4b): input.open() -> a queue with on('key' | 'attach' | 'detach' | 'reset', fn), off, pressed(code),
+  // down, attached, close(). The document's keydown and keyup are separate and unchanged.
+  {
+    const queues = new Set();
+    g.input = {
+      open() {
+        const h = N.inputOpen();
+        const on = { key: new Set(), attach: new Set(), detach: new Set(), reset: new Set() };
+        const entry = { on };
+        let closed = false;
+        const q = {
+          on(type, fn) {
+            if (!on[type]) throw new TypeError("input.on: unknown event '" + type + "' (key, attach, detach, reset)");
+            if (typeof fn !== 'function') throw new TypeError('input.on: a function');
+            on[type].add(fn);
+            return q;
+          },
+          off(type, fn) {
+            if (on[type]) on[type].delete(fn);
+            return q;
+          },
+          pressed: (code) => N.keyDown(code),
+          get down() {
+            return N.keysDown();
+          },
+          get attached() {
+            return N.inputAttached();
+          },
+          get closed() {
+            return closed;
+          },
+          close() {
+            if (closed) return;
+            closed = true;
+            queues.delete(entry);
+            h.close();
+          },
+        };
+        queues.add(entry);
+        return q;
+      },
+      get attached() {
+        return N.inputAttached();
+      },
+    };
+    N.onRaw = (kind, a, b, c) => {
+      const type = ['key', 'attach', 'detach', 'reset'][kind];
+      const ev =
+        kind === 0
+          ? { type, code: a, value: b, repeat: b === 2, time: c }
+          : kind === 3
+            ? { type, reason: a, released: b, time: c }
+            : { type, time: a };
+      for (const e of [...queues])
+        for (const fn of [...e.on[type]]) {
+          try {
+            fn(ev);
+          } catch (err) {
+            report(err);
+          }
+        }
+    };
   }
   // The screen: setMode(width, height, depth 32|16) for the page; a playing
   // <game> uses 320x200 at 8 bpp unless screen.gameLowres(false), or a larger
@@ -236,6 +309,14 @@
   // (on a 1080p screen, exactly 5x with black bars).
   g.screen = {
     setMode: N.setMode,
+    // Slice 4b: modes() lists the kernel's modes (common sizes at 32, 16 and 8 bpp); supports(w, h, depth) is its rule;
+    // lease({width, height, depth}) hands the surface to the app (see docs/apps.md); leased says who has it.
+    modes: N.modes,
+    supports: N.modeOk,
+    lease: N.lease,
+    get leased() {
+      return N.leased();
+    },
     gameLowres: N.gameLowres,
     get width() {
       return N.screen().width;

@@ -10,6 +10,7 @@ static uint32_t *fb, generation;
 static uint64_t beat;
 static sbx_input_event ev[16];
 static uint32_t n, at;
+static uint64_t next_try, startup_mix;
 int plat_sbx_init(const sbx_startup *start);
 static void open_input(void) {
   sbx_input_state st;
@@ -19,6 +20,7 @@ static void open_input(void) {
 }
 int plat_sbx_init(const sbx_startup *start) {
   generation = start->generation;
+  startup_mix = start->generation * 0x9e3779b97f4a7c15ull ^ start->trial ^ (uint64_t)start->image_bytes << 20;
   if (sbx_open("/dev/log", 8, SBX_O_WRONLY, &log_fd)) return 3;
   plat_heartbeat();
   sbx_fb_mode mode;
@@ -28,6 +30,15 @@ int plat_sbx_init(const sbx_startup *start) {
   return 0;
 }
 uint64_t plat_clock_ns(void) {uint64_t t = 0; sbx_clock_ns(&t); return t;}
+/* The kernel offers no random source (contract gap G7): mix the clock at app start (the SD and USB timing before it varies a
+   little), the startup record, and the low bits of 64 back-to-back clock reads (timer jitter, a few bits at best). Not for secrets. */
+uint64_t plat_entropy(int *fixed) {
+  uint64_t h = startup_mix ^ plat_clock_ns() * 0xff51afd7ed558ccdull, prev = 0, t;
+  *fixed = 0;
+  for (int i = 0; i < 64; i++) {sbx_clock_ns(&t); h = (h ^ (t - prev) ^ t << 17) * 0xc4ceb9fe1a85ec53ull; h ^= h >> 31; prev = t;}
+  return h;
+}
+int plat_input_attached(void) {return have_input;}
 void plat_sleep_until(uint64_t ns) {sbx_sleep_until(ns);}
 void plat_heartbeat(void) {sbx_health(generation, ++beat);}
 void plat_log(const char *s, uint32_t bytes) {sbx_log(log_fd, s, bytes > 120 ? 120 : bytes);}
@@ -112,14 +123,24 @@ void plat_present(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {sbx_fb_presen
 int plat_event(uint16_t *type, uint16_t *code, int32_t *value) {
   if (at == n) {
     uint64_t got; at = n = 0;
-    if (!have_input) {open_input(); if (!have_input) return 0;}
+    if (!have_input) { /* try again at most every 100 ms: a reopen costs a system call */
+      uint64_t now = plat_clock_ns();
+      if (now < next_try) return 0;
+      next_try = now + 100000000ull;
+      open_input();
+      if (!have_input) return 0;
+      *type = PLAT_EV_ATTACH; *code = 0; *value = 0; return 1;
+    }
     int32_t s = sbx_read(in_fd, ev, sizeof ev, &got);
     if (s == -SBX_EAGAIN) return 0;
-    if (s) {sbx_close(in_fd); have_input = 0; return 0;}
+    if (s) {sbx_close(in_fd); have_input = 0; next_try = plat_clock_ns() + 100000000ull; *type = PLAT_EV_DETACH; *code = 0; *value = 0; return 1;}
     n = (uint32_t)(got / sizeof ev[0]);
     if (!n) return 0;
   }
   *type = ev[at].type; *code = ev[at].code; *value = ev[at].value; at++;
+  if (*type == SBX_EV_SYN && *code == SBX_SYN_DROPPED) { /* lost events: read the state (it empties the queue) and drop what we hold */
+    sbx_input_state st; sbx_input_state_get(in_fd, &st); at = n = 0;
+  }
   return 1;
 }
 void plat_reset_input(void) {

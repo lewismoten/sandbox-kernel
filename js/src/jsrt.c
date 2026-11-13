@@ -16,6 +16,7 @@
 #include "app.h"
 #include "handle.h"
 #include "jsfs.h"
+#include "jsdev.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
@@ -100,6 +101,7 @@ static void report(void) {
   else {const char *s = JS_ToCString(ctx, e); sayf("JS error: %s", s ? s : "?"); JS_FreeCString(ctx, s);}
   JS_FreeValue(ctx, f); JS_FreeValue(ctx, e);
 }
+JSValue jsrt_call_native(const char *name, int argc, JSValueConst *argv);
 static JSValue call_native(const char *name, int argc, JSValueConst *argv) {
   uint64_t t = plat_clock_ns();
   JSValue f = JS_GetPropertyStr(ctx, native, name), r = JS_UNDEFINED;
@@ -109,6 +111,10 @@ static JSValue call_native(const char *name, int argc, JSValueConst *argv) {
   return r;
 }
 
+JSValue jsrt_call_native(const char *name, int argc, JSValueConst *argv) {return call_native(name, argc, argv);}
+int jsrt_game_active(void) {return game_started || lowres_on;}
+void jsrt_page_mode(uint32_t *w, uint32_t *h, uint32_t *d) {*w = mode_w; *h = mode_h; *d = mode_d;}
+void jsrt_restore_page_mode(void) {set_mode(mode_w, mode_h, mode_d);}
 /* Files: "/sd/..." paths; the reader the play core and pictures use. */
 static uint8_t io[256 * 1024];
 static int ends(const char *s, const char *x) {size_t a = strlen(s), b = strlen(x); if (a < b) return 0; for (size_t i = 0; i < b; i++) if ((s[a - b + i] | 32) != x[i]) return 0; return 1;}
@@ -318,6 +324,7 @@ static JSValue js_play(JSContext *c, JSValueConst this, int argc, JSValueConst *
   if (e->tag != DOM_GAME || e != game_el || !game_dir[0]) return JS_ThrowTypeError(c, "play(): a <game> with a src");
   if (!PROF->play) return JS_ThrowTypeError(c, "play(): this build has no game profile");
   if (need(c, APP_CAP_DISPLAY, "game.play") || path_ok(c, game_dir, 0, "game.play")) return JS_EXCEPTION;
+  if (jsdev_leased()) return JS_ThrowPlainError(c, "EBUSY: the screen is leased; release() it before play()");
   char err[80] = ""; void *h = 0;
   if (PROF->play(game_dir, &h, err, sizeof err)) return JS_ThrowRangeError(c, "%s", err[0] ? err : "cannot play");
   if (lowres && !set_mode(game_w, game_h, 8)) {lowres_on = 1; memset(shown_pal, 0xff, sizeof shown_pal);}
@@ -565,6 +572,7 @@ static JSValue js_stats(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   JS_SetPropertyStr(c, o, "pixels", JS_NewUint32(c, dom_stats.pixels));
   JS_SetPropertyStr(c, o, "gameTicks", JS_NewUint32(c, jsrt_stats.game_ticks));
   JS_SetPropertyStr(c, o, "gamePlayMs", JS_NewFloat64(c, (double)jsrt_stats.game_play_ns / 1e6));
+  JS_SetPropertyStr(c, o, "inputMaxPerStep", JS_NewUint32(c, jsrt_stats.input_max));
   JS_SetPropertyStr(c, o, "gameLateMaxUs", JS_NewUint32(c, jsrt_stats.game_late_max_us));
   JS_SetPropertyStr(c, o, "gameStepMaxUs", JS_NewUint32(c, jsrt_stats.game_step_max_us));
   return o;
@@ -583,6 +591,7 @@ static JSValue js_set_mode(JSContext *c, JSValueConst t, int n, JSValueConst *a)
   if (need(c, APP_CAP_DISPLAY, "screen.setMode")) return JS_EXCEPTION;
   if (JS_ToInt32(c, &w, a[0]) || JS_ToInt32(c, &h, a[1]) || (n > 2 && JS_ToInt32(c, &d, a[2]))) return JS_EXCEPTION;
   if (d != 32 && d != 16) return JS_ThrowRangeError(c, "screen.setMode: depth 32 or 16 for pages (8 is the game's)");
+  if (jsdev_leased()) return JS_ThrowPlainError(c, "EBUSY: the screen is leased; release() it before setMode");
   if (lowres_on || set_mode((uint32_t)w, (uint32_t)h, (uint32_t)d)) return JS_ThrowRangeError(c, "screen.setMode(%d, %d, %d) refused", (int)w, (int)h, (int)d);
   sayf("JS screen %dx%dx%d in %u us", (int)w, (int)h, (int)d, (unsigned)switch_us);
   return JS_NewUint32(c, switch_us);
@@ -776,6 +785,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   native = JS_NewObject(ctx);
   JS_SetPropertyFunctionList(ctx, native, native_fns, (int)(sizeof native_fns / sizeof native_fns[0]));
   jsfs_init(rt, ctx, native);
+  jsdev_init(rt, ctx, native);
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
   struct jel *bj = jel_of(body);
   dom_delete(bj->e); bj->e = dom_body; dom_body->js = bj;
@@ -818,13 +828,22 @@ uint64_t jsrt_step(void) {
   uint16_t type, code; int32_t value;
   plat_heartbeat();
   if (exited) return 0;
-  while (!exited && plat_event(&type, &code, &value)) {
+  unsigned handled = 0, more = 0;
+  while (!exited) { /* at most JSDEV_EVENTS_PER_STEP events a turn, so a flood cannot starve timers and frames */
+    if (handled == JSDEV_EVENTS_PER_STEP) {more = 1; break;}
+    if (!plat_event(&type, &code, &value)) break;
+    handled++;
     /* F10 is owned by the host, before game routing or preventDefault(). */
     if (type == 1 && code == 68) {if (value == 1) {exited = 1; exit_code = 0;}}
-    else if (type == 1) key_event(code, value);
+    else {
+      if (jsdev_input(type, code, value)) for (int k; (k = jsdev_released_next()) >= 0;) key_event((uint16_t)k, 0); /* a reset lets go of held keys */
+      if (type == 1 && !exited) key_event(code, value);
+    }
   }
+  if (handled > jsrt_stats.input_max) jsrt_stats.input_max = handled;
   if (exited) return 0;
   uint64_t now = plat_clock_ns();
+  jsdev_sleeps_due(now);
   if (now_ms() >= wake_at_ms) {
     wake_at_ms = 1e300;
     JSValue a = JS_NewFloat64(ctx, now_ms());
@@ -860,7 +879,7 @@ uint64_t jsrt_step(void) {
   if (orphan_mode) {orphan_mode = 0; lowres_on = 0; set_mode(mode_w, mode_h, mode_d);}
   uint64_t t = plat_clock_ns();
   struct dom_rect rects[DOM_MAX_DIRTY];
-  uint32_t n = lowres_on ? 0 : dom_render(plat_fb(), rects);
+  uint32_t n = lowres_on || jsdev_leased() ? 0 : dom_render(plat_fb(), rects); /* a leased screen is the app's, not the page's */
   uint64_t t2 = plat_clock_ns();
   jsrt_stats.render_ns += t2 - t;
   for (uint32_t i = 0; i < n; i++) plat_present((uint32_t)rects[i].x, (uint32_t)rects[i].y, (uint32_t)rects[i].w, (uint32_t)rects[i].h);
@@ -868,7 +887,7 @@ uint64_t jsrt_step(void) {
   jsrt_stats.presents += n;
   if (exited) return 0;
   now = plat_clock_ns();
-  uint64_t wake = now + 10000000ull; /* look at input every 10 ms */
+  uint64_t wake = more ? now + 1 : jsdev_wake(now); /* input every 10 ms (100 ms with no device), or an earlier sleep; never past the chunk */
   if (want_frame && next_frame_ns < wake) wake = next_frame_ns;
   if (wake_at_ms < 1e300) {uint64_t w = t0_ns + (uint64_t)(wake_at_ms * 1e6); if (w < wake) wake = w;}
   if (game_started && PROF->wake) {uint64_t w = PROF->wake(now); if (w && w < wake) wake = w;}

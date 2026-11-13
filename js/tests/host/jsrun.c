@@ -25,13 +25,16 @@ static uint64_t vnow;
 static uint32_t fb[PLAT_SURFACE / 4];
 static uint32_t mode_w = PLAT_W, mode_h = PLAT_H, mode_d = 32;
 static uint8_t palette[768];
-static struct {uint64_t at; uint16_t code; int32_t value;} keys[256];
+static struct {uint64_t at; uint16_t type, code; int32_t value;} keys[256];
+static int host_attached = 1, have_seed, sleepstat;
+static uint64_t seed_value, max_sleep, sleeps;
 static int nkeys, next_key;
 static uint64_t start;
 
 static uint64_t real_ns(void) {struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;}
 uint64_t plat_clock_ns(void) {return vclock ? vnow : real_ns() - start;}
 void plat_sleep_until(uint64_t ns) {
+  if (sleepstat) {uint64_t was = plat_clock_ns(); if (ns > was && ns - was > max_sleep) max_sleep = ns - was; sleeps++;}
   if (vclock) {if (ns > vnow) vnow = ns; return;}
   uint64_t now = plat_clock_ns();
   if (ns > now) {struct timespec t = {(time_t)((ns - now) / 1000000000ull), (long)((ns - now) % 1000000000ull)}; nanosleep(&t, 0);}
@@ -166,7 +169,8 @@ int32_t plat_list_meta(const char *path, int short_names,
 }
 void *plat_fb(void) {return fb;}
 int plat_set_mode(uint32_t w, uint32_t h, uint32_t depth, uint32_t *us) {
-  if ((depth != 8 && depth != 16 && depth != 32) || w * h * (depth / 8) > PLAT_SURFACE || w % 4) return -1;
+  /* the kernel's rule: width 16 to 1920 and a multiple of 4, height 16 to 1200, at most 1,228,800 bytes */
+  if ((depth != 8 && depth != 16 && depth != 32) || w < 16 || w > 1920 || h < 16 || h > 1200 || w * h * (depth / 8) > PLAT_SURFACE || w % 4) return -1;
   mode_w = w; mode_h = h; mode_d = depth; memset(fb, 0, sizeof fb);
   if (us) *us = 0;
   return 0;
@@ -175,8 +179,16 @@ int plat_palette(const uint8_t *pal) {memcpy(palette, pal, 768); return 0;}
 void plat_present(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {(void)x; (void)y; (void)w; (void)h;}
 int plat_event(uint16_t *type, uint16_t *code, int32_t *value) {
   if (next_key >= nkeys || keys[next_key].at > plat_clock_ns()) return 0;
-  *type = 1; *code = keys[next_key].code; *value = keys[next_key].value; next_key++;
+  *type = keys[next_key].type; *code = keys[next_key].code; *value = keys[next_key].value; next_key++;
+  if (*type == PLAT_EV_ATTACH) host_attached = 1; else if (*type == PLAT_EV_DETACH) host_attached = 0;
   return 1;
+}
+int plat_input_attached(void) {return host_attached;}
+uint64_t plat_entropy(int *fixed) {
+  static uint64_t n;
+  *fixed = have_seed;
+  if (have_seed) return seed_value;
+  return real_ns() * 0x9e3779b97f4a7c15ull ^ (uint64_t)getpid() << 32 ^ ++n;
 }
 void plat_reset_input(void) {
   while (next_key < nkeys && keys[next_key].at <= plat_clock_ns()) next_key++;
@@ -196,6 +208,8 @@ int main(int argc, char **argv) {
   for (int i = 3; i < argc; i++) {
     if (!strcmp(argv[i], "--ms") && i + 1 < argc) ms = strtoull(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--vclock")) vclock = 1;
+    else if (!strcmp(argv[i], "--seed") && i + 1 < argc) {have_seed = 1; seed_value = strtoull(argv[++i], 0, 10);} /* Math.random starts from this, as a test */
+    else if (!strcmp(argv[i], "--sleepstat")) sleepstat = 1; /* at the end: HOST sleeps N max_us M (the longest single sleep the loop asked for) */
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;
@@ -207,10 +221,11 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--heap") && i + 1 < argc) heap = (uint32_t)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--keys") && i + 1 < argc)
       for (char *p = argv[++i]; *p && nkeys < 256;) {
-        unsigned long long at; unsigned code; int value, used;
+        unsigned long long at; unsigned code, type = 1; int value, used;
         if (sscanf(p, "%llu:%u:%d%n", &at, &code, &value, &used) != 3) {fprintf(stderr, "bad --keys\n"); return 2;}
-        keys[nkeys].at = at * 1000000ull; keys[nkeys].code = (uint16_t)code; keys[nkeys].value = value; nkeys++;
-        p += used; if (*p == ',') p++;
+        p += used; if (*p == ':' && sscanf(p, ":%u%n", &type, &used) == 1) p += used; /* ms:code:value[:type] (type 0 code 3 = SYN_DROPPED, 256 attach, 257 detach) */
+        keys[nkeys].at = at * 1000000ull; keys[nkeys].type = (uint16_t)type; keys[nkeys].code = (uint16_t)code; keys[nkeys].value = value; nkeys++;
+        if (*p == ',') p++;
       }
   }
   start = real_ns();
@@ -246,5 +261,6 @@ int main(int argc, char **argv) {
   }
   int status = jsrt_exit_code();
   jsrt_stop();
+  if (sleepstat) printf("HOST sleeps %llu max_us %llu\n", (unsigned long long)sleeps, (unsigned long long)(max_sleep / 1000u));
   return status;
 }

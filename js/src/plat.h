@@ -30,6 +30,13 @@ int plat_write_file(const char *path, const void *buf, uint32_t n);
 /* A folder with sizes and dates (ABI 1.5 call 20, or call 11's 8.3 names with short_names). Count, or a negative errno. */
 int32_t plat_list_meta(const char *path, int short_names,
                        void (*fn)(void *user, const char *name, uint32_t n, int dir, uint32_t size, uint32_t modified, uint32_t created), void *user);
+/* Input device events the platform adds to the kernel's (type, code): the device came back or went away. A kernel
+   SYN_DROPPED (type 0, code 3) comes through as it is, after the platform has read the state to empty the queue. */
+#define PLAT_EV_ATTACH 0x100u
+#define PLAT_EV_DETACH 0x101u
+int plat_input_attached(void);
+/* The best seed the machine has for Math.random: *fixed is set when it is a test's chosen seed (no live mixing). */
+uint64_t plat_entropy(int *fixed);
 void *plat_fb(void);                    /* the mode's pixels, rows of width x depth/8 bytes */
 /* Another mode (the kernel's ABI 1.2; the firmware scales it to HDMI): depth
    32 (XRGB8888), 16 (RGB565) or 8 (palette indices). 0, or -1. The time the

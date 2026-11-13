@@ -6,7 +6,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-enum {JSRT_H_FILE = 1, JSRT_H_AUDIO, JSRT_H_INPUT, JSRT_H_SERIAL, JSRT_H_EINK, JSRT_H_TIMER, JSRT_H_GAME, JSRT_H_KINDS};
+enum {JSRT_H_FILE = 1, JSRT_H_AUDIO, JSRT_H_INPUT, JSRT_H_SERIAL, JSRT_H_EINK, JSRT_H_TIMER, JSRT_H_GAME, JSRT_H_DISPLAY, JSRT_H_KINDS};
 #define JSRT_H_MAX 12u /* the kernel allows 16 open handles; the core and the card keep 4 */
 /* Opens an entry. release(user) runs exactly once, when the entry is closed or released at stop (may be NULL).
    Returns the id, or 0 when the table is full or the kind is bad. */
