@@ -128,7 +128,7 @@ class FatLog(InstallBase):
         a = data.find(b'CEC     TXT'); b = data.find(b'DICE    BIN'); self.assertGreater(a, 0); self.assertGreater(b, 0)
         self.patch(b + 20, data[a + 20:a + 22]); self.patch(b + 26, data[a + 26:a + 28])   # DICE.BIN now starts on the log's chain
         before = self.read('/GAMES/DICE/DICE.BIN'); self.c.fatlog_forget()
-        self.set(self.lines(20, b'zzz')); res = [self.c.fatlog_pump() for _ in range(5)]
+        self.set(self.lines(20, b'zzz')); res = [self.c.fatlog_pump() for _ in range(400)]
         self.assertTrue(any(r < 0 for r in res), res)
         self.assertEqual(self.read('/GAMES/DICE/DICE.BIN'), before)
 
@@ -151,3 +151,58 @@ class FatLog(InstallBase):
         self.set(self.lines(30, b'again')); self.drain()
         self.assertEqual(self.read(LOG).rstrip(b'\0'), self.lines(30, b'again'))
         with open(self.disk, 'rb') as f: self.assertEqual(f.read()[marker:marker + 8], b'line 899')   # the old later clusters were not written
+
+    def ops(self): return self.c.read_count() + self.c.write_count()
+
+    def test_every_pass_is_bounded_even_with_many_game_folders_and_a_set_per_pass(self):
+        """The 1.35 s stall: a whole-zone directory walk and a 24 KB zero-filled create in ONE pass, repeated after every set.
+        Now every pass is a bounded step (counted in card sector operations; a host test has no real clock)."""
+        for i in range(40): self.assertEqual(self.c.fatput(b'GAMES/G%02d/G%02d.BIN' % (i, i), b'x' * 700, 700), 0)
+        self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatsave_put(b'KERNEL', b'KEEP.TXT', b'x', 1), 0)   # folder creation is put_file's one-time job (it scans the FAT from cluster 2)
+        worst = 0; passes = 0
+        self.set(self.lines(900)[:24000])
+        for rnd in range(6):                           # creation, then appends that each call set again
+            for _ in range(3000):
+                a = self.ops(); r = self.c.fatlog_pump(); worst = max(worst, self.ops() - a); passes += 1
+                self.assertGreaterEqual(r, 0)
+                if r == 0: break
+            self.set(self.lines(900 + rnd * 3)[:24000])
+        self.assertLessEqual(worst, 12, 'card sector operations in the worst pass')
+        self.assertGreater(passes, 40)
+
+    def test_an_append_after_the_file_is_open_costs_no_directory_walk(self):
+        for i in range(40): self.assertEqual(self.c.fatput(b'GAMES/G%02d/G%02d.BIN' % (i, i), b'x' * 700, 700), 0)
+        base = self.lines(300); self.set(base); self.drain()
+        r0 = self.c.read_count(); self.set(base + b'more\n'); self.drain()
+        self.assertLessEqual(self.c.read_count() - r0, 8, 'one entry check and one read-back, no zone walk')
+
+    def test_never_writes_while_an_os_syscall_holds_the_card(self):
+        busy = C.c_uint32.in_dll(self.c, 'card_busy'); self.set(self.lines(100)); busy.value = 1
+        w, r0 = self.c.write_count(), self.c.read_count()
+        for _ in range(50): self.assertEqual(self.c.fatlog_pump(), 0)
+        self.assertEqual((self.c.write_count(), self.c.read_count()), (w, r0)); busy.value = 0
+        self.drain(); self.assertEqual(self.read(LOG).rstrip(b'\0'), self.lines(100))
+
+    def test_a_failed_write_anywhere_in_a_creation_leaves_no_orphan_and_the_log_still_arrives(self):
+        """One transient write failure at every write of a creation: the rollback frees whatever was linked, so fsck finds no
+        lost cluster chain right after the failure, and the next attempt still produces the whole log."""
+        self.c.fatsave_put.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatsave_put(b'KERNEL', b'KEEP.TXT', b'x', 1), 0)   # the folders exist (their creation is put_file's, not the log's)
+        baseline = self.work / 'creation-baseline.img'; sparse_copy(self.disk, baseline)
+        text = self.lines(900)[:24000]
+        self.set(text); start = self.c.write_count(); self.drain(); steps = self.c.write_count() - start
+        self.assertGreater(steps, 30)
+        for cut in range(steps):
+            with self.subTest(failed_write=cut):
+                self.c.close_disk(); sparse_copy(baseline, self.disk)
+                self.c.open_disk(os.fsencode(self.disk)); self.assertEqual(self.c.asset_mount(), 0)
+                self.c.fatlog_forget(); self.set(text); self.c.fail_write_once(cut)
+                errs = 0
+                for _ in range(3000):
+                    r = self.c.fatlog_pump(); errs += r < 0
+                    if not self.c.fatlog_pending(CEC): break
+                self.assertEqual(errs, 0, 'one transient failure is retried quietly (only the third in a row is reported)')
+                self.assertFalse(self.c.fatlog_pending(CEC), 'the retry finished')
+                self.assertEqual(self.read(LOG).rstrip(b'\0'), text)
+                r = fsck(self.disk, self.work); self.assertEqual(r.returncode, 0, (r.stdout + r.stderr)[-400:])

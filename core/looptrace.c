@@ -2,7 +2,7 @@
  * Original work (Claude Sonnet 5.5). See include/looptrace.h. */
 #include "looptrace.h"
 struct looptrace looptrace0;
-static const char *const names[LOOP_PHASES] = { "audio_null", "usb", "protocol", "card", "os", "cec", "hdmi_audio" };
+static const char *const names[LOOP_PHASES] = { "audio_null", "usb", "protocol", "card", "os", "cec", "hdmi_audio", "log_pump" };
 static unsigned put(char *o, unsigned n, unsigned cap, const char *s) { while (*s && n + 1 < cap) o[n++] = *s++; return n; }
 static unsigned dec(char *o, unsigned n, unsigned cap, uint32_t v) {
     char t[11]; unsigned k = 0;

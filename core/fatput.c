@@ -708,41 +708,101 @@ int fatfs_ls(const char *path,uint32_t from,char *out,uint32_t cap,uint32_t *nex
 }
 
 /* ---- bounded in-place logs (CEC.TXT, AUDIO.TXT) ----
- * A log is a fixed-size file in /OS/SAVES/KERNEL: created once (copy-on-write, zero filled) at its capacity, then only its
- * changed 512-byte sectors are rewritten in place, ONE per fatlog_pump() call (the main loop calls it once a pass), so a
- * save no longer holds the loop for a whole-file rewrite. The FAT and the directory are not touched after creation, so a
- * power cut can tear at most the sector being written (a few lines of the log), never the FAT or another file. The file
- * is plain text followed by NUL padding up to its capacity; readers strip the trailing NULs. fatlog_set only copies the
- * text into RAM (no card access); sectors whose content hash equals what was last written are skipped. */
-struct fatlog {uint8_t *buf; uint32_t cap,nsec,cur,base,lba[FATLOG_MAXSEC],hash[FATLOG_MAXSEC]; bool open,pending,valid,dead,known[FATLOG_MAXSEC]; unsigned fails,wait,create_fails;
- uint32_t first,second,dirlba,diroff; uint8_t nm[11];};
+ * A log is a fixed-size file in /OS/SAVES/KERNEL: created once at its capacity, then only its changed 512-byte sectors are
+ * rewritten in place. fatlog_pump() (once a main-loop pass) is a small state machine and every call does ONE bounded step:
+ * a single sector write (plus its read-back and the entry check), or one directory sector of the sharing check, or one
+ * FAT sector of the free-cluster scan, or one FAT link. Nothing walks the whole card in one call.
+ * Creation order leaves at worst a lost append: free clusters are chosen first (nothing written), the text goes into them
+ * while they are still free and unlinked, then the FAT chain is linked from the tail back, then the directory entry
+ * switches to it last, then the old chain is released. A failed link or entry write is rolled back (the new clusters are
+ * freed again) before anything else runs, so an error leaves the old file (or none) and no orphan; only a power cut inside
+ * the link/entry steps can leak the new clusters, as every FAT write here can. Never runs while an OS syscall or a
+ * protocol card operation is in flight. The file is plain text followed by NUL padding up to its capacity. */
+enum {L_RESOLVE,L_SHARE,L_OPEN,L_ALLOC,L_DATA,L_LINK,L_ENTRY,L_ROLLBACK,L_OSHARE,L_FREEOLD,L_FSINFO};
+struct fatlog {uint8_t *buf; uint32_t cap,nsec,cur,base,lba[FATLOG_MAXSEC],hash[FATLOG_MAXSEC],cch[FATLOG_MAXSEC],och[FATLOG_MAXSEC];
+ bool pending,valid,dead,known[FATLOG_MAXSEC]; uint8_t stage; unsigned fails,wait,create_fails;
+ uint32_t first,second,dirlba,diroff,cn,ac,ccount,linked,oldfirst,oldn,freed; struct {uint32_t lba,off;bool found,fresh;} slot; uint8_t nm[11];};
 static uint8_t lbuf0[FATLOG_CEC_CAP],lbuf1[FATLOG_AUDIO_CAP];
 static struct fatlog logs[FATLOG_SLOTS]={{.buf=lbuf0,.cap=FATLOG_CEC_CAP},{.buf=lbuf1,.cap=FATLOG_AUDIO_CAP}};
 static const char *const log_name[FATLOG_SLOTS]={"CEC.TXT","AUDIO.TXT"};
-static void log_forget(void) {for(unsigned i=0;i<FATLOG_SLOTS;i++) logs[i].open=logs[i].valid=false;}
+__attribute__((weak)) uint32_t card_busy;
+static void log_forget(void) {
+ for(unsigned i=0;i<FATLOG_SLOTS;i++) {struct fatlog *l=&logs[i];
+  if(l->stage==L_OPEN||l->stage==L_SHARE||l->stage<L_LINK) {l->stage=L_RESOLVE;l->valid=false;}
+  else if(l->stage==L_LINK||l->stage==L_ENTRY) l->stage=L_ROLLBACK; /* half-linked: free the new clusters first */
+ }
+}
 void fatlog_forget(void) {log_forget();}
 static unsigned log_turn; static uint32_t log_writes;
 uint32_t fatlog_writes(void) {return log_writes;}
 static uint32_t fnv(const uint8_t *p) {uint32_t h=2166136261u; for(unsigned i=0;i<512;i++) h=(h^p[i])*16777619u; return h;}
-static int log_resolve(struct fatlog *l,const char *name,bool *found) {
- uint8_t nm[11],dn[3][11],e[32]; struct slot hit,fr; int r; *found=false;
+/* The resumable sharing walk: is another live name in /GAMES, /POCKET or /OS (and /OS/APPS) on cluster `want`? One
+   directory sector per call (the same tree and rules as zone_dir, with an explicit stack instead of recursion). */
+static struct {uint32_t want,skip_lba,skip_off;unsigned top;int depth;bool found;struct {uint32_t c,i,o,hop;bool os_top;} f[MV_MAXC];} wk;
+static void wk_begin(uint32_t want,uint32_t skip_lba,uint32_t skip_off) {wk.want=want;wk.skip_lba=skip_lba;wk.skip_off=skip_off;wk.top=0;wk.depth=-1;wk.found=false;}
+static int wk_step(bool *done) {
+ static const char tops[3][12]={"GAMES      ","POCKET     ","OS         "}; int r; *done=false; fc_sec=~0u; heal=false;
+ if(!wk.want) {*done=true;return 0;}
+ if(wk.depth<0) {
+  if(wk.top>=3) {*done=true;return 0;}
+  struct slot h,f; uint8_t e[32]; unsigned t=wk.top++; if((r=scan(v.root,(const uint8_t *)tops[t],&h,&f,e))) return r;
+  if(h.found&&(e[11]&0x1e)==0x10&&cluster_ok(ecl(e))) {wk.depth=0;wk.f[0].c=ecl(e);wk.f[0].i=0;wk.f[0].o=0;wk.f[0].hop=0;wk.f[0].os_top=t==2;}
+  return 0;
+ }
+ __typeof__(wk.f[0]) *f=&wk.f[wk.depth];
+ if(!cluster_ok(f->c)) return fail("PUT DIR CLUSTER",5);
+ uint32_t lba=lba_of(f->c,f->i); if((r=rd(lba,s))) return r;
+ for(uint32_t o=f->o;o<512;o+=32) {
+  const uint8_t *e=s+o;
+  if(!e[0]) {wk.depth--;return 0;}
+  if(e[0]==0xe5||(e[11]&0x3f)==0x0f) continue;
+  uint32_t x=ecl(e);
+  if(e[0]!='.'&&!(e[11]&0x08)&&x&&x==wk.want&&!(lba==wk.skip_lba&&o==wk.skip_off)) {wk.found=true;*done=true;return 0;}
+  if(e[0]!='.'&&(e[11]&0x18)==0x10&&(unsigned)wk.depth+2<MV_MAXC&&cluster_ok(x)&&(!f->os_top||!memcmp(e,"APPS       ",11))) {
+   f->o=o+32; wk.depth++; wk.f[wk.depth].c=x;wk.f[wk.depth].i=0;wk.f[wk.depth].o=0;wk.f[wk.depth].hop=0;wk.f[wk.depth].os_top=false; return 0;
+  }
+ }
+ f->o=0;
+ if(++f->i>=v.spc) {
+  uint32_t n; f->i=0; if((r=fat_get(f->c,&n))) return r;
+  if(n>=0x0ffffff8u||++f->hop>65536/(v.spc*16)) wk.depth--; else f->c=n;
+ }
+ return 0;
+}
+/* Looks the log up (reads only, bounded). 1 = an exact file is ready for the sharing walk; 0 = a creation was prepared
+   (slot, old chain) or an empty entry/folders were made; <0 = error. */
+static int log_resolve(struct fatlog *l,const char *name,bool *good) {
+ uint8_t nm[11],dn[3][11],e[32]; struct slot hit,fr; int r; *good=false;
  if((r=fatput_name(name,nm))) return r;
  memcpy(dn[0],"OS         ",11); memcpy(dn[1],"SAVES      ",11); memcpy(dn[2],"KERNEL     ",11);
  if((r=asset_volume(&v))) return fail("PUT UNMOUNTED",19);
  taken=0; fc_sec=~0u; heal=false; /* a resolve never writes the FAT */
- uint32_t dir=v.root;
- for(unsigned i=0;i<3;i++) {if((r=scan(dir,dn[i],&hit,&fr,e))) return r; if(!hit.found||!(e[11]&0x10)) return 0; dir=ecl(e);}
+ uint32_t dir=v.root; bool dirs=true;
+ for(unsigned i=0;i<3&&dirs;i++) {if((r=scan(dir,dn[i],&hit,&fr,e))) return r; if(!hit.found||(e[11]&0x1f)!=0x10) dirs=false; else dir=ecl(e);}
+ if(!dirs) {if((r=put_file(name,0,0,true,"KERNEL"))) return r; return 0;} /* folders and an empty entry: bounded, no data */
  if((r=scan(dir,nm,&hit,&fr,e))) return r;
- if(!hit.found||(e[11]&0x1f)||u32(e+28)!=l->cap) return 0;
- uint32_t first=ecl(e),cn=0,cb=v.spc*512; if(walk(first,l->cap,old,sizeof old/4,&cn)) return 0; /* a bad chain is replaced */
- bool shared; if((r=shared_start(first,hit,&shared))) return r;
- if(shared) return fail("PUT SHARED",5); /* never write in place into a chain two names share */
- if(cn*cb<l->cap||cn*v.spc>FATLOG_MAXSEC+v.spc) return 0;
- l->nsec=l->cap/512; for(uint32_t i=0;i<l->nsec;i++) l->lba[i]=lba_of(old[i/v.spc],i%v.spc);
- l->base=v.base; l->first=first; l->second=cn>1?old[1]:0x0fffffffu; l->dirlba=hit.lba; l->diroff=hit.off; memcpy(l->nm,nm,11); *found=true; return 0;
+ memcpy(l->nm,nm,11); l->oldn=0; l->oldfirst=0;
+ if(hit.found) {
+  if(e[11]&0x1f) return fail("PUT NOT FILE",21);
+  uint32_t first=ecl(e),cn=0,cb=v.spc*512;
+  if(u32(e+28)==l->cap&&!walk(first,l->cap,old,sizeof old/4,&cn)&&cn*cb>=l->cap&&cn<=FATLOG_MAXSEC) {
+   l->nsec=l->cap/512; for(uint32_t i=0;i<l->nsec;i++) l->lba[i]=lba_of(old[i/v.spc],i%v.spc);
+   l->base=v.base; l->first=first; l->second=cn>1?old[1]:0x0fffffffu; l->dirlba=hit.lba; l->diroff=hit.off; *good=true; return 0;
+  }
+  if(u32(e+28)&&!walk(first,u32(e+28),old,sizeof old/4,&cn)&&cn<=FATLOG_MAXSEC) {memcpy(l->och,old,cn*4);l->oldn=cn;l->oldfirst=first;} /* an unvalidated chain is never freed */
+  l->slot.lba=hit.lba;l->slot.off=hit.off;l->slot.found=true;l->slot.fresh=false;
+ } else {
+  uint32_t files=0; if((r=count_entries(dir,&files))) return r;
+  if(files>=FATSAVE_MAX_FILES) return fail("SAVE FILES FULL",FATSAVE_EQUOTA);
+  if((r=scan(dir,nm,&hit,&fr,e))) return r;
+  if(!fr.found) {if((r=put_file(name,0,0,true,"KERNEL"))) return r; return 0;} /* the folder needs another cluster: grow it, and make the entry */
+  l->slot.lba=fr.lba;l->slot.off=fr.off;l->slot.found=true;l->slot.fresh=true;
+ }
+ l->base=v.base; l->cn=(l->cap+v.spc*512-1)/(v.spc*512); l->nsec=l->cap/512; l->ac=2; l->ccount=0; l->stage=L_ALLOC;
+ return 0;
 }
-/* The directory entry must still be what log_open saw (name, plain file, first cluster, size): another writer (USB RM, MV,
-   PUTF, an app's save) may have freed or replaced the chain, and its clusters may now belong to another file. */
+/* The directory entry must still be what log_resolve saw (name, plain file, first cluster, size): another writer may have
+   freed or replaced the chain, and its clusters may now belong to another file. */
 static bool log_entry_ok(const struct fatlog *l) {
  if(rd(l->dirlba,s)) return false;
  const uint8_t *e=s+l->diroff;
@@ -751,50 +811,128 @@ static bool log_entry_ok(const struct fatlog *l) {
  if(fat_get(l->first,&n)) return false;
  return (l->second==0x0fffffffu?n>=0x0ffffff8u:n==l->second);
 }
-static int log_open(unsigned id,bool keep) {
- struct fatlog *l=&logs[id]; bool found; uint32_t was_first=l->first; int r=log_resolve(l,log_name[id],&found); if(r) return r;
- if(!found) { /* a full card must not bring a whole-FAT scan back every few seconds: three failed creations and the log stops for this boot */
-  if((r=put_file(log_name[id],0,l->cap,true,"KERNEL"))||(r=log_resolve(l,log_name[id],&found))||(!found&&(r=fail("PUT LOG",5)))) {
-   if(++l->create_fails>=3) l->dead=true;
-   return r;
-  }
- }
- if(!(keep&&l->valid&&l->first==was_first)) {for(uint32_t i=0;i<l->nsec;i++) l->known[i]=false; l->cur=0;}
- l->valid=true; l->open=true; return 0;
-}
 int fatlog_set(unsigned id,const uint8_t *data,uint32_t bytes) {
  if(id>=FATLOG_SLOTS) return -22;
  struct fatlog *l=&logs[id]; if(bytes>l->cap) return -27;
  memcpy(l->buf,data,bytes); memset(l->buf+bytes,0,l->cap-bytes);
  if(l->dead) return 0;
- l->pending=true; l->fails=0; l->wait=0; l->open=false; /* the file is looked up again at the next pump; known sectors are kept only if it is the same file */
+ l->pending=true; l->fails=0; l->wait=0; /* the open file stays open: the entry is checked before every write */
  return 0;
 }
 bool fatlog_pending(unsigned id) {return id<FATLOG_SLOTS&&logs[id].pending;}
+static bool creating(const struct fatlog *l) {return l->stage>=L_ALLOC&&l->stage<=L_ROLLBACK;}
+/* Frees the clusters of the new chain that were linked (from index l->linked up); best effort. */
+static int log_rollback(struct fatlog *l) {
+ int r=0; fc_sec=~0u; heal=false;
+ while(l->linked<l->cn) {if((r=fat_set(l->cch[l->linked],0))) return r; l->linked++;}
+ return 0;
+}
+/* One sector of the buffer to the card (the next one whose hash differs from what was last written there).
+   Returns 1 written, 0 all done, <0 error. In a creation the clusters must still be free. */
+static int log_write_one(struct fatlog *l,bool fresh) {
+ for(uint32_t j=0;j<l->nsec;j++) {
+  uint32_t i=(l->cur+j)%l->nsec,h=fnv(l->buf+i*512);
+  if(l->known[i]&&l->hash[i]==h) continue;
+  if(fresh) {uint32_t x; fc_sec=~0u; heal=false; int r=fat_get(l->cch[i/v.spc],&x); if(r) return r; if(x) return fail("PUT TAKEN",5);}
+  uint8_t copy[512]; memcpy(copy,l->buf+i*512,512);
+  int r=wr(l->lba[i],copy,0); if(r) return r;
+  l->known[i]=true; l->hash[i]=h; l->cur=i+1; log_writes++; return 1;
+ }
+ return 0;
+}
+static int log_step(unsigned id,bool *wrote) {
+ struct fatlog *l=&logs[id]; int r=0; bool done; *wrote=false;
+ if(l->stage!=L_RESOLVE) {if((r=asset_volume(&v))) {l->stage=creating(l)&&l->stage>=L_LINK?L_ROLLBACK:L_RESOLVE;return r;} if(v.base!=l->base) {l->stage=L_RESOLVE;return -5;}}
+ switch(l->stage) {
+ case L_RESOLVE: {
+  for(unsigned k=0;k<FATLOG_SLOTS;k++) if(k!=id&&creating(&logs[k])) return 0; /* one creation at a time (the directory slot, the free clusters) */
+  bool good; if((r=log_resolve(l,log_name[id],&good))) return r;
+  if(good) {wk_begin(l->first,l->dirlba,l->diroff);l->stage=L_SHARE;}
+  return 0;
+ }
+ case L_SHARE:
+  if((r=wk_step(&done))) {l->stage=L_RESOLVE;return r;}
+  if(!done) return 0;
+  if(wk.found) {l->stage=L_RESOLVE;return fail("PUT SHARED",5);} /* never write in place into a chain two names share */
+  for(uint32_t i=0;i<l->nsec;i++) l->known[i]=false;
+  l->cur=0; l->valid=true; l->stage=L_OPEN; return 0;
+ case L_OPEN:
+  if(!log_entry_ok(l)) {l->stage=L_RESOLVE;l->valid=false;return 0;} /* changed under us: resolve again before any write */
+  r=log_write_one(l,false); if(r<0) return r;
+  if(r==0) {l->pending=false;return 0;}
+  *wrote=true; return 0;
+ case L_ALLOC: { /* one FAT sector's worth of clusters per call */
+  fc_sec=~0u; heal=false;
+  uint32_t end=(l->ac/128+1)*128; if(end>v.clusters+2) end=v.clusters+2;
+  for(uint32_t c=l->ac;c<end&&l->ccount<l->cn;c++) {
+   uint32_t x; if((r=fat_get(c,&x))) return r;
+   bool mine=false; for(unsigned k=0;k<FATLOG_SLOTS;k++) if(k!=id) for(uint32_t q=0;q<logs[k].ccount&&creating(&logs[k]);q++) mine|=logs[k].cch[q]==c;
+   if(!x&&!mine) l->cch[l->ccount++]=c;
+  }
+  l->ac=end; watchdog_feed();
+  if(l->ccount<l->cn) {if(l->ac>=v.clusters+2) {l->stage=L_RESOLVE;return fail("PUT FULL",28);} return 0;}
+  for(uint32_t i=0;i<l->nsec;i++) {l->lba[i]=lba_of(l->cch[i/v.spc],i%v.spc);l->known[i]=false;}
+  l->cur=0; l->stage=L_DATA; return 0;
+ }
+ case L_DATA:
+  r=log_write_one(l,true); if(r<0) {l->stage=L_RESOLVE;return r;}
+  if(r==1) {*wrote=true;return 0;}
+  l->linked=l->cn; l->stage=L_LINK; return 0;
+ case L_LINK: {
+  uint32_t k=l->linked-1; fc_sec=~0u; heal=false;
+  if((r=fat_set(l->cch[k],k+1<l->cn?l->cch[k+1]:0x0fffffffu))) {l->linked=k;l->stage=L_ROLLBACK;return r;} /* its first FAT copy may be written: free it too */
+  l->linked=k; if(!k) l->stage=L_ENTRY; return 0;
+ }
+ case L_ENTRY: {
+  if(rd(l->slot.lba,s)) {l->stage=L_ROLLBACK;return fail("PUT READ",5);}
+  const uint8_t *e=s+l->slot.off; bool ours=!memcmp(e,l->nm,11)&&!(e[11]&0x1f);
+  if(!(l->slot.fresh?(!e[0]||e[0]==0xe5):ours)) {l->stage=L_ROLLBACK;return fail("PUT SLOT",5);}
+  struct slot at={l->slot.lba,l->slot.off,true};
+  if((r=write_entry(at,l->nm,0x20,l->cch[0],l->cap))) {l->stage=L_ROLLBACK;return r;}
+  l->create_fails=0; l->first=l->cch[0]; l->second=l->cn>1?l->cch[1]:0x0fffffffu; l->dirlba=l->slot.lba; l->diroff=l->slot.off; l->valid=true;
+  l->freed=0; if(l->oldn) {wk_begin(l->oldfirst,0,0);l->stage=L_OSHARE;} else l->stage=L_FSINFO;
+  return 0;
+ }
+ case L_ROLLBACK:
+  if((r=log_rollback(l))) return r;
+  l->stage=L_RESOLVE; l->valid=false; return 0;
+ case L_OSHARE:
+  if((r=wk_step(&done))) {l->oldn=0;l->stage=L_FSINFO;return r;} /* cannot tell: leak the old chain rather than free a shared one */
+  if(!done) return 0;
+  if(wk.found) l->oldn=0;
+  l->stage=l->oldn?L_FREEOLD:L_FSINFO; return 0;
+ case L_FREEOLD:
+  fc_sec=~0u; heal=false;
+  if(l->freed<l->oldn) {if((r=fat_set(l->och[l->freed],0))) {l->stage=L_FSINFO;l->oldn=l->freed;return r;} l->freed++;}
+  if(l->freed>=l->oldn) l->stage=L_FSINFO; return 0;
+ case L_FSINFO: { /* the free-cluster hint: taken minus released; an unknown count stays unknown */
+  l->stage=L_OPEN;
+  if(rd(v.base,s)) return 0;
+  uint16_t fo=u16(s+48); if(!fo||fo==0xffff||fo>=v.fat-v.base) return 0;
+  uint32_t fsinfo=v.base+fo;
+  if(rd(fsinfo,s)||u32(s)!=0x41615252u||u32(s+484)!=0x61417272u) return 0;
+  uint32_t f=u32(s+488),nf=f-l->cn+l->oldn;
+  if(f<=v.clusters&&f>=l->cn&&nf<=v.clusters) {put32(s+488,nf);if((r=wr(fsinfo,s,fsinfo))) return r;}
+  else if(f!=~0u) {put32(s+488,~0u);if((r=wr(fsinfo,s,fsinfo))) return r;}
+  return 0;
+ }
+ }
+ return 0;
+}
 int fatlog_pump(void) {
+ if(card_busy) return 0; /* an OS syscall's card/FAT writes are in flight */
  for(unsigned k=0;k<FATLOG_SLOTS;k++) {
   unsigned id=(log_turn+k)%FATLOG_SLOTS; struct fatlog *l=&logs[id];
-  if(l->dead) l->pending=false;
-  if(!l->pending) continue;
+  if(l->dead&&!creating(l)&&l->stage!=L_ROLLBACK) l->pending=false;
+  if(!l->pending&&l->stage!=L_ROLLBACK&&l->stage<L_OSHARE) continue;
   if(l->wait) {l->wait--; continue;} /* after 3 failures: a pause, then try again */
   if(asset_cache_readers()) return 0; /* an app has a save open: try again next pass */
-  int r=0;
-  if(!l->open) r=log_open(id,true);
-  else if((r=asset_volume(&v))||v.base!=l->base) {l->open=false;r=r?r:-5;}
-  else if(!log_entry_ok(l)) {l->open=l->valid=false; r=log_open(id,false);} /* changed under us: resolve again before any write */
-  if(!r) {
-   for(uint32_t j=0;j<l->nsec;j++) {
-    uint32_t i=(l->cur+j)%l->nsec,h=fnv(l->buf+i*512);
-    if(l->known[i]&&l->hash[i]==h) continue;
-    uint8_t copy[512]; memcpy(copy,l->buf+i*512,512);
-    if((r=wr(l->lba[i],copy,0))) break;
-    l->known[i]=true; l->hash[i]=h; l->cur=i+1; log_writes++; log_turn=id+1;
-    return 1;
-   }
-   if(!r) {l->pending=false; continue;} /* every sector is on the card */
-  }
-  l->open=false; if(l->dead) {l->pending=false; return r;} /* creation given up for this boot: reported once */
-  if(++l->fails>=3) {l->fails=0;l->wait=FATLOG_RETRY_PASSES; return r;} /* log it once, keep the text, try again later */
+  bool wrote; unsigned was=l->stage; int r=log_step(id,&wrote);
+  if(wrote) {log_turn=id+1;return 1;}
+  if(r==0) {log_turn=id+1;if(l->stage!=L_OPEN||was!=L_OPEN) return 1; continue;} /* a step was taken (more to do) or nothing here */
+  if(was==L_ALLOC||was==L_DATA||(was==L_RESOLVE&&r==-(int)FATSAVE_EQUOTA)) {if(++l->create_fails>=3) l->dead=true;} /* a full card or folder must not bring a scan back every few seconds */
+  if(l->dead&&l->stage!=L_ROLLBACK) {l->pending=false;return r;} /* creation given up for this boot: reported once */
+  if(++l->fails>=3) {l->fails=0;l->wait=FATLOG_RETRY_PASSES;return r;} /* log it once, keep the text, try again later */
   return 0;
  }
  return 0;

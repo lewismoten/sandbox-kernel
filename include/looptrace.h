@@ -5,7 +5,7 @@
 #ifndef LOOPTRACE_H
 #define LOOPTRACE_H
 #include <stdint.h>
-#define LOOP_PHASES 7u
+#define LOOP_PHASES 8u
 struct looptrace { uint32_t passes, max_us[LOOP_PHASES]; };
 extern struct looptrace looptrace0;
 static inline void looptrace_note(unsigned phase, uint32_t us) {
