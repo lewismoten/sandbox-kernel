@@ -4,6 +4,7 @@
   "kernel_branch": "feature/rpi-keyboard-1113",
   "kernel_commit": "e67d02f",
   "abi": "1.12",
+  "abi_fingerprint": "0ced7f464b1531acac0059be68d8b58e8e21aebf9f24e827ea2fd1ca23120146",
   "date": "2026-11-13"
  },
  "defaults": {

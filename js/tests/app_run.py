@@ -219,7 +219,7 @@ class Capabilities(unittest.TestCase):
         for cap in ('log', 'time', 'memory', 'app.lifecycle'):
             self.assertIn('ALLOWED', t['require ' + cap], cap + ' is always granted')
         self.assertIn('unknown capability', t['require wifi'])
-        self.assertIn('["log","time","memory","app.lifecycle"] {"api":1,"runtime":"0.3.0"} false true', t['caps'])
+        self.assertIn('["log","time","memory","app.lifecycle"] {"api":1,"runtime":"%s"} false true' % (pathlib.Path(__file__).resolve().parents[1] / 'VERSION').read_text().strip(), t['caps'])
         self.assertIn('{"id":"DENY","name":"Test","version":"1.0.0","legacy":false}', t['app'])
         self.assertEqual(t['keys'], 'keys 0', 'no input capability: no key events')
 

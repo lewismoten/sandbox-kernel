@@ -18,6 +18,8 @@ STRIP := $(TOOLCHAIN)strip
 SIZE := $(TOOLCHAIN)size
 HOSTCC ?= cc
 PYTHON ?= python3
+# VERSION (js/VERSION) is baked into JS.ELF and jsrun as JSRT_VERSION: sandbox.version.runtime and the boot log line.
+JSVER := $(shell cat VERSION)
 BUILD ?= build
 JS_PROFILE ?= src/profile_core.c
 JS_PROFILE_FLAGS ?=
@@ -28,12 +30,12 @@ QJS := quickjs libregexp libunicode dtoa
 # -ffile-prefix-map and --build-id=none keep the bytes independent of the checkout path.
 ARMF := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -Os -ffunction-sections -fdata-sections -ffile-prefix-map=$(CURDIR)=.
 QJSFLAGS := $(ARMF) -D__DJGPP -DJS_HAVE_THREADS=0 -DNDEBUG -Wno-implicit-function-declaration -w
-JSFLAGS := $(ARMF) -std=gnu11 $(WARN) -Wno-main $(JS_PROFILE_FLAGS) -I$(SDK)/include -Isrc -isystem third_party/quickjs-ng
+JSFLAGS := -DJSRT_VERSION=\"$(JSVER)\" $(ARMF) -std=gnu11 $(WARN) -Wno-main $(JS_PROFILE_FLAGS) -I$(SDK)/include -Isrc -isystem third_party/quickjs-ng
 LFLAGS := -nostartfiles -T$(SDK)/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--gc-sections
 JSC := src/jsrt.c src/dom.c src/gif.c src/font_data.c src/app.c src/handle.c src/jsfs.c src/jsdev.c src/jsaudio.c src/jseink.c src/jsserial.c src/jspower.c
 JSBOARD := src/main.c src/plat_sbx.c src/sys.c
 HOSTDIR := $(BUILD)/host
-.PHONY: all host host-fault host-profiletest host-appcheck test size repro clean
+.PHONY: all host host-fault host-profiletest host-appcheck test size repro drift bundle clean
 all: $(BUILD)/JS.ELF
 $(BUILD) $(HOSTDIR) $(BUILD)/q:
 	mkdir -p $@
@@ -45,6 +47,8 @@ $(BUILD)/q/%.o: third_party/quickjs-ng/%.c $(wildcard third_party/quickjs-ng/*.h
 	$(CC) $(QJSFLAGS) -c $< -o $@
 # Objects are compiled one by one: a single compile-and-link command would put the driver's
 # random temporary object names into the symbol table and the bytes would differ per build.
+$(BUILD)/o/jsrt.o $(BUILD)/o/main.o: VERSION
+$(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-fault $(HOSTDIR)/jsrun-pt: VERSION
 BOBJ := $(BUILD)/o/crt0.o $(BUILD)/o/prelude.o $(BUILD)/o/picker.o $(BUILD)/o/profile.o $(patsubst src/%.c,$(BUILD)/o/%.o,$(JSBOARD) $(JSC))
 $(BUILD)/o:
 	mkdir -p $@
@@ -69,7 +73,7 @@ $(HOSTDIR)/js_picker.c: src/picker.js tools/embed_js.py | $(HOSTDIR)
 $(HOSTDIR)/q_%.o: third_party/quickjs-ng/%.c $(wildcard third_party/quickjs-ng/*.h) Makefile | $(HOSTDIR)
 	$(HOSTCC) -O1 -D_GNU_SOURCE -DNDEBUG -w -c $< -o $@
 HOSTSRC = tests/host/jsrun.c $(JSC) $(HOSTDIR)/js_prelude.c $(HOSTDIR)/js_picker.c $(QJS:%=$(HOSTDIR)/q_%.o)
-HOSTCF = -O1 -std=gnu11 $(WARN) -Isrc -isystem third_party/quickjs-ng
+HOSTCF = -DJSRT_VERSION=\"$(JSVER)\" -O1 -std=gnu11 $(WARN) -Isrc -isystem third_party/quickjs-ng
 $(HOSTDIR)/jsrun: $(HOSTSRC) $(JS_PROFILE) $(wildcard src/*.h) Makefile | $(HOSTDIR)
 	$(HOSTCC) $(HOSTCF) $(JS_PROFILE_FLAGS) $(HOSTSRC) $(JS_PROFILE) $(JS_PROFILE_LIBS) -lm -o $@
 # The runtime with every allocation counted and the N-th one failable (src/alloc.h, tests/host/faultalloc.c): tests/alloc_run.py.
@@ -84,7 +88,7 @@ $(HOSTDIR)/jsrun-pt: $(HOSTSRC) tests/host/profile_test.c $(wildcard src/*.h) Ma
 host-appcheck: $(HOSTDIR)/appcheck
 $(HOSTDIR)/appcheck: tests/host/appcheck.c src/app.c src/app.h Makefile | $(HOSTDIR)
 	$(HOSTCC) -O1 -std=gnu11 $(WARN) -Isrc tests/host/appcheck.c src/app.c -o $@
-test: host host-fault host-profiletest host-appcheck
+test: drift host host-fault host-profiletest host-appcheck
 	$(PYTHON) tests/run.py $(HOSTDIR)/jsrun
 	$(PYTHON) tests/profile_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt
 	$(PYTHON) tests/app_run.py $(HOSTDIR)/jsrun $(HOSTDIR)/jsrun-pt $(HOSTDIR)/appcheck
@@ -103,5 +107,12 @@ size: $(BUILD)/JS.ELF
 	$(PYTHON) tools/size_report.py $(BUILD)/JS.ELF
 repro:
 	$(PYTHON) tools/repro.py
+# The kernel's ABI minor, syscall table and ioctl list against contract.json (tools/contract.py drift).
+drift:
+	$(PYTHON) tools/contract.py check
+	$(PYTHON) tools/contract.py drift
+# build/js-bundle/: a card folder (copy its contents to the root of the SD card): tools/bundle.py.
+bundle: $(BUILD)/JS.ELF
+	$(PYTHON) tools/bundle.py $(BUILD) $(BUILD)/js-bundle
 clean:
 	rm -rf $(BUILD)

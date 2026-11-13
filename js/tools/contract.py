@@ -4,9 +4,13 @@
   contract.py check   validate js/contract.json and compare it with the kernel source:
                       every syscall number in core/sys.c sizes[] and every SBX_IOC in
                       sdk/include/sandbox/abi.h must have an entry, and the ABI minor must match.
+  contract.py drift   fail if the kernel's ABI minor, syscall table (number and argument size) or ioctl
+                      list no longer matches snapshot.abi_fingerprint in contract.json: review the
+                      entries and gaps for what changed, then run `contract.py stamp`.
+  contract.py stamp   write the current kernel fingerprint into contract.json (after that review).
   contract.py md      print the inventory tables (pasted into js/docs/contract.md).
 Run from anywhere; paths are found from this file. Exit 1 on any problem."""
-import json, re, sys, pathlib
+import hashlib, json, re, sys, pathlib
 root = pathlib.Path(__file__).resolve().parents[2]
 data = json.loads((root / "js/contract.json").read_text())
 STATUS = {"v1", "bound", "later", "not-exposed"}
@@ -45,6 +49,37 @@ def check():
     print(f"{len(data['entries'])} entries, {len(data['gaps'])} gaps, status {c}; {'FAIL' if bad else 'ok'}")
     return 1 if bad else 0
 
+def fingerprint():
+    """The kernel's ABI as this contract sees it: the minor, each syscall number with its size
+    entry from core/sys.c, and each SBX_IOC name with its value. Returns (digest, text)."""
+    sysc = (root / "core/sys.c").read_text()
+    m = re.search(r"sizes\[\d+\]=\{([^}]*)\}", sysc)
+    sizes = sorted((int(n), v.strip()) for n, v in re.findall(r"\[(\d+)\]=([^,}]+)", m.group(1)))
+    abi = (root / "sdk/include/sandbox/abi.h").read_text()
+    iocs = sorted((name, int(c) << 16 | int(o)) for name, c, o in re.findall(r"#define (SBX_IOC_\w+) SBX_IOC\((\d+), (\d+)\)", abi))
+    kabi = re.search(r"K_ABI_MINOR (\d+)u", (root / "include/abi.h").read_text()).group(1)
+    text = f"abi 1.{kabi}\n" + "".join(f"sys {n} {v}\n" for n, v in sizes) + "".join(f"ioctl {n} {v:#x}\n" for n, v in iocs)
+    return hashlib.sha256(text.encode()).hexdigest(), text
+
+def drift():
+    want = data["snapshot"].get("abi_fingerprint", "")
+    got, text = fingerprint()
+    if want == got:
+        print(f"no drift: kernel ABI fingerprint {got[:16]} matches contract.json"); return 0
+    print(f"FAIL drift: the kernel's ABI minor, syscall table or ioctl list changed (fingerprint {got[:16]}, contract.json has {want[:16] or 'none'}).")
+    print("Update contract.json for what changed (entries, gaps, snapshot.abi and kernel_commit), run contract.py check, then contract.py stamp.")
+    return 1
+
+def stamp():
+    got, _ = fingerprint()
+    p = root / "js/contract.json"
+    s = p.read_text()
+    if '"abi_fingerprint"' in s:
+        s = re.sub(r'"abi_fingerprint": "[0-9a-f]*"', f'"abi_fingerprint": "{got}"', s)
+    else:
+        s = s.replace('"abi": "%s",' % data["snapshot"]["abi"], '"abi": "%s",\n  "abi_fingerprint": "%s",' % (data["snapshot"]["abi"], got), 1)
+    p.write_text(s); print("stamped", got); return 0
+
 def md():
     def cell(s): return str(s).replace("|", "\\|")
     for kind, title in (("syscall","Syscalls"),("ioctl","Device requests (ioctl)"),("device","Devices and events"),("record","Records")):
@@ -62,4 +97,5 @@ def md():
         print("| " + " | ".join(cell(g[k]) for k in ("id","title","problem","owner","proposal","priority")) + " |")
 
 if __name__ == "__main__":
-    sys.exit(check() if sys.argv[1:] == ["check"] else (md() or 0) if sys.argv[1:] == ["md"] else print(__doc__) or 2)
+    cmds = {"check": check, "drift": drift, "stamp": stamp, "md": lambda: md() or 0}
+    sys.exit(cmds[sys.argv[1]]() if sys.argv[1:] and sys.argv[1] in cmds and len(sys.argv) == 2 else print(__doc__) or 2)

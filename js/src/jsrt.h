@@ -13,7 +13,9 @@
 #define JSRT_DOM_DEPTH 64u    /* elements nest at most this deep: layout, paint and teardown recurse on the 1 MiB stack */
 #define JSRT_EXIT_TIMEOUT 124 /* an app stopped for running too long, as timeout(1) says it */
 #define JSRT_EXIT_OOM 137     /* ... or for running out of memory */
-#define JSRT_VERSION "0.3.0" /* the runtime (slice 3); the API an app asks for is APP_API_VERSION in app.h */
+#ifndef JSRT_VERSION /* the release version: js/VERSION, passed by the Makefile (-DJSRT_VERSION); the API an app asks for is APP_API_VERSION in app.h */
+#define JSRT_VERSION "0.0.0-unversioned"
+#endif
 struct jsrt_stats {
   uint64_t start_ns;                  /* runtime and context made, prelude and app run */
   uint64_t js_ns, render_ns, present_ns; /* time in JS, in layout and paint, presenting (totals) */
