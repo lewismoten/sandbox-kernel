@@ -17,6 +17,19 @@ void plat_log(const char *s, uint32_t n);
 int32_t plat_read(const char *path, uint8_t *buf, uint32_t cap);
 /* Lists a folder: calls fn for each entry (dir = 1 for folders); count or -1. */
 int32_t plat_list(const char *path, void (*fn)(void *user, const char *name, uint32_t n, int dir, uint32_t size), void *user);
+/* Files with a real handle (slice 4a). Each returns 0, or a negative errno (the kernel's numbers: -2 ENOENT, -16 EBUSY,
+   -28 ENOSPC, -30 EROFS, -122 EDQUOT ...). plat_fread sets *got to 0 at the end of the file; plat_fseek takes an absolute
+   position within [0, size] (the kernel has no other whence and no stat: sizes come from plat_list_meta). */
+int plat_fopen(const char *path, uint64_t *fd);
+int plat_fread(uint64_t fd, void *buf, uint32_t n, uint32_t *got);
+int plat_fseek(uint64_t fd, uint32_t pos);
+void plat_fclose(uint64_t fd);
+/* The kernel's only write: open WRONLY|CREAT|TRUNC, write it all, fsync, close, on a canonical /sd/OS/CACHE/NAME or
+   /sd/OS/SAVES/GAME/NAME (uppercase 8.3). Nothing reaches the card unless this returns 0. */
+int plat_write_file(const char *path, const void *buf, uint32_t n);
+/* A folder with sizes and dates (ABI 1.5 call 20, or call 11's 8.3 names with short_names). Count, or a negative errno. */
+int32_t plat_list_meta(const char *path, int short_names,
+                       void (*fn)(void *user, const char *name, uint32_t n, int dir, uint32_t size, uint32_t modified, uint32_t created), void *user);
 void *plat_fb(void);                    /* the mode's pixels, rows of width x depth/8 bytes */
 /* Another mode (the kernel's ABI 1.2; the firmware scales it to HDMI): depth
    32 (XRGB8888), 16 (RGB565) or 8 (palette indices). 0, or -1. The time the

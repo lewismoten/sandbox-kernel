@@ -54,6 +54,45 @@ int32_t plat_list(const char *path, void (*fn)(void *, const char *, uint32_t, i
   sbx_close(fd);
   return count;
 }
+int plat_fopen(const char *path, uint64_t *fd) {return sbx_open(path, (uint32_t)strlen(path), SBX_O_RDONLY, fd);}
+int plat_fread(uint64_t fd, void *buf, uint32_t n, uint32_t *got) {
+  uint64_t d = 0; int32_t s = sbx_read(fd, buf, n > (1u << 20) ? 1u << 20 : n, &d);
+  *got = s ? 0 : (uint32_t)d; plat_heartbeat();
+  return s;
+}
+int plat_fseek(uint64_t fd, uint32_t pos) {uint64_t at; return sbx_seek(fd, (int64_t)pos, &at);}
+void plat_fclose(uint64_t fd) {sbx_close(fd);}
+int plat_write_file(const char *path, const void *buf, uint32_t n) {
+  uint64_t fd, done; int32_t s = sbx_open(path, (uint32_t)strlen(path), SBX_O_WRONLY | SBX_O_CREAT | SBX_O_TRUNC, &fd);
+  if (s) return s;
+  for (uint32_t at = 0; !s && at < n;) {
+    uint32_t chunk = n - at > 65536u ? 65536u : n - at;
+    s = sbx_write(fd, (const uint8_t *)buf + at, chunk, &done);
+    if (!s && !done) s = -SBX_EIO;
+    if (!s) at += (uint32_t)done;
+    plat_heartbeat();
+  }
+  if (!s) s = sbx_fsync(fd); /* the commit; a close without it discards the bytes */
+  sbx_close(fd);
+  plat_heartbeat();
+  return s;
+}
+int32_t plat_list_meta(const char *path, int short_names,
+                       void (*fn)(void *, const char *, uint32_t, int, uint32_t, uint32_t, uint32_t), void *user) {
+  static uint8_t dents[4096] __attribute__((aligned(8)));
+  uint64_t fd, got; int32_t count = 0, s = sbx_open(path, (uint32_t)strlen(path), SBX_O_RDONLY, &fd);
+  if (s) return s;
+  while (!(s = short_names ? sbx_getdents_meta(fd, dents, sizeof dents, &got) : sbx_getdents_long_meta(fd, dents, sizeof dents, &got)) && got) {
+    for (uint32_t offset = 0; offset < got;) {
+      const sbx_dirent_meta *e = (const sbx_dirent_meta *)(const void *)(dents + offset);
+      if (e->length < sizeof *e || e->length > got - offset) break;
+      fn(user, (const char *)(dents + offset + sizeof *e), e->name_bytes, e->type == SBX_DT_DIR, e->size, e->modified, e->created);
+      count++; offset += e->length;
+    }
+  }
+  sbx_close(fd);
+  return s ? s : count;
+}
 void *plat_fb(void) {return fb;}
 int plat_set_mode(uint32_t w, uint32_t h, uint32_t depth, uint32_t *us) {
   uint64_t t = plat_clock_ns();

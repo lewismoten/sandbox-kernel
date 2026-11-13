@@ -15,6 +15,7 @@
 #include "profile.h"
 #include "app.h"
 #include "handle.h"
+#include "jsfs.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
@@ -601,43 +602,14 @@ static JSValue js_lowres(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   game_w = (uint32_t)w; game_h = (uint32_t)h;
   return JS_UNDEFINED;
 }
-/* fs.open(path): a read-only FileHandle {size, text(), close()} holding the file's bytes. A placeholder for
-   slice 4a's binary readers; its job here is to be a real handle in the table (a path policy, a count, a leak report). */
-static JSClassID fh_class;
-struct fdata {uint8_t *buf; uint32_t n;};
-static void fdata_free(void *u) {struct fdata *f = u; free(f->buf); free(f);}
-static void fh_finalizer(JSRuntime *r, JSValueConst v) {(void)r; uintptr_t id = (uintptr_t)JS_GetOpaque(v, fh_class); if (id) jsrt_handle_close((uint32_t)id);}
-static struct fdata *fh_get(JSContext *c, JSValueConst v) {
-  uint32_t id = (uint32_t)(uintptr_t)JS_GetOpaque(v, fh_class);
-  struct fdata *f = id ? jsrt_handle_get(id, JSRT_H_FILE) : 0;
-  if (!f) JS_ThrowPlainError(c, "EBADF: the file handle is closed or stale");
-  return f;
+/* The file API (fs.open, fs.stat, writers) is jsfs.c; it asks for the checks through these. */
+int jsrt_need(JSContext *c, uint32_t any_cap, const char *what) {return need(c, any_cap, what);}
+int jsrt_path_check(const char *path, int write, const char **why) {
+  static const char *none; if (!why) why = &none;
+  return !restricted || !app_path_check(&policy, path, write, why) ? 0 : -1;
 }
-static JSValue fh_size(JSContext *c, JSValueConst this) {struct fdata *f = fh_get(c, this); return f ? JS_NewUint32(c, f->n) : JS_EXCEPTION;}
-static JSValue fh_text(JSContext *c, JSValueConst this, int n, JSValueConst *a) {(void)n; (void)a; struct fdata *f = fh_get(c, this); return f ? JS_NewStringLen(c, (const char *)f->buf, f->n) : JS_EXCEPTION;}
-static JSValue fh_close(JSContext *c, JSValueConst this, int n, JSValueConst *a) {
-  (void)n; (void)a;
-  uint32_t id = (uint32_t)(uintptr_t)JS_GetOpaque(this, fh_class);
-  if (!id || jsrt_handle_close(id)) return JS_ThrowPlainError(c, "EBADF: the file handle is closed or stale");
-  return JS_UNDEFINED;
-}
-static const JSCFunctionListEntry fh_proto[] = {JS_CGETSET_DEF("size", fh_size, 0), JS_CFUNC_DEF("text", 0, fh_text), JS_CFUNC_DEF("close", 0, fh_close)};
-static JSValue js_open(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
-  (void)t; (void)n; char path[96];
-  if (need(c, APP_CAP_ANY_READ, "fs.open") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.open")) return JS_EXCEPTION;
-  int32_t got = plat_read(path, io, sizeof io);
-  if (got < 0) return JS_ThrowReferenceError(c, "fs.open: no file %s", path);
-  struct fdata *f = calloc(1, sizeof *f);
-  if (f) {f->buf = malloc(got ? (size_t)got : 1); f->n = (uint32_t)got;}
-  if (!f || !f->buf) {if (f) free(f->buf); free(f); return JS_ThrowOutOfMemory(c);}
-  memcpy(f->buf, io, (size_t)got);
-  uint32_t id = jsrt_handle_open(JSRT_H_FILE, fdata_free, f);
-  if (!id) {fdata_free(f); return JS_ThrowRangeError(c, "fs.open: too many open handles (%u); close one first", JSRT_H_MAX);}
-  JSValue o = JS_NewObjectClass(c, (int)fh_class);
-  if (JS_IsException(o)) {jsrt_handle_close(id); return o;}
-  JS_SetOpaque(o, (void *)(uintptr_t)id);
-  return o;
-}
+int jsrt_copy_str(JSContext *c, JSValueConst v, char *out, size_t cap) {return copy_str(c, v, out, cap);}
+uint8_t *jsrt_io(size_t *size) {*size = sizeof io; return io;}
 /* sandbox.*: what this runtime and app are. */
 static JSValue js_caps(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; (void)a; JSValue arr = JS_NewArray(c); uint32_t k = 0;
@@ -667,7 +639,7 @@ static JSValue js_start_error(JSContext *c, JSValueConst t, int n, JSValueConst 
   return arr;
 }
 static const JSCFunctionListEntry native_fns[] = {
-  JS_CFUNC_DEF("open", 1, js_open), JS_CFUNC_DEF("caps", 0, js_caps), JS_CFUNC_DEF("app", 0, js_app), JS_CFUNC_DEF("require", 1, js_require),
+  JS_CFUNC_DEF("caps", 0, js_caps), JS_CFUNC_DEF("app", 0, js_app), JS_CFUNC_DEF("require", 1, js_require),
   JS_CFUNC_DEF("startError", 0, js_start_error),
   JS_CFUNC_DEF("setMode", 3, js_set_mode), JS_CFUNC_DEF("screen", 0, js_screen), JS_CFUNC_DEF("gameLowres", 3, js_lowres),
   JS_CFUNC_DEF("createElement", 1, js_create), JS_CFUNC_DEF("getElementById", 1, js_by_id),
@@ -798,12 +770,12 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   for (unsigned i = 0; i < NSTYLE; i++) style_proto[i] = (JSCFunctionListEntry)JS_CGETSET_MAGIC_DEF(style_names[i], style_get, style_set, (int16_t)i);
   new_class(&el_class, "Element", el_finalizer, el_mark, el_proto, (int)(sizeof el_proto / sizeof el_proto[0]));
   new_class(&style_class, "CSSStyleDeclaration", style_finalizer, style_mark, style_proto, (int)NSTYLE);
-  new_class(&fh_class, "FileHandle", fh_finalizer, 0, fh_proto, (int)(sizeof fh_proto / sizeof fh_proto[0]));
   new_class(&ctx2d_class, "CanvasRenderingContext2D", style_finalizer, ctx2d_mark, ctx2d_proto, (int)(sizeof ctx2d_proto / sizeof ctx2d_proto[0]));
   if (set_mode(PLAT_W, PLAT_H, 32)) {say("JS cannot restore page mode"); return -1;}
   dom_init(load_picture, PROF->draw);
   native = JS_NewObject(ctx);
   JS_SetPropertyFunctionList(ctx, native, native_fns, (int)(sizeof native_fns / sizeof native_fns[0]));
+  jsfs_init(rt, ctx, native);
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
   struct jel *bj = jel_of(body);
   dom_delete(bj->e); bj->e = dom_body; dom_body->js = bj;

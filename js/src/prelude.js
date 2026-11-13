@@ -189,7 +189,33 @@
   const log = (...a) => N.log(a.map(show).join(' '));
   g.console = { log, info: log, warn: log, error: log, debug: log };
   g.performance = { now: N.now };
-  g.fs = { readFile: N.readFile, readdir: N.readdir, open: N.open };
+  g.fs = {
+    readFile: N.readFile,
+    // readdir(path) is the names; readdir(path, { meta: true }) is [{ name, type: 'file' | 'dir', size, modified, created }]
+    // with long names. modified and created are the card's FAT date and time words, opaque fingerprints, not Unix times.
+    readdir: (path, opts) => (opts && opts.meta ? N.readdirMeta(path) : N.readdir(path)),
+    open: N.open,
+    stat: N.stat,
+    // readBytes(path) -> Uint8Array of the whole file (at most 1 MiB; read it in pieces with open() for more).
+    readBytes(path) {
+      const f = N.open(path);
+      try {
+        if (f.size > 1 << 20) throw new RangeError('EFBIG: ' + path + ' is over 1 MiB; read it in pieces with fs.open');
+        const out = new Uint8Array(f.size);
+        let at = 0;
+        while (at < out.length) { const n = f.readInto(out, at); if (!n) break; at += n; }
+        return at === out.length ? out : out.subarray(0, at);
+      } finally { f.close(); }
+    },
+    // createWriter(path) -> { write(data), commit(), abort(), close(), size, path }: stages in memory, writes the card at commit.
+    createWriter: N.createWriter,
+    // write(path, data): stage and commit in one call. Returns the bytes written.
+    write(path, data) {
+      const w = N.createWriter(path);
+      try { w.write(data); return w.commit(); } catch (e) { w.abort(); throw e; }
+    },
+    writeQuota: N.writeQuota,
+  };
   g.sys = { exit: N.exit, stats: N.stats, memory: N.memory, launch: N.launch, startError: N.startError };
   // sandbox: the runtime and the app. version.api is what a manifest's "api" is compared with; capabilities are the
   // app's granted names; require(name) throws an Error naming the capability when it is not granted.

@@ -6,12 +6,16 @@
  *   jsrun <sd folder> <app folder, e.g. /sd/OS/APPS/HELLO> [--ms N] [--vclock]
  *         [--keys ms:code:value,...] [--shot out.rgb] [--heap bytes] */
 #include <dirent.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
 #include "handle.h"
+#include "jsfs.h"
 #include "jsrt.h"
 #include "plat.h"
 
@@ -78,6 +82,88 @@ int32_t plat_list(const char *path, void (*fn)(void *, const char *, uint32_t, i
   closedir(d);
   return n;
 }
+/* ---- files with handles, and the kernel's write rules (docs/saves-storage.md, core/sys.c) as a host model ---- */
+static struct {FILE *f; int open, guarded; uint32_t size;} hf[16];
+static int disk_full; /* --disk-full: every commit fails with ENOSPC */
+static int guarded(const char *path) {return !strncasecmp(path, "/sd/OS/SAVES", 12) || !strncasecmp(path, "/sd/OS/CACHE", 12);}
+int plat_fopen(const char *path, uint64_t *fd) {
+  char real[1024]; struct stat st;
+  if (resolve(path, real, sizeof real) || stat(real, &st)) return -2;
+  for (unsigned i = 0; i < 16; i++) if (!hf[i].open) {
+    FILE *f = fopen(real, "rb"); if (!f) return -13;
+    hf[i].f = f; hf[i].open = 1; hf[i].guarded = guarded(path); hf[i].size = (uint32_t)st.st_size; *fd = i + 1;
+    return 0;
+  }
+  return -24;
+}
+int plat_fread(uint64_t fd, void *buf, uint32_t n, uint32_t *got) {
+  if (!fd || fd > 16 || !hf[fd - 1].open) return -9;
+  *got = (uint32_t)fread(buf, 1, n, hf[fd - 1].f); return 0;
+}
+int plat_fseek(uint64_t fd, uint32_t pos) {
+  if (!fd || fd > 16 || !hf[fd - 1].open) return -9;
+  return pos > hf[fd - 1].size || fseek(hf[fd - 1].f, (long)pos, SEEK_SET) ? -22 : 0;
+}
+void plat_fclose(uint64_t fd) {if (fd && fd <= 16 && hf[fd - 1].open) {fclose(hf[fd - 1].f); hf[fd - 1].open = 0;}}
+static int name_ok(const char *s, size_t n, int dot_ok) { /* fatput_name */
+  size_t base = 0, ext = 0; int dot = 0;
+  for (size_t i = 0; i < n; i++) {
+    char c = s[i];
+    if (c == '.') {if (!dot_ok || dot || !base) return 0; dot = 1; continue;}
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return 0;
+    if (dot ? ++ext > 3 : ++base > 8) return 0;
+  }
+  return base && (!dot || ext);
+}
+static int count_entries(const char *dir, int want_dirs) {
+  DIR *d = opendir(dir); struct dirent *de; int n = 0;
+  if (!d) return 0;
+  while ((de = readdir(d))) if (de->d_name[0] != '.' && (de->d_type == DT_DIR) == want_dirs) n++;
+  closedir(d); return n;
+}
+int plat_write_file(const char *path, const void *buf, uint32_t n) {
+  size_t len = strlen(path); const char *game = 0, *name; size_t glen = 0;
+  if (!strncmp(path, "/sd/OS/CACHE/", 13)) {name = path + 13; if (len < 14 || len > 25 || !name_ok(name, len - 13, 1)) return -22;}
+  else if (!strncmp(path, "/sd/OS/SAVES/", 13)) {
+    game = path + 13; const char *sl = strchr(game, '/');
+    if (!sl) return -22;
+    glen = (size_t)(sl - game); name = sl + 1;
+    if (!glen || glen > 8 || !*name || strlen(name) > 12 || !name_ok(game, glen, 0) || !name_ok(name, strlen(name), 1)) return -22;
+  } else return -30;
+  for (unsigned i = 0; i < 16; i++) if (hf[i].open && hf[i].guarded) return -16; /* a reader open in the save area blocks writes */
+  if (disk_full || n > JSFS_KERNEL_MAX) return -28;
+  char dir[1024], real[2200], os[1024];
+  snprintf(os, sizeof os, "%s/OS", root); mkdir(os, 0777);
+  snprintf(dir, sizeof dir, "%s/OS/%s", root, game ? "SAVES" : "CACHE"); mkdir(dir, 0777);
+  if (game) {
+    char gd[1100]; struct stat st;
+    snprintf(gd, sizeof gd, "%s/%.*s", dir, (int)glen, game);
+    if (stat(gd, &st)) {if (count_entries(dir, 1) >= 64) return -122; mkdir(gd, 0777);}
+    snprintf(real, sizeof real, "%s/%s", gd, name);
+    if (stat(real, &st) && count_entries(gd, 0) >= 32) return -122;
+  } else snprintf(real, sizeof real, "%s/%s", dir, name);
+  FILE *f = fopen(real, "wb"); if (!f) return -5;
+  int bad = n && fwrite(buf, 1, n, f) != n;
+  if (fclose(f) || bad) return -5;
+  return 0;
+}
+int32_t plat_list_meta(const char *path, int short_names,
+                       void (*fn)(void *, const char *, uint32_t, int, uint32_t, uint32_t, uint32_t), void *user) {
+  char real[1024];
+  if (resolve(path, real, sizeof real)) return -2;
+  DIR *d = opendir(real); struct dirent *de; int32_t n = 0;
+  if (!d) return -2;
+  while ((de = readdir(d))) {
+    if (de->d_name[0] == '.') continue;
+    char full[1400], up[256]; struct stat st; snprintf(full, sizeof full, "%s/%s", real, de->d_name);
+    if (stat(full, &st)) continue;
+    snprintf(up, sizeof up, "%s", de->d_name);
+    if (short_names) for (char *c = up; *c; c++) if (*c >= 'a' && *c <= 'z') *c = (char)(*c - 32);
+    fn(user, up, (uint32_t)strlen(up), S_ISDIR(st.st_mode), (uint32_t)st.st_size, 0x5a21u, 0x5a21u); n++;
+  }
+  closedir(d);
+  return n;
+}
 void *plat_fb(void) {return fb;}
 int plat_set_mode(uint32_t w, uint32_t h, uint32_t depth, uint32_t *us) {
   if ((depth != 8 && depth != 16 && depth != 32) || w * h * (depth / 8) > PLAT_SURFACE || w % 4) return -1;
@@ -113,6 +199,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;
+    else if (!strcmp(argv[i], "--write-quota") && i + 1 < argc) jsrt_write_quota = (uint32_t)strtoul(argv[++i], 0, 10);
+    else if (!strcmp(argv[i], "--disk-full")) disk_full = 1;
     else if (!strcmp(argv[i], "--alt") && i + 1 < argc) alt = argv[++i]; /* with --cycles: alternate between argv[2] and this app */
     else if (!strcmp(argv[i], "--cycles") && i + 1 < argc) cycles = (unsigned)strtoul(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
