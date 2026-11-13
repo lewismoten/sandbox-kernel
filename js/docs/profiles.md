@@ -79,6 +79,9 @@ in `JS_PROFILE_FLAGS`), or keep them in a profile file that `#include`s them. `G
 Keep your fixtures (a game-card case) in gamemaker-os; this repository's fixtures are the no-game path and must stay
 byte-identical.
 
-Things the interface does not do yet (slice 3 and later): hooks do not see a capability or path policy, they
-share the core's 256 KiB file buffer only through `plat_read`, and an element freed by the garbage collector while it
-plays is forgotten by the core without `end()` (as before; stop the element from `ended` handlers or `jsrt_stop`).
+Slice 3 changes, none of which a fixture sees: hooks read files with `jsrt_fs_read` / `jsrt_fs_list` (profile.h), which apply
+the running app's path policy (see [apps.md](apps.md)), instead of `plat_read`; a session a hook allocates can be a core
+handle (`jsrt_handle_open(JSRT_H_GAME, release, user)`, `handle.h`): `end()` closes it, and one left open at stop is released
+and reported by the core (the test profile does exactly that, and its `stop` logs `jsrt_handles_open()`); `play` is refused
+for a game folder the app may not read, and `picture` is not called for a source it may not read; an element freed while
+playing gets `end()` from its finalizer. `jsrt_stop` now returns the number of leaked handles.

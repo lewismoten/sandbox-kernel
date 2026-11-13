@@ -26,7 +26,7 @@
   const why = sys.startError(); // an app that did not start (or a bad AUTORUN line) says why
   if (why) {
     row('Could not start ' + why[0]);
-    row(why[1]);
+    row(why[1].length > 52 ? why[1].slice(0, 51) + '~' : why[1]); // the log has all of it
   }
   const slots = Array.from({length: 8}, () => row(''));
   function draw() {

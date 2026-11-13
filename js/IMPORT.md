@@ -36,3 +36,13 @@ With the core profile `<game>` is an inert element: created and sized, `play()` 
 has no game profile, `press()` and `stop()` do nothing, `game.ticks` reads 0 and the `sys.stats()` game counters stay 0.
 A game folder as an `<img src>` fails with the existing "cannot show" log line; `.gif` sources work (`gif.c`). HELLO's
 Games button and BENCH's last section report an empty card; fixtures use a card with no `/GAMES`.
+
+## Slice 3: apps, capabilities, handles
+
+New: `src/app.{h,c}` (manifest, capabilities, path policy, AUTORUN line), `src/handle.{h,c}` (handle table), `jsrun` flags
+`--autorun`, `--strict`, `--alt`, and `jsrt_stop` returning an int. `jsrt.c` gains `need()` / `path_ok()` checks on the existing
+natives, `fs.open`, `sandbox.*`, the manifest start and the leak report; `main.c` starts through `jsapp_autorun`;
+`picker.js` shows why an app did not start and lists a folder with an `APP.JSON` too. Differences a fixture could see: the two
+heap-size figures in log lines grow by under 8 KiB (the `sandbox` global and new natives), so `tests/run.py` compares them
+within that budget and everything else (log text, framebuffer CRCs, exit codes) exactly. `tests/fixtures.json` is unchanged.
+AUTORUN line 2 is now `APPS/NAME` or `PICKER` (it was any folder under `/OS`).

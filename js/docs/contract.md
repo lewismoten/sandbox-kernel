@@ -19,7 +19,7 @@ What the kernel offers a JavaScript runtime, and what the runtime will offer a J
 - **JS API**: the proposed shape. Names are provisional until slice 1; the shape (sync or not, what is thrown, what is returned) is the contract.
 - **Sync**: the kernel has no blocking calls except card access and `sleep_until`, so every kernel call is synchronous from the core's point of view. The JS layer is asynchronous only where a promise or event is the natural JS shape (timers, input events, audio refill); each such place says so.
 - **Errors**: the kernel returns 0 or a negative errno. The JS wrapper throws `SandboxError {code, errno, call, abi}`, with two exceptions: `EAGAIN` is not an error (reads return nothing, audio returns a short count), and `ENODEV` on an optional device means "feature absent" (`eink.available === false`).
-- **Capability**: what a manifest must grant. Slice 3 turns these into a validator. Names: `fs.read`, `fs.write.cache`, `fs.write.saves`, `display`, `input`, `audio`, `eink`, `serial`, `power`, `time`, `log`, `app.lifecycle`, `memory`.
+- **Capability**: what a manifest must grant. Slice 3 turns these into the manifest validator and the checks (see [apps.md](apps.md)). Names: `fs.read`, `fs.read.shared` (added in slice 3: card reads outside `/sd/OS`), `fs.write.cache`, `fs.write.saves`, `display`, `input`, `audio`, `eink`, `serial`, `power`, `time`, `log`, `app.lifecycle`, `memory`.
 - **Status**: `v1` (in the first release), `later` (useful, not needed yet), `not-exposed` (the core uses it, or it is reserved; the reason is in the cell).
 - **Test plan**: the host-model case that proves the binding. The kernel's host tests (`make test`) already cover the kernel side; these lines are the JS side.
 

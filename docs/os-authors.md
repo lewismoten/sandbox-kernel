@@ -953,6 +953,13 @@ measurements and reasoning are in [`js-spike.md`](js-spike.md).
 From JavaScript, files are read-only (`fs.readFile`, `fs.readdir`; writing files is listed
 as left out in `docs/js.md`).
 
+The runtime in this repository's [`js/`](../js/README.md) (Sandbox JS, in progress) adds an app manifest: put an
+`APP.JSON` in the app folder (`{"name": "My OS", "api": 1, "capabilities": ["display", "input", "fs.read"]}`), check it
+with `python3 js/tools/app_check.py <folder>`, and the runtime refuses a malformed or too-new manifest, denies calls for
+capabilities you did not ask for, keeps the app to its own folder and `/sd/OS/SAVES/<id>/`, and falls back to its built-in
+picker with the reason on screen when `AUTORUN.TXT` names an app that will not start. Line 2 there is `APPS/NAME` or
+`PICKER`. This is tested on the host (`make -C js test`), not yet on a board; see [`js/docs/apps.md`](../js/docs/apps.md).
+
 ## 8. Limits and gotchas
 
 - **The 8 MiB image quota is real.** GMOS hit it on 2026-11-09 and was rejected with
