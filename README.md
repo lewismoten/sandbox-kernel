@@ -54,7 +54,7 @@ framebuffer, read-only FAT32 assets and the first [SDK](sdk/README.md) headers. 
 The selector is `build/kernel.img`; send `build/runtime.ski` with the stdlib Mac
 tool in `scripts/usb_kernel.py`. M0 uses preallocated A/B files on FAT32.
 
-USB file commands (`python3 scripts/usb_kernel.py <port> <command>`): `put`, `putgame`, `putapp` install
+USB file commands (`python3 scripts/usb_kernel.py <port> <command>`): `put`, `putgame` (`--index FILE` also replaces /GAMES/LIBRARY.JSL), `putindex`, `putapp` install
 files; `ls [path]` lists a folder (macOS dot items such as `.Spotlight-V100` and `._*` are skipped);
 `mv <src> <dst>` moves or renames a file or folder; `rm <path>` deletes a file; `rmdir <path>` deletes an
 empty folder. Paths are real card paths in upper-case 8.3 (`GAMES/DICE/DICE.GAM`). Changes reach only

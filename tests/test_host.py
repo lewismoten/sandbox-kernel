@@ -118,6 +118,27 @@ class SenderTests(unittest.TestCase):
                 f=pathlib.Path(d)/'x';f.write_bytes(b'GMS')
                 self.assertEqual(usb_kernel.send_file(p,f,name),0,name)
                 self.assertTrue(p.sent[1].startswith(f'PUTF {name} 3 '.encode()))
+    def test_put_index_and_putgame_index(self):
+        info='INFO 2 test confirmed=1'
+        with tempfile.TemporaryDirectory() as d:
+            idx=pathlib.Path(d)/'anything.jsl';idx.write_bytes(b'{"t":1}\n')
+            p=FakePort([info,'READY 1024','VERIFY','OK file /GAMES/LIBRARY.JSL 8'])
+            self.assertEqual(usb_kernel.send_index(p,idx),0)
+            self.assertTrue(p.sent[1].startswith(b'PUTF GAMES/LIBRARY.JSL 8 '))
+            g=pathlib.Path(d)/'game';g.mkdir();(g/'dice.gam').write_bytes(b'GM!')
+            p=FakePort([info,'READY 1024','VERIFY','OK file /GAMES/DICE/DICE.GAM 3',info,'READY 1024','VERIFY','OK file /GAMES/LIBRARY.JSL 8'])
+            self.assertEqual(usb_kernel.send_folder(p,g,'DICE',index=idx),0)
+            cmds=[x for x in p.sent if x.startswith(b'PUTF')]
+            self.assertEqual([c.split()[1] for c in cmds],[b'GAMES/DICE/DICE.GAM',b'GAMES/LIBRARY.JSL'])
+            # no other /GAMES path is reachable through the index options
+            for bad in ('GAMES/OTHER.JSL','GAMES/LIBRARY.TXT','POCKET/LIBRARY.JSL','GAMES/../LIBRARY.JSL'):
+                with self.assertRaises(ValueError): usb_kernel.send_file(FakePort([]),idx,bad)
+    def test_put_index_refused_while_os_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            idx=pathlib.Path(d)/'x';idx.write_bytes(b'{}')
+            p=FakePort(['INFO 2 test confirmed=1','ERR not-ready'])
+            with self.assertRaises(Exception): usb_kernel.send_index(p,idx)
+            self.assertEqual(len(p.sent),2)
     def test_keys_press_and_release(self):
         p=FakePort(['INFO 2 test','OK key 108 down','OK key 108 up','OK key 28 down',TimeoutError()])
         self.assertEqual(usb_kernel.send_keys(p,['down','enter:down'],0,0),0)

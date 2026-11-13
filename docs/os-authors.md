@@ -756,6 +756,8 @@ and one serial reader at a time.
 | `tail` | print incoming wire lines, including `LOG`, `OS` and `OS~`, until you stop it |
 | `put FILE [--name NAME]` | install FILE as `/OS/<NAME>` (upper-case 8.3, 1 byte to 1 MiB, CRC and SHA-256 checked) |
 | `putgame FOLDER DIR` | install every file as `/GAMES/<DIR>/<NAME>` |
+| `putgame FOLDER DIR --index FILE` | the same, then replace `/GAMES/LIBRARY.JSL` (the library index) with FILE in one call; the folder is written first |
+| `putindex FILE` | replace `/GAMES/LIBRARY.JSL` with FILE (1 byte to 1 MiB); the only `/GAMES` file these options write. Refused with `ERR not-ready` while an OS runs, like `PUTF` |
 | `putapp FOLDER DIR` | install every file as `/OS/APPS/<DIR>/<NAME>` |
 | `run NAME [--seconds N]` | start `/OS/<NAME>` now and show the log; starts a fresh fault budget and cancels autostart |
 | `stop` | stop the OS program at a safe boundary; the recovery console stays |

@@ -178,10 +178,16 @@ def ls_any(port,path):
     try: return list_dir(port,fs_path(path,True))
     except OldLs: return list_card(port,path)
 
-def send_folder(port,folder,dir_name,root='GAMES'):
+def send_index(port,path):
+    """Replace /GAMES/LIBRARY.JSL (the game library index) with the file at path. This is the only
+    file directly in /GAMES this tool replaces; the kernel refuses it while an OS runs, like any PUTF."""
+    return send_file(port,path,'GAMES/LIBRARY.JSL')
+
+def send_folder(port,folder,dir_name,root='GAMES',index=None):
     """Install every file of a game folder as /GAMES/<DIR>/<NAME>, one PUTF each."""
     files=sorted(p for p in folder.iterdir() if p.is_file() and not p.name.startswith('.'))
     for p in files: send_file(port,p,f'{root}/{dir_name}/{p.name.upper()}')
+    if index is not None: send_index(port,index)
     return 0
 
 # Synthetic input (KEY/AXIS commands): Linux key codes by name.
@@ -563,7 +569,8 @@ def main():
     sub.add_parser('usblog',help='print /OS/SAVES/KERNEL/USB.TXT: what the keyboard (host) kernel found on the USB bus last boot')
     sub.add_parser('lastboot',help='the previous boot\'s decision and keyboards found, and this boot\'s')
     sub.add_parser('stop',help='stop the OS program at a safe kernel boundary; keep recovery console')
-    p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
+    p=sub.add_parser('putgame',help='install a game folder as /GAMES/<DIR>/; --index FILE then replaces /GAMES/LIBRARY.JSL with FILE');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir');p.add_argument('--index',type=pathlib.Path,help='library index (LIBRARY.JSL) to install after the folder, in the same call')
+    p=sub.add_parser('putindex',help='replace /GAMES/LIBRARY.JSL (the game library index) with FILE; nothing else in /GAMES');p.add_argument('file',type=pathlib.Path)
     p=sub.add_parser('putapp',help='install an app folder as /OS/APPS/<DIR>/');p.add_argument('folder',type=pathlib.Path);p.add_argument('dir')
     p=sub.add_parser('mv',help='MV <src> <dst>: move or rename a file or folder on the card (GAMES/, POCKET/, OS/APPS/, plain files in OS/)');p.add_argument('src');p.add_argument('dst')
     p=sub.add_parser('rm',help='RM <path>: delete one file');p.add_argument('path')
@@ -596,7 +603,8 @@ def main():
                 f=pathlib.Path(d)/'NAME.TXT';f.write_text(n+'\n');return send_file(port,f,'NAME.TXT')
         if a.action=='stop': return stop_program(port)
         if a.action=='ceclog': return cec_log(port,a.seconds)
-        if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper())
+        if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper(),index=a.index)
+        if a.action=='putindex': return send_index(port,a.file)
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')
         if a.action=='mv': return fs_command(port,f'MV {fs_path(a.src)} {fs_path(a.dst)}')
         if a.action=='rm': return fs_command(port,f'RM {fs_path(a.path)}')
