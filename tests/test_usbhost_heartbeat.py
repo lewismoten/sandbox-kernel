@@ -36,6 +36,7 @@ class USBHeartbeat(test_m1_user.Work):
 #include "clock.h"
 #include "os.h"
 #include "usblog.h"
+#include "usbhost_work.h"
 static bool initialized=true;
 static uint32_t delay;
 static bool stalled_register;
@@ -58,8 +59,9 @@ static void tuh_task_ext(uint32_t timeout,bool isr) {
  } else advance(delay);
 }
 static void watchdog(void) {usb_wait_report();}
-static void usbhost_stats_pass(uint32_t us) {(void)us;}
-static void usbhost_stats_task(void) {}
+void usbhost_stats_pass(uint32_t us) {(void)us;}
+void usbhost_stats_task(void) {}
+uint32_t usbhost_stats_irq_count(void) {return 0;}
 static void lg(const char *s) {usblog_add(s);}
 ''' + task)
         link = ['-Wl,-Bsymbolic'] if sys.platform.startswith('linux') else []

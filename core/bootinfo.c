@@ -8,11 +8,18 @@ const char *bootinfo_decision_name(enum boot_decision d) {
  switch(d) {case BD_LINK:return "link";case BD_NO_ADAPTER:return "no-adapter";case BD_INSTALL_KBD:return "install-kbd";case BD_KEYBOARD:return "keyboard";default:return "none";}
 }
 static unsigned put(char *o,unsigned at,const char *s) {while(*s&&at<BOOTINFO_REC_MAX-1)o[at++]=*s++;return at;}
+static bool reset_set;static uint32_t reset_rsts;
+const char *bootinfo_reset_name(uint32_t r) {return r&0x1000u?"power-on":r&0x70u?"watchdog":r&0x700u?"software":"unknown";}
+void bootinfo_set_reset(uint32_t r) {reset_set=true;reset_rsts=r;}
 unsigned bootinfo_format(char *out,uint32_t n,enum boot_decision d,unsigned keyboards) {
  char dig[12];unsigned k=0,at=0;
  out[at++]='n';do {dig[k++]=(char)('0'+n%10);n/=10;} while(n&&k<11);while(k)out[at++]=dig[--k];
  out[at++]=',';at=put(out,at,bootinfo_decision_name(d));
  out[at++]=',';out[at++]='k';if(keyboards>9)keyboards=9;out[at++]=(char)('0'+keyboards);
+ if(reset_set) {
+  out[at++]=',';out[at++]='r';at=put(out,at,bootinfo_reset_name(reset_rsts));out[at++]=':';
+  char hx[8];unsigned q=0;uint32_t v=reset_rsts&0xFFFFu;do {hx[q++]="0123456789abcdef"[v&15u];v>>=4;} while(v);while(q)out[at++]=hx[--q];
+ }
  out[at]=0;return at;
 }
 bool bootinfo_parse_count(const char *t,uint32_t bytes,uint32_t *n) {

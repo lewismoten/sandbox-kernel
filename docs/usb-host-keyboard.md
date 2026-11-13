@@ -152,7 +152,7 @@ now accumulates unsigned microsecond deltas so its retry deadlines survive this 
 ## Host implementation
 
 The build uses the pinned MIT-licensed TinyUSB DWC2 host backend; no Linux or
-FreeBSD USB code is copied. One hub and downstream keyboards are supported; live role switching remains future
+FreeBSD USB code is copied. Hubs (up to three, one behind another) and downstream keyboards are supported; live role switching remains future
 work. The default device build never initializes host USB itself: only the
 verified companion starts that stack.
 
@@ -176,7 +176,7 @@ verified companion starts that stack.
 Build: `make USB_ROLE=host all`. The default `USB_ROLE=device` is the Mac link.
 A role change relinks everything through `build/usb_role.stamp`. Each runtime
 has one fixed USB role; the automatic boot decision selects between images.
-There is no CDC link in a host image. It has one hub (`CFG_TUH_HUB 1`, up to four devices behind it) and takes up to
+There is no CDC link in a host image. It has up to three hubs (`CFG_TUH_HUB 3`, so a keyboard with its own hub works behind an outer hub; up to four devices behind them) and takes up to
 `USBKBD_MAX` (4) boot keyboards at once on any device; a receiver's mouse and consumer interfaces are skipped.
 
 ## Boot record, name and the e-ink
@@ -513,3 +513,17 @@ collection. The records are fetched sequentially, not as one atomic snapshot.
 Both commands use GET's chunk CRC checks and require the device-role CDC link;
 they do not stop the OS. Host tests in `tests/test_fault_cli.py` cover sample
 records, missing files, corrupt transfers and a fake addr2line executable.
+
+## Hub behind a hub, idle cost, reset reason (2026-11-13)
+
+- The official Raspberry Pi keyboard is a hub plus a keyboard. With one hub address (`CFG_TUH_HUB 1`) its hub could not
+  enumerate, so no keys. `CFG_TUH_HUB 3` fixes that (`tests/usbhost_hotplug.c` section 5: hub, hub, two-interface keyboard,
+  pulled and replugged 50 times).
+- Split transactions name the nearest high-speed hub above a device and the port that leads to it, not the parent hub
+  (`hcd_edpt_open`). A device with no high-speed hub above it is refused with a `USB skipped:` line.
+- A hub with no ports is skipped with a log line; port status polling waits for the hub's power-on-to-power-good time.
+- The host task runs at most every 500 us when no interrupt arrived since the last pass (`USBHOST_IDLE_PASS_US`), and the
+  interrupt endpoint scan reads the timer only for an endpoint that is waiting. Modeled cost of a hub and two idle
+  keyboards: 38 percent of a second before, 7 percent after (`tests/usbhost_poll.c` prints it).
+- BOOT.TXT records end `,r<reason>:<PM_RSTS hex>` (`power-on`, `watchdog`, `software`, `unknown`), so the next boot after a
+  crash says whether power dropped or a watchdog reset it.

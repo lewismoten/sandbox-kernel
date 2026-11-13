@@ -6,13 +6,18 @@
 /* What this boot decided about the USB port, as one plain record, and the Pi's short name. Pure
    text logic (host-tested); core/bootrec.c reads and writes the card. */
 enum boot_decision { BD_NONE, BD_LINK, BD_NO_ADAPTER, BD_INSTALL_KBD, BD_KEYBOARD };
-#define BOOTINFO_REC_MAX 40
+#define BOOTINFO_REC_MAX 64
 #define BOOTINFO_NAME_MAX 8
 /* E-ink status text for a decision (16 columns), or NULL when the normal state says it. */
 const char *bootinfo_status(enum boot_decision d);
 const char *bootinfo_decision_name(enum boot_decision d); /* "link", "no-adapter", "install-kbd", "keyboard", "none" */
 /* "n30,keyboard,k2" into out (BOOTINFO_REC_MAX bytes); returns the length. */
 unsigned bootinfo_format(char *out,uint32_t n,enum boot_decision d,unsigned keyboards);
+/* Why the board started, from the BCM2835 PM_RSTS value the selector hands over: "power-on" (HADPOR 0x1000), "watchdog"
+   (HADWR* 0x70), "software" (HADSR* 0x700), else "unknown". Once set, every record ends ",r<name>:<hex>", so the card says
+   whether a crash was a power loss or a watchdog reset. Unset (the host tests' default), records have no such part. */
+const char *bootinfo_reset_name(uint32_t pm_rsts);
+void bootinfo_set_reset(uint32_t pm_rsts);
 /* The boot counter at the start of a record, or false. Stops at the first control character. */
 bool bootinfo_parse_count(const char *text,uint32_t bytes,uint32_t *n);
 /* NAME.TXT: first line, 1 to 8 of A-Z 0-9 -; anything else is ignored (false, out empty). */

@@ -45,7 +45,7 @@ void kernel_main(void) {
  usb_init();
 #endif
  log_line("sandbox-kernel " BUILD_ID " Zero W v1.1 RASPPI=1");
- char num[12];number(num,h[5]);log_line("Reset cause (PM_RSTS decimal):");log_line(num);
+ char num[12];number(num,h[5]);log_line("Reset cause (PM_RSTS decimal):");log_line(num);bootinfo_set_reset(h[5]);log_line("BOOT reset reason:");log_line(bootinfo_reset_name(h[5]));
  number(num,boot_slot);log_line("Selected slot:");log_line(num);
  number(num,boot_generation);log_line("Generation:");log_line(num);
  watchdog_feed();
