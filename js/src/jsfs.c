@@ -16,7 +16,9 @@
 #define ANY_WRITE (APP_CAP_FS_WRITE_SAVES | APP_CAP_FS_WRITE_CACHE)
 uint32_t jsrt_write_quota = 256u * 1024u;
 /* A file handle (reader) or a staged writer; kind tells which. The handle table owns it. */
-struct fobj {int writer; uint64_t fd; uint32_t size, pos; char path[96]; uint8_t *buf; uint32_t n, cap;};
+/* failed: a writer's first failed write() ("EDQUOT", "ENOSPC", "ENOMEM" or "TypeError"); after one, the writer can only be
+   discarded, so commit() and close() never publish a file with a missing piece. */
+struct fobj {int writer; uint64_t fd; uint32_t size, pos; char path[96]; uint8_t *buf; uint32_t n, cap; char failed[12];};
 static JSClassID file_class, writer_class;
 static int writer_open;
 
@@ -307,9 +309,11 @@ static JSValue w_path(JSContext *c, JSValueConst t) {struct fobj *f = get(c, t, 
 /* write(data) -> bytes staged so far. data: a string (UTF-8), an ArrayBuffer or a typed array. Over quota: EDQUOT, nothing added. */
 static JSValue w_write(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   struct fobj *f = get(c, t, writer_class); const uint8_t *p; size_t len; const char *str = 0;
-  if (!f || n < 1) return f ? JS_ThrowTypeError(c, "write(data) needs data") : JS_EXCEPTION;
-  if (JS_IsString(a[0])) {str = JS_ToCStringLen(c, &len, a[0]); p = (const uint8_t *)str; if (!str) return JS_EXCEPTION;}
-  else {uint8_t *q; if (bytes_of(c, a[0], &q, &len)) return JS_EXCEPTION; p = q;}
+  if (!f) return JS_EXCEPTION;
+  if (f->failed[0]) return fail(c, "EIO", "an earlier write to %s failed (%s); discard() this writer and start again", f->path, f->failed);
+  if (n < 1) {snprintf(f->failed, sizeof f->failed, "TypeError"); return JS_ThrowTypeError(c, "write(data) needs data");}
+  if (JS_IsString(a[0])) {str = JS_ToCStringLen(c, &len, a[0]); p = (const uint8_t *)str; if (!str) {snprintf(f->failed, sizeof f->failed, "ENOMEM"); return JS_EXCEPTION;}}
+  else {uint8_t *q; if (bytes_of(c, a[0], &q, &len)) {snprintf(f->failed, sizeof f->failed, "TypeError"); return JS_EXCEPTION;} p = q;}
   JSValue r = JS_UNDEFINED;
   if ((uint64_t)f->n + len > jsrt_write_quota) r = fail(c, "EDQUOT", "this app may stage %u bytes in a save file (%u already, %u more asked)", (unsigned)jsrt_write_quota, (unsigned)f->n, (unsigned)len);
   else if ((uint64_t)f->n + len > JSFS_KERNEL_MAX) r = fail(c, "ENOSPC", "the kernel writes at most 1 MiB in one file (%u already, %u more asked)", (unsigned)f->n, (unsigned)len);
@@ -318,6 +322,7 @@ static JSValue w_write(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
     uint8_t *nb = realloc(f->buf, cap);
     if (!nb) r = JS_ThrowOutOfMemory(c); else {f->buf = nb; f->cap = cap;}
   }
+  if (JS_IsException(r)) snprintf(f->failed, sizeof f->failed, "%s", (uint64_t)f->n + len > jsrt_write_quota ? "EDQUOT" : (uint64_t)f->n + len > JSFS_KERNEL_MAX ? "ENOSPC" : "ENOMEM");
   if (JS_IsUndefined(r)) {if (len) memcpy(f->buf + f->n, p, len); f->n += (uint32_t)len; r = JS_NewUint32(c, f->n);}
   if (str) JS_FreeCString(c, str);
   return r;
@@ -329,11 +334,17 @@ static void sum_cb(void *user, const char *name, uint32_t n, int dir, uint32_t s
   s->total += size;
 }
 /* commit() publishes the staged bytes with the kernel's whole-file write and closes the writer. On an error the writer
-   stays open (the app may retry, for EBUSY, or abort). close() is the same as commit(); discard() is abort(). */
+   stays open (the app may retry, for EBUSY, or abort). close() is the same as commit(); discard() is abort().
+   After a failed write() both discard instead and throw EIO, so a close() in a finally keeps the old file. */
 static JSValue w_commit(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)n; (void)a;
   struct fobj *f = get(c, t, writer_class);
   if (!f) return JS_EXCEPTION;
+  if (f->failed[0]) {
+    JSValue e = fail(c, "EIO", "an earlier write failed (%s), so nothing was saved and the old file is kept; the writer is discarded: %s", f->failed, f->path);
+    jsrt_handle_close((uint32_t)(uintptr_t)JS_GetOpaque(t, writer_class));
+    return e;
+  }
   char folder[96]; const char *slash = strrchr(f->path, '/'); size_t fl = (size_t)(slash - f->path);
   memcpy(folder, f->path, fl); folder[fl] = 0;
   struct sum s = {slash + 1, strlen(slash + 1), 0};

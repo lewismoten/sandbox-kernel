@@ -261,8 +261,10 @@ T('quota', fs.writeQuota());
 const w = fs.createWriter(SAV + 'A.SAV');
 T('w600', w.write(new Uint8Array(600)));
 E('over', () => w.write(new Uint8Array(401))); T('size kept', w.size);
-T('w400', w.write(new Uint8Array(400)));
-T('commit', w.commit());
+E('w after fail', () => w.write(new Uint8Array(1))); w.discard();
+const w2 = fs.createWriter(SAV + 'A.SAV'); w2.write(new Uint8Array(600));
+T('w400', w2.write(new Uint8Array(400)));
+T('commit', w2.commit());
 E('second file', () => fs.write(SAV + 'B.SAV', new Uint8Array(1)));
 E('replace smaller', () => fs.write(SAV + 'A.SAV', new Uint8Array(10)));
 E('then B', () => fs.write(SAV + 'B.SAV', new Uint8Array(900)));
@@ -271,7 +273,7 @@ sys.exit(0);
 """
         t, _, d = run_ok(self, code, args=['--write-quota', '1000'])
         self.assertEqual(t['quota'], '1000'); self.assertEqual(t['w600'], '600'); self.assertTrue(t['over'].startswith('EDQUOT'), t['over'])
-        self.assertIn('1000 bytes', t['over']); self.assertEqual(t['size kept'], '600'); self.assertEqual(t['commit'], '1000')
+        self.assertIn('1000 bytes', t['over']); self.assertEqual(t['size kept'], '600'); self.assertTrue(t['w after fail'].startswith('EIO'), t); self.assertEqual(t['commit'], '1000')
         self.assertTrue(t['second file'].startswith('EDQUOT'), 'the folder is full'); self.assertEqual(t['replace smaller'], 'ok 10')
         self.assertEqual(t['then B'], 'ok 900'); self.assertTrue(t['write over'].startswith('EDQUOT'))
         self.assertEqual(card_files(d), ['OS/SAVES/FT/A.SAV', 'OS/SAVES/FT/B.SAV'])
@@ -411,6 +413,47 @@ E('read', () => f.read(100)); T('pos', f.position); f.close(); sys.exit(0);
         code = PRE + "E('huge', () => screen.gameLowres(true, 65536, 65536)); sys.exit(0);"
         t, _, _ = run_ok(self, code, caps=('display',))
         self.assertTrue(t['huge'].startswith('RangeError'), t)
+
+
+class SaveSafety(unittest.TestCase):
+    """0.1.3, from the 0.1.2 review (M1): after a failed write(), commit() and close() never publish."""
+
+    GOOD = b'G' * 600
+
+    def test_close_in_finally_after_a_failed_write_keeps_the_good_save(self):
+        code = PRE + """
+let caught = '';
+try {
+  const w = fs.createWriter('/sd/OS/SAVES/FT/SLOT.SAV');
+  try { w.write(new Uint8Array(100).fill(72)); w.write(new Uint8Array(1000)); } finally { w.close(); }
+} catch (e) { caught = e.code + ' | ' + e.message; }
+T('caught', caught);
+E('writer free', () => fs.write('/sd/OS/SAVES/FT/OTHER.SAV', 'x'));
+sys.exit(0);
+"""
+        t, _, d = run_ok(self, code, args=['--write-quota', '1000'], files={'OS/SAVES/FT/SLOT.SAV': self.GOOD})
+        self.assertTrue(t['caught'].startswith('EIO'), t); self.assertIn('EDQUOT', t['caught']); self.assertIn('old file is kept', t['caught'])
+        self.assertEqual((d / 'OS/SAVES/FT/SLOT.SAV').read_bytes(), self.GOOD, 'the 600-byte save must not become the 100-byte header')
+        self.assertEqual(t['writer free'], 'ok 1', 'the failed writer was released')
+
+    def test_commit_and_later_writes_after_each_kind_of_failure(self):
+        code = PRE + """
+for (const [k, bad] of [['quota', new Uint8Array(1000)], ['type', 42], ['none', undefined]]) {
+  const w = fs.createWriter('/sd/OS/SAVES/FT/SLOT.SAV');
+  w.write('HDR1');
+  E(k + ' write', () => bad === undefined ? w.write() : w.write(bad));
+  E(k + ' more', () => w.write('tail'));
+  E(k + ' commit', () => w.commit());
+  E(k + ' again', () => w.discard());
+}
+sys.exit(0);
+"""
+        t, _, d = run_ok(self, code, args=['--write-quota', '1000'], files={'OS/SAVES/FT/SLOT.SAV': self.GOOD})
+        for k in ('quota', 'type', 'none'):
+            self.assertFalse(t[k + ' write'].startswith('ok'), (k, t))
+            self.assertTrue(t[k + ' more'].startswith('EIO'), (k, t)); self.assertTrue(t[k + ' commit'].startswith('EIO'), (k, t))
+            self.assertEqual(t[k + ' again'], 'ok ', 'discard after the automatic discard does nothing')
+        self.assertEqual((d / 'OS/SAVES/FT/SLOT.SAV').read_bytes(), self.GOOD)
 
 
 class Leaks(unittest.TestCase):
