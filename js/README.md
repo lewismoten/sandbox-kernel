@@ -4,7 +4,7 @@ Working name. A layer on top of sandbox-kernel so you can write your own OS for 
 
 You write apps in JavaScript. Sandbox JS is one ELF (QuickJS-ng inside) that the kernel boots like any program; it turns the kernel's small system-call surface (files, display, input, audio, e-ink, serial, power) into plain JavaScript objects, plus a DOM-lite UI profile (elements, a small CSS subset, a 2D canvas) for people who want a page-shaped shell. Your OS is a folder of `.js` files copied to the card.
 
-**Status: slice 4d of 7.** The contract ([docs/contract.md](docs/contract.md)) lists every kernel call and what it becomes in JavaScript, with the gaps. The runtime now lives here too: a clean import of `JS.ELF` from `gamemaker-os` ([IMPORT.md](IMPORT.md) has the source commit, every change and what slice 2 must split), with slice 3's `sandbox` and manifest, slice 4a's files (handles with binary reads and seek, `fs.stat`, listings with types and sizes, a staged writer with a quota) and slice 4b's display, time and input (a surface lease for direct pixels, modes and palettes, a microsecond clock, `sleep`, a seeded `Math.random`, raw input queues). How to write an app: [docs/apps.md](docs/apps.md). A complete example OS and the step-by-step to boot your own: [docs/make-your-own-os.md](docs/make-your-own-os.md) ([`examples/TINYOS/`](examples/TINYOS/)). `gamemaker-os` keeps its own copy for now ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
+**Status: slice 5 of 7.** The contract ([docs/contract.md](docs/contract.md)) lists every kernel call and what it becomes in JavaScript, with the gaps. The runtime now lives here too: a clean import of `JS.ELF` from `gamemaker-os` ([IMPORT.md](IMPORT.md) has the source commit, every change and what slice 2 must split), with slice 3's `sandbox` and manifest, slice 4a's files (handles with binary reads and seek, `fs.stat`, listings with types and sizes, a staged writer with a quota) and slice 4b's display, time and input (a surface lease for direct pixels, modes and palettes, a microsecond clock, `sleep`, a seeded `Math.random`, raw input queues). How to write an app: [docs/apps.md](docs/apps.md). A complete example OS and the step-by-step to boot your own: [docs/make-your-own-os.md](docs/make-your-own-os.md) ([`examples/TINYOS/`](examples/TINYOS/)). `gamemaker-os` keeps its own copy for now ([its guide](https://github.com/lewismoten/gamemaker-os/blob/develop/docs/js.md); the kernel's [author guide](../docs/os-authors.md) section 7 and [spike](../docs/js-spike.md)).
 
 ## What v1 is, and is not
 
@@ -24,7 +24,7 @@ These are defaults picked for Lewis on 2026-11-13; he can change them (the list 
 | 2 | Generic core and profile split: no game dependency in the base; the Game-Maker profile stays optional. |
 | 3 | Versioning, package manifest, capabilities, path policy, handle accounting, app teardown. |
 | 4a, 4b, 4c, 4d (done) | Files and storage; display, time and input; audio; e-ink, serial and power. |
-| 5 | Execution limits and hardening (script budgets, allocation failure, soak). |
+| 5 (done) | Execution limits and hardening: a 500 ms script slice, a 1.5 MiB heap, stack and nesting limits, an allocation-failure sweep, a 500-cycle soak and a validator fuzz pass ([docs/apps.md](docs/apps.md), Limits). |
 | 6 | Release and maker path: drift checks against the kernel ABI, prebuilt artifacts, a JS-only example OS another author can boot. |
 | 7 | Optional adoption by gamemaker-os. |
 
@@ -35,12 +35,12 @@ Design and estimates: the owner's research note `2026-11-10-js-layer-design.md` 
 ```sh
 make -C js           # build/JS.ELF (JS_PROFILE=file.c picks another profile) (stripped), build/JS.full.elf; needs the Arm GNU Toolchain
 make -C js host      # build/host/jsrun, the same runtime over stdio
-make -C js test      # host cases against tests/fixtures.json (log lines and framebuffer CRC-32 match the gamemaker-os build; only the heap-size figures may grow, within a budget), the profile interface tests (hook order, key routes, 50 start/stop cycles with a flat heap), tests/app_run.py (manifests, capabilities, paths, handles, 50 app switches, AUTORUN), tests/files_run.py, tests/dev_run.py, tests/audio_run.py and tests/devices_run.py
+make -C js test      # (slice 5 added limits_run, alloc_run on build/host/jsrun-fault, soak_run and fuzz_run) host cases against tests/fixtures.json (log lines and framebuffer CRC-32 match the gamemaker-os build; only the heap-size figures may grow, within a budget), the profile interface tests (hook order, key routes, 50 start/stop cycles with a flat heap), tests/app_run.py (manifests, capabilities, paths, handles, 50 app switches, AUTORUN), tests/files_run.py, tests/dev_run.py, tests/audio_run.py and tests/devices_run.py
 make -C js size      # ELF bytes and each PT_LOAD against the 1 MiB ceiling and the 8 MiB image quota
 make -C js repro     # two clean builds at different paths must match byte for byte
 ```
 
-Current size (2026-11-13, toolchain 15.3.rel2, core profile, slice 4d): `JS.ELF` 825,972 bytes (78.8% of 1 MiB, 222,604 spare; slice 4c: 801,396; slice 4b: 793,204; slice 4a: 780,916; slice 3: 768,620); two PT_LOADs, R-X 816,064 bytes and RW- 2,348 file bytes with 3,967,204 in memory (the 3 MiB heap, a 256 KiB read buffer and QuickJS's data); loaded image 4.57 MiB of the 8 MiB quota. Run on the host, not yet on a board. Third-party notices: [third_party/README.md](third_party/README.md). Nothing here is flashed by the tests.
+Current size (2026-11-13, toolchain 15.3.rel2, core profile, slice 5): `JS.ELF` 834,164 bytes (79.6% of 1 MiB, 214,412 spare; slice 4d: 825,972; slice 4c: 801,396; slice 4b: 793,204; slice 4a: 780,916; slice 3: 768,620); two PT_LOADs, R-X 816,064 bytes and RW- 2,348 file bytes with 3,967,204 in memory (the 3 MiB heap, a 256 KiB read buffer and QuickJS's data); loaded image 4.57 MiB of the 8 MiB quota. Run on the host, not yet on a board. Third-party notices: [third_party/README.md](third_party/README.md). Nothing here is flashed by the tests.
 
 ## Slice 1 needs (done)
 
@@ -57,6 +57,10 @@ The core no longer has a game dependency: `JS_GAME` is gone, replaced by `struct
 ## Slice 3 (done): versioning, packaging, lifecycle
 
 An app folder carries an `APP.JSON` manifest (name, version, entry, the API it needs, the capabilities it asks for); the runtime refuses a malformed manifest or a newer API with a message in the log and on the picker's screen, gates every JS call on its capability, confines paths to the app's own folder (read-only) and save folder, counts every handle in one table that `jsrt_stop` releases and reports, and starts from `/OS/AUTORUN.TXT` with a fall back to the picker. `tools/app_check.py` validates an app on the host with the same rules. [docs/apps.md](docs/apps.md) is the author's guide. The decisions, all changeable: profile hooks read files only through `jsrt_fs_read`/`jsrt_fs_list` (the core's path policy); a garbage-collected playing element gets `end()` from its finalizer; an app with no manifest runs as a trusted legacy app (`jsrt_require_manifest` flips it); AUTORUN line 2 is `APPS/NAME` or `PICKER`; v1 apps are trusted maker apps.
+
+## Slice 5 (done): limits and hardening
+
+`src/jsrt.h` has the numbers. An interrupt handler stops a script slice that runs past 500 ms (1 s while loading), a counted allocator (`q_*` in `src/jsrt.c`, every block carries its size) stops an app past a 1.5 MiB heap, and both end with the app returned to its caller or the picker with a reason, never a heartbeat fault ([docs/apps.md](docs/apps.md), Limits). Element nesting (64) and total canvas pixels are capped. New host tests, all in `make -C js test`: `tests/limits_run.py`, `tests/alloc_run.py` (`jsrun-fault`: every allocation failed in turn, the C bindings' own and QuickJS's, in child processes), `tests/soak_run.py` (TINYOS and HELLO 500 times) and `tests/fuzz_run.py` (APP.JSON, AUTORUN and the path policy). Found and fixed on the way: a failed page-root allocation crashed the start, the orphan root leaked, the C manifest parser accepted malformed numbers and one level more nesting than the Python checker, and an AUTORUN error echoed control characters.
 
 ## Slice 7 (done): apps launching apps
 

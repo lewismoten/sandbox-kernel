@@ -84,9 +84,53 @@ next turn). Timers and key listeners live inside the app's interpreter and vanis
 
 `/OS/AUTORUN.TXT` line 1 is the kernel's (`JS.ELF`). Line 2 names the app: `APPS/NAME` or `PICKER`; with no line 2 the
 default is `APPS/HELLO`. (Slice 3 narrowed line 2 from "a folder under /OS" to `APPS/NAME`, so an app's id is always known.)
-If line 2 is bad, or the app is refused (bad or newer manifest, missing entry, a script that throws), the runtime logs why
+If line 2 is bad, or the app is refused (bad or newer manifest, missing entry, a script that throws, or one stopped for time or memory: see Limits), the runtime logs why
 and starts the always-embedded picker, which shows the reason on two rows ("Could not start APPS/NAME", then the reason).
 The picker lists a folder that has a `MAIN.JS` or an `APP.JSON`.
+
+## Limits (slice 5)
+
+The runtime stops an app that runs too long or uses too much memory, and says why. These are the numbers (`src/jsrt.h`); the app
+cannot change them.
+
+| Limit | Value | What happens past it |
+| --- | --- | --- |
+| Script time, one loop turn | 500 ms | Everything the app runs in one turn counts together: input events, timers, animation frames, the sound refill, microtasks. |
+| Script time, loading | 1,000 ms | The runtime's own start and the app's `MAIN.JS` run (also each start in a chain of launches). |
+| JS heap | 1.5 MiB (1,536 KiB) | Counts every byte QuickJS allocates for the app (objects, strings, arrays, typed arrays and the compiled code). The board's malloc pool is 3 MiB and the page, canvases, file buffers and runtime take the rest. |
+| Native stack of the script engine | 256 KiB | A runaway recursion throws `RangeError: Maximum call stack size exceeded`, which the app can catch. |
+| Element nesting | 64 levels | `appendChild` and `insertBefore` throw `RangeError` past it (layout, painting and teardown recurse). |
+| All canvases together | 640 x 480 pixels (1.17 MiB) | A canvas that would pass it, or one over 960 x 540, throws `RangeError`. |
+
+The kernel's heartbeat is 2 seconds, so the longest the loop can go without calling it is the 1,000 ms start (a chain of starts calls it
+before each) or a 500 ms turn plus the native work in it (drawing, a file read). A script slice that runs out of time is stopped by an
+interrupt QuickJS polls about every 10,000 operations, so a `while (true) {}`, an endless microtask chain, a regular expression that backtracks
+forever and a long `sort` are all caught; a long native call that never returns to the interpreter (one huge `fs.readBytes`, at most 1 MiB)
+is bounded by its own limits instead.
+
+**What the user sees.** The stop is not an exception the app can catch (a `try`/`catch` or `finally` around the loop never runs). The runtime
+logs `JS app stopped: a script ran too long (limit 500 ms)` (or `it ran out of memory (limit 1536 KiB)`), closes everything the app held (audio,
+the e-ink panel, serial, power holds: the log says `app left N handle(s) open` if it was not closed), and returns:
+
+- to the app that launched it, which starts again with `sandbox.launchError = {id, reason}` (the reason above); or
+- to the AUTORUN app when nobody launched it and it is another app; or
+- to the picker, which shows `Could not start APPS/NAME` and the reason.
+
+The exit status the log shows is 124 for time and 137 for memory (what `timeout(1)` and a killed process use). It is never a heartbeat fault:
+the runtime is still in control, so the kernel sees an ordinary app switch.
+
+**Memory is a hard stop, even if the app catches the error.** The heap limit is soft by 128 KiB: the allocation that passes 1.5 MiB succeeds
+and marks the app to be stopped at the next interrupt poll (within about 10,000 operations), so the stop never happens in the middle of
+QuickJS's own compiler (QuickJS-ng 0.18.0 crashes when an allocation fails inside `js_parse_class` and a few more places, found by the sweep
+in `tests/alloc_run.py`). One request that alone passes 1.5 MiB + 128 KiB (`new ArrayBuffer(64 << 20)`) fails cleanly with an out-of-memory
+error and stops the app too. Allocation failures in the runtime's own C bindings (elements, canvases, handles, the file writer's growing buffer,
+the page root) become `OutOfMemory` errors in JS, never a crash. A 64-bit host build counts a JS value as 16 bytes and the board as 8, so a
+script that fills 1 MB on the host fills about half of that on the board.
+
+Plan for it: stream a long sample or a big file in pieces (`fs.open` + `read`, `audio.open({onneed})`) instead of holding it; do heavy work in
+slices of a few milliseconds across frames (`setTimeout`/`requestAnimationFrame`), as the 500 ms is a guard against hangs, not a budget (aim for 2
+to 4 ms a frame); and keep a long loop out of `MAIN.JS`. Tests: `tests/limits_run.py` (runaway loops, microtask chains, regular expressions,
+heap fills, recursion, element depth), `tests/alloc_run.py`, `tests/soak_run.py`, `tests/fuzz_run.py`.
 
 ## Launching other apps (slice 7, gap G5)
 
