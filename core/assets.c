@@ -142,6 +142,7 @@ static struct handle *get(int id) {
  return h->used&&h->gen==(uint16_t)((uint32_t)id>>3)&&((uint32_t)id>>3)<=0xffffu?h:NULL;
 }
 int asset_open(const char *path,uint32_t n,uint32_t flags) {
+ if(!v.mounted) asset_mount(); /* a failed mount (card read error) must not stay failed until a power cycle */
  if(!v.mounted) return fail("ASSET UNMOUNTED",ASSET_ENODEV);
  if(flags&~3u) return fail("ASSET FLAGS",ASSET_EINVAL);
  if(flags) return fail("ASSET READ ONLY",ASSET_EROFS);
@@ -264,6 +265,7 @@ int asset_close(int id) {
  h->used=false; h->gen=bump(h->gen); return 0;
 }
 int asset_volume(struct asset_volume *o) {
+ if(!v.mounted) asset_mount();
  if(!v.mounted) return fail("ASSET UNMOUNTED",ASSET_ENODEV);
  o->base=v.base;o->end=v.end;o->fat=v.fat;o->fat_size=v.fat_size;o->data=v.data;o->clusters=v.clusters;o->spc=v.spc;o->root=v.root;return 0;
 }

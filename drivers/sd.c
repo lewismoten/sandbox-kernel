@@ -106,7 +106,7 @@ bool sd_init_after_handoff(const uint32_t in[8]) {
  return false;
 }
 uint32_t sd_sectors(void) { return capacity; }
-static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
+static bool transfer_once(uint32_t lba,void *read_data,const void *write_data,bool write) {
  if(lba>=capacity) return false;
  if(!wait_bits(0x24,3,0,100000)) return false;
  R(0x04)=(1<<16)|512;
@@ -126,6 +126,23 @@ static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool wr
   t=micros(); do { if(!command(13,rca,0x1a0000)) return false; uint32_t status=R(0x10); if(status&0xfdffe008u) return false; if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); return false;
  }
  return true;
+}
+/* A failed transfer (timeout, CRC, data error) leaves DAT/CMD inhibit raised and the card possibly
+ * still in the data state; every later wait_bits(0x24) then times out and reads fail until a power
+ * cycle. Reset the CMD and DAT circuits, abort with CMD12, and if the card does not answer in
+ * transfer state re-initialize it. One retry of the same block follows (sector I/O is idempotent). */
+static void sd_recover(void) {
+ R(0x2c)|=3u<<25; wait_bits(0x2c,3u<<25,0,100000);
+ R(0x30)=~0u;
+ command(12,0,0x1b0000|0xc00000); wait_bits(0x24,3,0,100000);
+ if(command(13,rca,0x1a0000)&&((R(0x10)>>9)&15)==4) return;
+ sd_init();
+}
+static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
+ if(transfer_once(lba,read_data,write_data,write)) return true;
+ if(lba>=capacity) return false;
+ sd_recover();
+ return transfer_once(lba,read_data,write_data,write);
 }
 bool sd_read(uint32_t lba,void *p) { return transfer(lba,p,NULL,false); }
 bool sd_write(uint32_t lba,const void *p) { return transfer(lba,NULL,p,true); }

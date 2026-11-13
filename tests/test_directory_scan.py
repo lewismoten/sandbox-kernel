@@ -122,6 +122,15 @@ bool sd_read(uint32_t lba,void *p){reads++;return lba!=bad &&
         self.assertEqual(self.c.asset_close(other), 0)
         self.assertEqual(self.c.asset_close(h), 0)
 
+    def test_open_remounts_after_a_failed_mount(self):
+        # A read error during asset_mount leaves the volume unmounted; the next open must retry, not fail until power cycle.
+        self.c.fail_sector(0)
+        self.assertLess(self.c.asset_mount(), 0)
+        b = b'/GAMES'
+        self.assertLess(self.c.asset_open(b, len(b), 0), 0)
+        self.c.fail_sector(0xffffffff)
+        self.opened('/GAMES')
+
     def test_failed_sector_is_not_cached_and_retry_keeps_entry(self):
         h = self.opened('/GAMES')
         e = Entry()
