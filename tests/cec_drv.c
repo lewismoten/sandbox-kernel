@@ -424,6 +424,58 @@ static void test_tv_session_after_sticky_c5(void) {
     assert(strstr(drv.log.text, "TX 4>15 84:") && strstr(drv.log.text, "(Report Physical Address) broadcast"));
 }
 
+/* Remote-button storm (2026-11-12 PI-2 freeze after every Insignia remote button): every User Control code
+ * 0x00-0x7F pressed, repeated and released fast, then directed frames of every opcode, then random bytes, with
+ * the transmitter answered or left silent. Nothing may stall the task, grow a queue past its bound, leave a
+ * key held, or make the driver send without end. */
+static unsigned wakes;
+static void storm_wake(void *c) { (void)c; wakes++; }
+static int keys_balanced(void) { int h[256] = {0}; for (unsigned i = 0; i < keys.n; i++) { if (keys.val[i] == 1) h[keys.code[i] & 255]++; else if (keys.val[i] == 0) h[keys.code[i] & 255]--; } for (int i = 0; i < 256; i++) if (h[i]) return 0; return 1; }
+static void pump(uint32_t *now, unsigned ms, int ack) {   /* run the task each ms, answering any started send */
+    for (unsigned i = 0; i < ms; i++) { (*now)++; if (ack && chip.tx_started) finish_tx(&chip, ack > 0); cec_drv_task(&drv, *now); assert(drv.sm.qn <= CEC_SM_QUEUE); }
+}
+static void test_remote_storm(void) {
+    claim4(); drv.wake = storm_wake; uint32_t now = 100; unsigned ev0 = drv.key_events;
+    for (unsigned ui = 0; ui < 0x80; ui++) {
+        uint8_t p[3] = {0x04, 0x44, (uint8_t)ui}, r[2] = {0x04, 0x45};
+        keys.n = 0; keys.lost = 0;
+        for (unsigned rep = 0; rep < 3; rep++) { inject(&chip, p, 3); pump(&now, 30, 1); }   /* press and two remote repeats */
+        inject(&chip, r, 2); pump(&now, 30, 1);
+        assert(!keys.lost && keys.n <= 6 && keys_balanced());
+        assert(!drv.keys.held);
+    }
+    assert(wakes >= 0x80u * 3u - 4u);                                                      /* every press wakes the screen */
+    /* Pressed with no Released, then silence: the 550 ms rule lets go */
+    { uint8_t p[3] = {0x04, 0x44, 0x01}; keys.n = 0; inject(&chip, p, 3); pump(&now, 2000, 1); assert(keys_balanced() && !drv.keys.held); }
+    /* another code pressed while one is held (two buttons, no Released between) */
+    { uint8_t a[3] = {0x04, 0x44, 0x01}, b[3] = {0x04, 0x44, 0x02}; keys.n = 0; inject(&chip, a, 3); pump(&now, 20, 1); inject(&chip, b, 3); pump(&now, 20, 1); pump(&now, 700, 1); assert(keys_balanced()); }
+    /* Pressed with no parameter, Released from the wrong source, broadcasts, foreign destinations */
+    { static const uint8_t odd[][4] = {{0x04, 0x44, 0, 0}, {0x0F, 0x44, 0x01, 0}, {0x05, 0x44, 0x01, 0}, {0x04, 0x45, 0, 0}, {0xF4, 0x44, 0x01, 0}};
+      for (unsigned i = 0; i < 5; i++) { inject(&chip, odd[i], i == 0 ? 2 : 3); pump(&now, 40, 1); } assert(keys_balanced()); }
+    /* every opcode addressed to us, with one parameter byte, a TX left unanswered (the TV that NACKs or stays mute) */
+    unsigned sent0 = chip.sent_n;
+    for (unsigned op = 0; op < 0x100; op++) {
+        uint8_t f[4] = {0x04, (uint8_t)op, 0x20, 0x00};
+        inject(&chip, f, 3); pump(&now, 15, op & 1 ? 1 : -1);
+    }
+    assert(chip.sent_n - sent0 < 600u && keys_balanced());
+    /* a flood of 4000 Give OSD Name requests at 1 ms while nothing is ever acknowledged: the queue stays bounded, the driver recovers */
+    for (unsigned i = 0; i < 4000; i++) { static const uint8_t g[2] = {0x04, 0x46}; inject(&chip, g, 2); pump(&now, 1, 0); }
+    pump(&now, 5000, 1); assert(drv.sm.qn <= CEC_SM_QUEUE && !drv.tx_busy);
+    /* deterministic fuzz: 20000 random frames of 1-16 bytes, addressed mostly to us; no assert may fire, no key stays held */
+    uint32_t seed = 12345u; keys.n = 0;
+    for (unsigned i = 0; i < 20000; i++) {
+        uint8_t f[16]; unsigned n = 1 + (seed = seed * 1664525u + 1013904223u) % 16u;
+        for (unsigned k = 0; k < n; k++) f[k] = (uint8_t)((seed = seed * 1664525u + 1013904223u) >> 24);
+        if (n >= 1 && (seed & 3u)) f[0] = (uint8_t)((f[0] & 0xF0u) | 4u);
+        if (n >= 2 && (seed & 8u)) f[1] = (seed & 16u) ? 0x44 : 0x45;
+        inject(&chip, f, n); pump(&now, 1 + (seed >> 28) % 40u, 1 + (int)((seed >> 5) & 1u) * -2);
+        if (keys.n > 8) keys.n = 0;
+    }
+    pump(&now, 3000, 1); assert(!drv.keys.held && drv.sm.qn <= CEC_SM_QUEUE);
+    (void)ev0;
+}
+
 int main(void) {
     test_power();
     test_timing_and_claim(); puts("PASS timing and claim");
@@ -440,5 +492,6 @@ int main(void) {
     test_late_tv(); assert(!chip.lost); puts("PASS TV that appears 60 s late");
     test_capture_bounds(); puts("PASS capture is bounded");
     test_edid_retry(); puts("PASS a failed EDID read is read again");
+    test_remote_storm(); puts("PASS remote button storm");
     return 0;
 }
