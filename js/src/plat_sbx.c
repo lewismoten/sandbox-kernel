@@ -200,18 +200,18 @@ int plat_serial_open(void) {
   if (s) return s;
   se_open = 1; return 0;
 }
-int plat_serial_read(void *buf, uint32_t n, uint32_t *got) {
+int plat_serial_read(void *buf, uint32_t cap, uint32_t *got) {
   uint64_t d = 0; *got = 0;
   if (!se_open) return -SBX_EBADF;
-  int32_t s = sbx_read(se_fd, buf, n, &d);
+  int32_t s = sbx_read(se_fd, buf, cap, &d);
   if (s == -SBX_EAGAIN) return 0;
   if (s) return s;
   *got = (uint32_t)d; return 0;
 }
-int plat_serial_write(const void *buf, uint32_t n, uint32_t *taken) {
+int plat_serial_write(const void *buf, uint32_t len, uint32_t *taken) {
   uint64_t d = 0; *taken = 0;
   if (!se_open) return -SBX_EBADF;
-  int32_t s = sbx_write(se_fd, buf, n, &d);
+  int32_t s = sbx_write(se_fd, buf, len, &d);
   if (s == -SBX_EAGAIN) return 0;
   if (s) return s;
   *taken = (uint32_t)d; return 0;

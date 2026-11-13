@@ -127,14 +127,14 @@
    "kernel": "open (1) /dev/eink, WRONLY",
    "number": 1,
    "abi": "1.9",
-   "js": "eink.open() -> Eink; absent panel gives eink.available === false",
+   "js": "eink.open() -> Eink or null; eink.available (false without a panel)",
    "shape": "sync",
    "errors": "EACCES, EBUSY, ENODEV (no panel)",
    "capability": "eink",
-   "status": "v1",
-   "why": "",
-   "test": "host: ENODEV maps to available=false, not a throw",
-   "notes": ""
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py EinkOpen",
+   "notes": "ENODEV (no panel, or a kernel older than 1.9) gives null, not a throw. One owner per app; the handle (JSRT_H_EINK) is released at stop and the kernel gets its screen back with a clear when an update may go then. close() keeps the page up, release() clears."
   },
   {
    "id": "sys.open.serial",
@@ -142,14 +142,14 @@
    "kernel": "open (1) /dev/serial0, any access | NONBLOCK",
    "number": 1,
    "abi": "1.10",
-   "js": "serial.open(mode) -> SerialPort",
+   "js": "serial.open({mode: 'r'|'w'|'rw'}) -> SerialPort",
    "shape": "sync",
    "errors": "EINVAL (blocking open or access mode 3), EBUSY, ENODEV",
    "capability": "serial",
-   "status": "v1",
-   "why": "",
-   "test": "host: blocking open EINVAL; second open EBUSY",
-   "notes": "Hardware-untested per docs/os-authors.md."
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py SerialTests",
+   "notes": "The runtime always opens nonblocking, so a blocking open (EINVAL) cannot be asked for. Direction is enforced by the runtime (the kernel does not). Hardware-untested per docs/os-authors.md."
   },
   {
    "id": "sys.read",
@@ -164,7 +164,7 @@
    "status": "bound",
    "why": "slice 4a: tests/files_run.py; slice 4b: tests/dev_run.py",
    "test": "host: each device kind; count > 1 MiB EINVAL",
-   "notes": "Files (slice 4a): one read is at most 256 KiB in JS and 1 MiB in the kernel. The input device (slice 4b) is read inside the runtime, at most 128 events a turn, never by the app; serial binds in 4d."
+   "notes": "Files (slice 4a): one read is at most 256 KiB in JS and 1 MiB in the kernel. The input device (slice 4b) is read inside the runtime, at most 128 events a turn, never by the app; serial binds in 4d. Slice 4d: SerialPort.read(into) takes at most 4096 bytes, 0 when empty; the 'data' event reads at most 256 bytes at a time and 1024 a turn."
   },
   {
    "id": "sys.write",
@@ -179,7 +179,7 @@
    "status": "v1",
    "why": "",
    "test": "host: partial audio write; eink wrong size",
-   "notes": "Audio and serial writes can be partial or dropped; the JS wrapper returns counts, never loops silently. Slice 4c: the audio part is bound (AudioOut.write, tests/audio_run.py); file, e-ink and serial parts follow their slices."
+   "notes": "Audio and serial writes can be partial or dropped; the JS wrapper returns counts, never loops silently. Slice 4c: the audio part is bound (AudioOut.write, tests/audio_run.py); file, e-ink and serial parts follow their slices. Slice 4d: SerialPort.write returns the bytes taken (at most 4096 a call); Eink.page/update/canvas().flush() return true (sent) or false (queued: the newest queued page is kept and sent when the panel limits allow)."
   },
   {
    "id": "sys.close",
@@ -397,14 +397,14 @@
    "kernel": "power_hold (22) op 1",
    "number": 22,
    "abi": "1.11",
-   "js": "power.hold({noBlank, noSlowdown}) -> Hold {release()}",
+   "js": "power.hold(reason, {noBlank = true, noSlowdown = false}) -> Hold {release(), released, reason}; power.holds",
    "shape": "sync",
    "errors": "EINVAL (no flags or unknown bits), EMFILE (-24, token table full), EOVERFLOW",
    "capability": "power",
-   "status": "v1",
-   "why": "",
-   "test": "host: acquire/release, double release, table full",
-   "notes": "Holds are released at app exit automatically (lifecycle, slice 3)."
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py PowerTests",
+   "notes": "At most 16 holds (the kernel's table); EMFILE beyond. Every hold is given back at stop (reported in the log). The default holds no blank only."
   },
   {
    "id": "sys.power.release",
@@ -412,14 +412,14 @@
    "kernel": "power_hold (22) op 0",
    "number": 22,
    "abi": "1.11",
-   "js": "Hold.release()",
+   "js": "Hold.release() (twice is a no-op)",
    "shape": "sync",
    "errors": "EINVAL (unknown token)",
    "capability": "power",
-   "status": "v1",
-   "why": "",
-   "test": "host: double release EINVAL",
-   "notes": ""
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py PowerTests holds",
+   "notes": "The runtime keeps the token; an app cannot release one twice or one it does not own, so the kernel's EBADF/EINVAL are never seen."
   },
   {
    "id": "sys.power.query",
@@ -427,14 +427,14 @@
    "kernel": "power_hold (22) op 2",
    "number": 22,
    "abi": "1.12",
-   "js": "power.asleep -> {noBlank:boolean, noSlowdown:boolean}; event 'sleep'/'wake' from the loop",
+   "js": "power.asleep -> {blank, slowdown}; power.screenDark; power.on('blank'|'wake', fn)",
    "shape": "sync",
    "errors": "EINVAL on a kernel older than 1.12 -> treated as awake",
    "capability": "power",
-   "status": "v1",
-   "why": "",
-   "test": "host: old kernel EINVAL maps to awake; blank state changes emit events once",
-   "notes": "JS must stop synthesis when blanked; audio writes are accepted and dropped while dark."
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py PowerTests PowerAudio",
+   "notes": "The loop looks at most every 100 ms and only while a listener or the audio pump needs it. While the screen is blank the audio pump does not synthesize or call onneed unless the app holds noBlank (the kernel drops audio then); it resumes on wake. screenDark is false while the app holds noBlank. An older kernel (EINVAL) is treated as lit."
   },
   {
    "id": "sys.power.timeouts",
@@ -446,8 +446,8 @@
    "shape": "sync",
    "errors": "EINVAL (> 86400 seconds)",
    "capability": "power",
-   "status": "v1",
-   "why": "",
+   "status": "later",
+   "why": "not bound in 4d: the kernel clears timeouts only at program end, so an app switch inside JS.ELF would leave the next app with them (gap G20)",
    "test": "host: 0 and 86400 limits",
    "notes": "Takes effect now; the OS owns the policy, so it is reset to the kernel defaults at app exit."
   },
@@ -637,13 +637,13 @@
    "kernel": "EINK_QUERY 0x40000",
    "number": 262144,
    "abi": "1.9",
-   "js": "eink.info -> {width:250,height:122,pageBytes,titleMax,markBytes,minIntervalMs,maxPerMinute}",
+   "js": "eink.info -> {width,height,pageBytes,titleMax,markBytes,minIntervalMs,maxPerMinute} (frozen)",
    "shape": "sync",
    "errors": "ENODEV",
    "capability": "eink",
-   "status": "v1",
-   "why": "",
-   "test": "host: limits as the kernel reports them",
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py EinkOpen",
    "notes": ""
   },
   {
@@ -652,14 +652,14 @@
    "kernel": "EINK_TITLE 0x40001",
    "number": 262145,
    "abi": "1.9",
-   "js": "eink.setTitle(name, {mark?: Uint8Array(200), build?})",
+   "js": "eink.setTitle(name, {mark?: Uint8Array(200), build?}) -> true (sent) or false (queued)",
    "shape": "sync",
    "errors": "EINVAL (name 1..16 bytes, tail not zero), EAGAIN (refresh rate limit)",
    "capability": "eink",
-   "status": "v1",
-   "why": "",
-   "test": "host: oversize name; EAGAIN pacing",
-   "notes": ""
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py EinkDrawing title",
+   "notes": "Goes through the same pacing and queue as pages (only the newest queued update is kept)."
   },
   {
    "id": "ioc.eink.clear",
@@ -667,14 +667,14 @@
    "kernel": "EINK_CLEAR 0x40002",
    "number": 262146,
    "abi": "1.9",
-   "js": "eink.release() (back to the kernel's screen); also automatic at app exit",
+   "js": "eink.release() (also at stop; a queued page is dropped)",
    "shape": "sync",
    "errors": "EAGAIN",
    "capability": "eink",
-   "status": "v1",
-   "why": "",
-   "test": "host: clear then page",
-   "notes": ""
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py EinkRelease",
+   "notes": "Cleared only when the limits allow it now; the runtime does not wait. The kernel clears at the end of the program regardless (G20)."
   },
   {
    "id": "ioc.serial.query",
@@ -682,13 +682,13 @@
    "kernel": "SERIAL_QUERY 0x60000",
    "number": 393216,
    "abi": "1.10",
-   "js": "serial.stats() -> {transport,txBytes,txDropped,rxBytes,rxDropped,txPending,rxPending}",
+   "js": "serial.stats() -> {transport,txBytes,txDropped,rxBytes,rxDropped,txPending,rxPending,appRead,appWritten,events}",
    "shape": "sync",
    "errors": "EINVAL",
    "capability": "serial",
-   "status": "v1",
-   "why": "",
-   "test": "host: counters after a drop",
+   "status": "bound",
+   "why": "slice 4d: tests/devices_run.py",
+   "test": "devices_run.py SerialTests",
    "notes": "Class 5 is unassigned; 6 is serial. No per-handle direction check after open."
   },
   {
@@ -903,6 +903,22 @@
    "problem": "AUDIO_QUERY does not expose the silence frames the ring counted, so an app sees underruns (one per dry millisecond tick) but not how long the gap was, and a lower rate costs the runtime a repeat loop. A player cannot learn that the screen is blanked (writes are dropped silently) except through power.asleep.",
    "owner": "kernel",
    "proposal": "expose silence_frames and a dropped-while-blank counter in sbx_audio_info; optionally 24000 and 16000 Hz opens",
+   "priority": "low"
+  },
+  {
+   "id": "G20",
+   "title": "No way to wait for or learn the e-ink and power limits, and the kernel keeps both after an app switch",
+   "problem": "The e-ink panel answers EAGAIN with no hint of when it will take an update (the runtime paces by the reported 1 s and 30 a minute and retries every 250 ms), a clear at app stop may be refused as too soon (the page then stays up until the program ends), and power timeouts persist until the program ends, so power.setTimeouts is left unbound.",
+   "owner": "kernel",
+   "proposal": "a retry-after in the EAGAIN reply or the info record, an e-ink clear that is not rate limited at an app boundary, and a way to restore the default power timeouts",
+   "priority": "low"
+  },
+  {
+   "id": "G21",
+   "title": "Serial write takes everything and drops silently",
+   "problem": "The kernel's write always reports every byte taken and counts what did not fit as dropped, so the runtime cannot return a short count the way audio does and an app learns of loss only from stats().txDropped; the host model takes only what fits to exercise the partial-write contract.",
+   "owner": "kernel",
+   "proposal": "report the bytes queued (a short count or EAGAIN) so the app can wait for room",
    "priority": "low"
   }
  ]

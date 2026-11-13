@@ -199,10 +199,52 @@ a.stats();   // {rate, capacity, queued, played, underruns, overruns, overrunFra
 ```
 
 - **One writer.** `audio.open({rate, channels, onneed, targetMs})` takes the kernel's `/dev/audio` (`EBUSY` if the app already holds it or another program does, `ENODEV` on a kernel older than 1.8). `close()` (or stop, which reports it as `audio 1`) drops what is queued and frees the device for the next app. The format is fixed at 48,000 stereo frames a second: `channels: 1` is doubled, and a `rate` that divides 48000 (8000, 12000, 16000, 24000, 48000) is repeated sample by sample. Other rates are `EINVAL`.
-- **Writes never block and may be partial.** `write(Int16Array)` (interleaved for two channels) queues what the 16,384-frame ring (341 ms) has room for, in whole frames, and returns how many frames it took: possibly fewer than you gave, possibly 0. Keep the rest and offer it later (`onneed` tells you when). The array must hold whole frames (`EINVAL`). A blanked screen drops audio silently (the call still succeeds); see `power.asleep` in a later slice.
+- **Writes never block and may be partial.** `write(Int16Array)` (interleaved for two channels) queues what the 16,384-frame ring (341 ms) has room for, in whole frames, and returns how many frames it took: possibly fewer than you gave, possibly 0. Keep the rest and offer it later (`onneed` tells you when). The array must hold whole frames (`EINVAL`). A blanked screen drops audio silently (the call still succeeds), so the pump stops while the screen is dark (see Power below).
 - **The refill pump.** With `onneed` set, the runtime looks at the ring every 20 ms and keeps it about `targetMs` (default 200, 20 to 300) full: it calls `onneed(frames)` with the room it sees, up to 4,096 kernel frames a turn, again while the app keeps writing, and not again until the next look when the app wrote nothing. The loop never sleeps more than 100 ms, so a ring that is a fifth full at worst still plays on through any single sleep. An exception in `onneed` is logged and the pump carries on.
 - **Tones.** `tone(hz, ms, volume = 1)` queues a square-wave beep (20 to 20,000 Hz; `hz` 0 is a rest; 32 queued at most, `EMFILE`); `melody(notes)` queues several. The runtime synthesizes them into the ring through the same pump (the kernel's own mixer tones are not an app call), so while tones are pending, `write()` returns 0 (tones own the ring) and `onneed` is not called. `stop()` forgets tones not yet written; what is already in the ring (up to `targetMs`) still plays.
 - **Counters.** `stats()` has the kernel's: `underruns` (one for each millisecond the ring ran dry, counted only after the first write), `queued`, `played`, `capacity`, in kernel frames; and the runtime's: `refused` (writes that took less than offered), `refills`, `gaps` (looks that found the ring empty), `writes`, `framesIn`. `overruns` stays 0 because the runtime asks for the room first and queues only that.
 - **Volume** is software on your writes and tones, `volume` 0 to 1 and `muted`; a muted app keeps its timing (frames still go through, as zeros).
 
-Status: all of this is host-tested against a model of the kernel's ring (`make -C js test`, `tests/audio_run.py`); none of it has run on a board, and the HDMI audio path itself is hardware-untested. Kernel wishes: G18 and G19.
+Status: all of this is host-tested against a model of the kernel's ring (`make -C js test`, `tests/audio_run.py`); none of it has run on a board, and the HDMI audio path itself is hardware-untested. Kernel wishes: G18 and G19. While the screen is blank the pump does not synthesize, does not call `onneed` and leaves queued tones queued, unless the app holds `noBlank` (below); it carries on at the next look after the wake.
+
+## E-ink, serial and power (slice 4d)
+
+An animated page on the 250x122 e-ink panel (needs `eink`). A page is 3,904 bytes: 32 bytes a row, bit 7 the leftmost pixel, 1 is black. The panel limits refreshes (1 s apart, 30 a minute); the runtime paces for you, so draw as often as you like and only the newest page goes out:
+
+```js
+const p = eink.open();                 // null when there is no panel (eink.available is false)
+const c = p.canvas();                  // clear, setPixel, fillRect, drawBitmap, flush; shapes are clipped to the page
+let n = 0;
+setInterval(() => { c.clear(); c.fillRect(n++ % 240, 50, 10, 10); c.flush(); }, 100);   // sent about once a second
+p.update(3, 5, 10, 3, new Uint8Array([0xff, 0xc0, 0, 0, 0x80, 0x40]));   // one region (x, y, w, h, bits); out of bounds is EINVAL
+p.setTitle('MY OS', { build: 'V0.1' }); p.page(new Uint8Array(3904)); p.stats(); p.release();
+```
+
+- `page(bytes)`, `update(x, y, w, h, bits, {send})`, `flush()`, `canvas().flush()` and `setTitle(...)` return `true` when the update went to the panel now and `false` when it was queued. A queued update is replaced by a newer one (`stats().replaced`) and sent by the loop when the kernel's limits allow (`min interval`, `maxPerMinute`, from `p.info`); a kernel `EAGAIN` is retried 250 ms later, never in a spin. `p.bits` is the page the runtime keeps, a `Uint8Array(3904)`.
+- One owner (`EBUSY`). `release()` and stop clear the panel back to the kernel's screen when an update may go at that moment (the kernel clears at the end of the program anyway); `close()` leaves the page up. A page still queued at stop is dropped.
+
+Serial (needs `serial`) is a byte channel to the host, nonblocking, with partial reads and writes:
+
+```js
+const s = serial.open({ mode: 'rw' });      // 'r', 'w' or 'rw'; one owner (EBUSY); ENODEV without the link
+s.on('data', (bytes) => s.write(bytes));    // echo: bytes is a Uint8Array of at most 256 bytes
+const buf = new Uint8Array(64), n = s.read(buf);   // n bytes now, 0 when nothing waits
+const took = s.write('hello\n');            // a string is sent as UTF-8; took may be less than its length
+s.stats();                                   // the kernel's counters plus appRead, appWritten, events
+```
+
+The 'data' event is fed by a poll every 20 ms with at most 1,024 bytes a turn, so a flood cannot starve the loop: the kernel's 256-byte buffer keeps what it can and counts the rest in `rxDropped`. With no listener nothing is read for you. A `write` returns what was taken (up to 4,096 a call; the real kernel takes everything and counts overflow in `txDropped`, gap G21).
+
+Power (needs `power`): keep the screen lit while you play sound or read, and learn when it blanks:
+
+```js
+const h = power.hold('music');                       // noBlank by default; {noSlowdown: true} for the clock too; 16 holds at most
+power.on('blank', () => console.log('screen off')); power.on('wake', () => console.log('back'));
+power.asleep;      // {blank, slowdown}: what the kernel has put to sleep now
+power.screenDark;  // true while the screen is blank and this app holds no noBlank
+h.release();       // twice is fine; stop gives back every hold and logs it
+```
+
+The kernel drops audio while the screen is blank, so the audio pump stops synthesizing then (see Audio). An app that wants sound through a blank screen takes a `noBlank` hold, which also keeps the screen lit. The blank state is polled at most every 100 ms, only while a listener or the audio pump needs it. A kernel older than 1.12 reports "lit". `power.setTimeouts` is not bound (gap G20).
+
+Status: host-tested against models of the panel, the link and the power table (`tests/devices_run.py`); none of it has run on a board, and the e-ink and serial paths are hardware-untested in the kernel. Kernel wishes: G20 and G21.
