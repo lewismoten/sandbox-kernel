@@ -2,7 +2,7 @@
  * Original work (Claude Sonnet 5.5). Bounded CEC session log. */
 #include "cec_log.h"
 
-void cec_log_init(struct cec_log *l) { l->len = 0; l->head_end = 0; l->dropped = 0; l->lines = 0; l->dirty = 0; l->text[0] = 0; }
+void cec_log_init(struct cec_log *l) { l->len = 0; l->head_end = 0; l->dropped = 0; l->lines = 0; l->dirty = 0; l->text[0] = 0; l->win_ms = 0; l->win_n = 0; l->shed = 0; }
 
 static uint32_t put_num(char *o, uint32_t n) {
     char t[11]; unsigned k = 0; uint32_t w = 0;
@@ -11,7 +11,24 @@ static uint32_t put_num(char *o, uint32_t n) {
     return w;
 }
 
+static void put_line(struct cec_log *l, uint32_t now_ms, const char *text);
+void cec_log_flush(struct cec_log *l, uint32_t now_ms) {
+    if ((uint32_t)(now_ms - l->win_ms) < CEC_LOG_WINDOW_MS) return;
+    l->win_ms = now_ms; l->win_n = 0;
+    if (l->shed) {
+        char b[40]; uint32_t n = 0; const char *h = "dropped ";
+        while (*h) b[n++] = *h++;
+        n += put_num(b + n, l->shed); h = " lines (rate limit)";
+        while (*h) b[n++] = *h++;
+        b[n] = 0; l->shed = 0; l->win_n = 1; put_line(l, now_ms, b);
+    }
+}
 void cec_log_line(struct cec_log *l, uint32_t now_ms, const char *text) {
+    cec_log_flush(l, now_ms);
+    if (l->win_n >= CEC_LOG_RATE) { l->shed++; l->dirty = 1; return; }
+    l->win_n++; put_line(l, now_ms, text);
+}
+static void put_line(struct cec_log *l, uint32_t now_ms, const char *text) {
     char line[CEC_LOG_LINE + 12]; uint32_t n = put_num(line, now_ms);
     line[n++] = ' ';
     for (unsigned i = 0; text[i] && i < CEC_LOG_LINE - 1u; i++)

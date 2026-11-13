@@ -23,7 +23,7 @@
 bool storage_ready,updates_ready;
 uint32_t boot_slot,boot_generation,boot_trial;
 const char *last_error="none";
-void log_line(const char *s) {console_log(s);uart_puts(s);uart_puts("\r\n");usb_log(s);}
+void log_line(const char *s) {console_log(s);uart_puts(s);uart_puts("\r\n");usb_log(s);cec_hw_note(s);}
 void error(const char *s) {last_error=s;log_line(s);}
 void kernel_main(void) {
  uint32_t boot_time=micros();

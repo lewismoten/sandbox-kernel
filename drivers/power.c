@@ -11,6 +11,7 @@
 static uint32_t fast_hz,slow_hz,activity,applied,last_target;
 static uint32_t pending,pending_target,pending_mode,uncertain,mode_generation;
 static uint64_t retry_at;
+static bool was_asleep;static uint32_t last_holds;
 void power_hw_init(void) {
  uint32_t fast[2]={3,0},slow[2]={3,0};
  if(property(0x30002,fast,2)) fast_hz=fast[1];
@@ -25,9 +26,12 @@ static void clock_log(uint32_t hz) {
 }
 void power_hw_task(void) {
  uint64_t now=clock_us();
- if(activity!=input_activity) {activity=input_activity;power_input(now);retry_at=0;}
+ if(activity!=input_activity) {activity=input_activity;power_input(now);retry_at=0;if(was_asleep||(applied&POWER_NO_BLANK))log_line("POWER wake reason: input");}
+ {uint32_t h=0;for(unsigned i=0;i<POWER_HOLDS;i++)h|=power0.flags[i];
+  if(h!=last_holds) {last_holds=h;log_line(h?(h&POWER_NO_BLANK?"POWER hold: keep screen on":"POWER hold: keep full speed"):"POWER hold: none");}}
  uint32_t target=power_target(now);
  audio0.asleep=(target&POWER_NO_BLANK)!=0; /* sound is dropped while the screen is dark (ABI 1.12) */
+ if(audio0.asleep!=was_asleep) {was_asleep=audio0.asleep;log_line(was_asleep?"POWER audio asleep":"POWER audio awake");}
  if(mode_generation!=fb_mode_generation) {
   mode_generation=fb_mode_generation;
   if((target|applied|pending)&POWER_NO_BLANK) uncertain|=POWER_NO_BLANK;

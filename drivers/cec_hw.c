@@ -25,7 +25,8 @@
 #define SAVE_EVERY_MS 30000u      /* a save rewrites the whole file with the main loop held (146 ms at 4.5 KB), so: 30 s apart, and only for 6 new lines; after 10 minutes one write per 2 minutes */
 #define SAVE_SLOW_AFTER_MS 600000u
 #define SAVE_SLOW_EVERY_MS 120000u
-#define SAVE_MAX 400u
+#define SAVE_OS_EVERY_MS 10000u   /* while GMOS runs: the snapshot is a RAM copy and the card write is the bounded pump, so a freeze leaves at most 10 s unsaved */
+#define SAVE_MAX 2000u
 
 extern bool storage_ready;
 bool protocol_busy(void);
@@ -99,9 +100,10 @@ void cec_hw_init(void) {
 }
 
 static void save_log(uint32_t now) {
-    if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || os_running() || saves >= SAVE_MAX) return;
-    if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS))) return;
-    if (saves > 1u && drv.log.lines + drv.log.dropped < saved_total + 6u && now - last_save_ms < 600000u) return;   /* little new: wait */
+    if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || saves >= SAVE_MAX) return;   /* os_running() no longer skips: fatlog_pump is bounded and idle while card_busy */
+    uint32_t every = os_running() ? SAVE_OS_EVERY_MS : (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS);
+    if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < every)) return;
+    if (!os_running() && saves > 1u && drv.log.lines + drv.log.dropped < saved_total + 6u && now - last_save_ms < 600000u) return;   /* little new: wait */
     drv.log.dirty = 0; last_save_ms = now; saves++; saved_total = drv.log.lines + drv.log.dropped;
     uint32_t t0 = micros(), bytes = drv.log.len;
     if (fatlog_set(FATLOG_CEC, (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");   /* copied to RAM; the main loop writes it a sector at a time (fatlog_pump) */
@@ -121,10 +123,17 @@ void cec_hw_task(void) {
     uint32_t now = now_ms();
     power_task();
     cec_drv_task(&drv, now);
+    cec_log_flush(&drv.log, now);
     if ((uint32_t)(now - loop_ms) >= LOOP_LINE_MS) {   /* the breadcrumb: the last of these in CEC.TXT says the loop was turning, and which task was slow */
         char b[80]; loop_ms = now; looptrace_take(b, sizeof b, os_running()); cec_log_line(&drv.log, now, b);
     }
     save_log(now);
+}
+
+/* POWER and 'SD last' lines from log_line (core/main.c) go into the same saved log, through the same rate limit. */
+void cec_hw_note(const char *s) {
+    if (!up || !s) return;
+    if ((s[0]=='P'&&s[1]=='O'&&s[2]=='W'&&s[3]=='E'&&s[4]=='R'&&s[5]==' ') || (s[0]=='S'&&s[1]=='D'&&s[2]==' '&&s[3]=='l'&&s[4]=='a'&&s[5]=='s'&&s[6]=='t')) cec_log_line(&drv.log, now_ms(), s);
 }
 
 /* A reader that connects late gets the newest CEC lines again (kernel boot_summary). */

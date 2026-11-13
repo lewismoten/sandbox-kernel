@@ -8,10 +8,15 @@
 #define CEC_LOG_BYTES 24576u
 #define CEC_LOG_HEAD 6144u
 #define CEC_LOG_LINE 128u
-struct cec_log { char text[CEC_LOG_BYTES + 1u]; uint32_t len, head_end, dropped, lines; uint8_t dirty; };
+#define CEC_LOG_RATE 30u          /* a remote-button storm cannot flood the card or cost the loop */
+#define CEC_LOG_WINDOW_MS 1000u
+struct cec_log { char text[CEC_LOG_BYTES + 1u]; uint32_t len, head_end, dropped, lines; uint8_t dirty;
+    uint32_t win_ms, win_n, shed; };   /* rate limit: at most CEC_LOG_RATE lines per CEC_LOG_WINDOW_MS, the rest counted in shed */
 void cec_log_init(struct cec_log *l);
 /* Appends "<ms> <text>\n" (text cut to CEC_LOG_LINE-1 characters, control characters shown as ?). */
 void cec_log_line(struct cec_log *l, uint32_t now_ms, const char *text);
+/* Writes the "dropped K lines" marker once the window has passed (cec_hw_task calls it each pass, so a storm's end is still marked). */
+void cec_log_flush(struct cec_log *l, uint32_t now_ms);
 /* Up to n lines from the end, copied into out (NUL terminated, newline per line) for USB replay. */
 uint32_t cec_log_tail(const struct cec_log *l, unsigned n, char *out, uint32_t cap);
 #endif

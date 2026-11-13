@@ -65,6 +65,7 @@ void boot_note(const char *s); /* log now and again for each new USB reader */
 void boot_summary(void);
 void cec_hw_init(void); /* HDMI-CEC: after the firmware has HDMI up (drivers/cec_hw.c) */
 void cec_hw_task(void);
+void cec_hw_note(const char *s); /* log_line feeds POWER and 'SD last' lines to the saved CEC log */
 void cec_hw_report(void); /* newest CEC log lines to the USB log, for a late reader */
 void asset_probe(void);
 extern const char *last_error;

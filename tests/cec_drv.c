@@ -253,9 +253,24 @@ static void test_reset_keeps_receiver(void) {
 static void test_log_keeps_head(void) {
     static struct cec_log l; cec_log_init(&l);
     cec_log_line(&l, 0, "session boot x");
-    for (unsigned i = 0; i < 3000; i++) cec_log_line(&l, 1u + i, "send timed out; c1 00144FFC c5 004CBCB4 st 00000002 hpd 0");
-    assert(l.len <= CEC_LOG_BYTES && l.dropped > 0 && !strncmp(l.text, "0 session boot x\n", 17) && strstr(l.text, "\n3000 send"));
+    for (unsigned i = 0; i < 3000; i++) cec_log_line(&l, 1u + i * 40u, "send timed out; c1 00144FFC c5 004CBCB4 st 00000002 hpd 0");   /* 25 a second: under the rate limit */
+    assert(l.len <= CEC_LOG_BYTES && l.dropped > 0 && !strncmp(l.text, "0 session boot x\n", 17) && strstr(l.text, "\n119961 send") && !l.shed);
     assert(l.text[l.len - 1] == '\n' && l.text[l.len] == 0);
+}
+
+/* A 1,000-frame remote storm (one every 2 ms): the log takes at most CEC_LOG_RATE lines a window, counts the rest,
+   the head survives, and the end is marked "dropped K lines" even when nothing else is logged afterwards. */
+static void test_log_storm(void) {
+    static struct cec_log l; cec_log_init(&l);
+    cec_log_line(&l, 0, "session boot x"); cec_log_line(&l, 5, "POWER HDMI blank, CEC standby");
+    for (unsigned i = 0; i < 1000; i++) { cec_log_line(&l, 100u + i * 2u, "rx 04:44:41 key"); assert(l.len <= CEC_LOG_BYTES); }
+    unsigned kept = 0; for (uint32_t i = 0; i < l.len; i++) kept += l.text[i] == '\n';
+    assert(kept <= 2u * CEC_LOG_RATE + 2u && l.shed > 900u);
+    assert(!strncmp(l.text, "0 session boot x\n", 17) && strstr(l.text, "POWER HDMI blank"));
+    uint32_t shed = l.shed; cec_log_flush(&l, 2100u + 5u);     /* the storm is over; the main loop's flush writes the marker */
+    char want[48]; snprintf(want, sizeof want, "dropped %u lines (rate limit)\n", (unsigned)shed);
+    assert(l.shed == 0 && l.len > strlen(want) && !strcmp(l.text + l.len - strlen(want), want));
+    uint32_t len = l.len; cec_log_flush(&l, 9000u); assert(l.len == len);   /* nothing more to say */
 }
 
 static void test_edid_log_timing(void) {
@@ -434,6 +449,7 @@ int main(void) {
     test_flags_without_status_bit(); puts("PASS flags without the status bit");
     test_reset_keeps_receiver(); puts("PASS reset keeps the receiver");
     test_log_keeps_head(); puts("PASS log keeps its head");
+    test_log_storm(); puts("PASS a 1,000-frame storm is rate limited and its end marked");
     test_edid_log_timing(); puts("PASS edid, log, timing");
     test_no_address_refresh(); puts("PASS no-address driver still refreshes the display address");
     test_tv_session_after_sticky_c5(); puts("PASS TV session with c5 bit 23 stuck high");
