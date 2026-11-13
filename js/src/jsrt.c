@@ -587,7 +587,13 @@ static JSValue js_query_all(JSContext *c, JSValueConst t, int n, JSValueConst *a
 /* The rest of N. */
 static JSValue js_focused(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)c; (void)t; (void)n; (void)a; return obj_of(dom_focused);}
 static JSValue js_now(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; (void)a; return JS_NewFloat64(c, now_ms());}
-static JSValue js_wake_at(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; double d; if (JS_ToFloat64(c, &d, a[0])) return JS_EXCEPTION; wake_at_ms = d; return JS_UNDEFINED;}
+static JSValue js_wake_at(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; double d; if (JS_ToFloat64(c, &d, a[0])) return JS_EXCEPTION;
+  /* ms * 1e6 must fit 64 bits of ns (about 1.8e13 ms, 584 years): a timer beyond that, or NaN, never wakes the loop (a wrapped sum
+     would read as "due" and the loop would spin, asking for a 1 ns sleep each turn) */
+  wake_at_ms = d == d && d < 9e12 ? d : 1e300;
+  return JS_UNDEFINED;
+}
 static JSValue js_want_frame(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; (void)a; if (need(c, APP_CAP_DISPLAY, "requestAnimationFrame")) return JS_EXCEPTION; want_frame = 1; return JS_UNDEFINED;}
 static JSValue js_log(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; size_t len; const char *s = JS_ToCStringLen(c, &len, a[0]);

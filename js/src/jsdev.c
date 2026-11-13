@@ -238,7 +238,7 @@ static JSValue js_seed_random(JSContext *c, JSValueConst t, int n, JSValueConst 
 static uint8_t down[KEYS / 8], released[KEYS / 8];
 static int attached = 1;
 static unsigned queues;
-static uint32_t last_us(void) {return (uint32_t)(plat_clock_ns() / 1000u);}
+static int64_t last_us(void) {return (int64_t)(plat_clock_ns() / 1000u);} /* whole 64-bit microseconds, the same clock as sandbox.now(): a 32-bit value wraps in 71 minutes */
 static void queue_release(void *u) {(void)u; if (queues) queues--;}
 static void queue_finalizer(JSRuntime *r, JSValueConst v) {
   (void)r; uintptr_t id = (uintptr_t)JS_GetOpaque(v, queue_class);
@@ -285,20 +285,20 @@ static void reset_keys(const char *reason) {
   uint32_t j = 0;
   for (uint32_t k = 0; k < KEYS; k++) if (down[k / 8] >> (k % 8) & 1) {if (queues) JS_SetPropertyUint32(dctx, arr, j++, JS_NewUint32(dctx, k));}
   memcpy(released, down, sizeof down); memset(down, 0, sizeof down);
-  if (queues) raw(3, JS_NewString(dctx, reason), arr, JS_NewUint32(dctx, last_us()));
+  if (queues) raw(3, JS_NewString(dctx, reason), arr, JS_NewInt64(dctx, last_us()));
 }
 unsigned jsdev_input(uint16_t type, uint16_t code, int32_t value) {
   if (type == 1) {
     if (code < KEYS) {if (value) down[code / 8] |= (uint8_t)(1u << (code % 8)); else down[code / 8] &= (uint8_t)~(1u << (code % 8));}
     if (!rng_fixed) {rs[0] ^= plat_clock_ns() * 0x9e3779b97f4a7c15ull + code; rs[1] ^= rs[0] >> 7;}
-    if (queues) raw(0, JS_NewUint32(dctx, code), JS_NewInt32(dctx, value), JS_NewUint32(dctx, last_us()));
+    if (queues) raw(0, JS_NewUint32(dctx, code), JS_NewInt32(dctx, value), JS_NewInt64(dctx, last_us()));
     return 0;
   }
   if (type == 0 && code == 3) {reset_keys("dropped"); return 1;} /* SYN_DROPPED: the kernel lost events, so no key can be trusted */
-  if (type == PLAT_EV_ATTACH) {attached = 1; if (queues) raw(1, JS_NewUint32(dctx, last_us()), JS_UNDEFINED, JS_UNDEFINED); return 0;}
+  if (type == PLAT_EV_ATTACH) {attached = 1; if (queues) raw(1, JS_NewInt64(dctx, last_us()), JS_UNDEFINED, JS_UNDEFINED); return 0;}
   if (type == PLAT_EV_DETACH) {
     attached = 0;
-    if (queues) raw(2, JS_NewUint32(dctx, last_us()), JS_UNDEFINED, JS_UNDEFINED);
+    if (queues) raw(2, JS_NewInt64(dctx, last_us()), JS_UNDEFINED, JS_UNDEFINED);
     reset_keys("detached"); return 1;
   }
   return 0;

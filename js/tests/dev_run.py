@@ -289,6 +289,28 @@ setTimeout(() => sys.exit(0), 300);
         self.assertEqual(t['second'], '30')
 
 
+class LongUptime(unittest.TestCase):
+    """Review 2026-11-13: a kernel up more than 71 minutes (2^32 microseconds) still gives key times on sandbox.now()'s clock, and a
+    timer too far away to count in nanoseconds does not wake the loop."""
+
+    def test_key_time_is_not_32_bit(self):
+        code = PRE + """
+const q = input.open();
+q.on('key', (e) => { const n = sandbox.now(); T('k', (e.time > 4294967296) + ' ' + (Math.abs(e.time - n) < 100000)); sys.exit(0); });
+"""
+        rc, t, rest, _ = go(code, caps=('input', 'time'), args=['--keys', '50:30:1', '--vstart-s', '5000'])
+        self.assertEqual(rc, 0, rest)
+        self.assertEqual(t['k'], 'true true')
+
+    def test_far_timer_does_not_spin(self):
+        code = PRE + "setTimeout(() => T('late', 1), 1e15); setTimeout(() => T('soon', 1), 100);\n"
+        rc, t, rest, _ = go(code, args=['--vstart-s', '5000', '--soak'], ms='1000')
+        self.assertEqual(rc, 0, rest)
+        self.assertIn('soon', t); self.assertNotIn('late', t)
+        steps = [int(m.group(1)) for l in rest for m in [re.search(r'soak steps (\d+)', l)] if m]
+        self.assertTrue(steps and steps[0] < 300, steps)
+
+
 class Leaks(unittest.TestCase):
     def cycles(self, code, caps=ALL):
         d = pathlib.Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, d, True)

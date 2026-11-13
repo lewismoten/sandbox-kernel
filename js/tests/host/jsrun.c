@@ -22,7 +22,7 @@
 
 static const char *root;
 static int vclock;
-static uint64_t vnow;
+static uint64_t vnow, voff; /* voff: --vstart-s, the virtual clock's first reading (a long-uptime kernel) */
 static uint32_t fb[PLAT_SURFACE / 4];
 static uint32_t mode_w = PLAT_W, mode_h = PLAT_H, mode_d = 32;
 static uint8_t palette[768];
@@ -386,6 +386,7 @@ int main(int argc, char **argv) {
   for (int i = 3; i < argc; i++) {
     if (!strcmp(argv[i], "--ms") && i + 1 < argc) ms = strtoull(argv[++i], 0, 10);
     else if (!strcmp(argv[i], "--vclock")) vclock = 1;
+    else if (!strcmp(argv[i], "--vstart-s") && i + 1 < argc) voff = strtoull(argv[++i], 0, 10) * 1000000000ull; /* with --vclock: the clock starts here, keys and --ms are relative to it */
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) {have_seed = 1; seed_value = strtoull(argv[++i], 0, 10);} /* Math.random starts from this, as a test */
     else if (!strcmp(argv[i], "--seed-live") && i + 1 < argc) {have_seed = seed_live = 1; seed_value = strtoull(argv[++i], 0, 10);} /* the same, but key timings are still mixed in (a test of that) */
     else if (!strcmp(argv[i], "--sleepstat")) sleepstat = 1; /* at the end: HOST sleeps N max_us M (the longest single sleep the loop asked for) */
@@ -501,9 +502,10 @@ int main(int argc, char **argv) {
     printf("CYCLES %u blocks first %ld last %ld leaks %u open %u\n", cycles, first, blocks(), leaks, jsrt_handles_open());
     return 0;
   }
+  if (vclock && voff) {vnow = voff; for (int k = 0; k < nkeys; k++) keys[k].at += voff;}
   const char *dir = !strcmp(argv[2], "--picker") ? 0 : argv[2];
   if (autorun ? jsapp_autorun(heap) : launcher ? jsapp_start(dir, heap) : jsrt_start(dir, heap)) {jsrt_stop(); return 1;}
-  uint64_t end = ms * 1000000ull;
+  uint64_t end = voff + ms * 1000000ull;
   for (;;) {
     uint64_t s0 = real_ns();
     uint64_t wake = launcher ? jsapp_step() : jsrt_step();
