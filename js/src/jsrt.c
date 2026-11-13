@@ -17,6 +17,7 @@
 #include "handle.h"
 #include "jsfs.h"
 #include "jsdev.h"
+#include "jsaudio.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
@@ -786,6 +787,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   JS_SetPropertyFunctionList(ctx, native, native_fns, (int)(sizeof native_fns / sizeof native_fns[0]));
   jsfs_init(rt, ctx, native);
   jsdev_init(rt, ctx, native);
+  jsaudio_init(ctx, native);
   JSValue body = new_element(ctx, DOM_DIV); /* the root the tree draws from */
   struct jel *bj = jel_of(body);
   dom_delete(bj->e); bj->e = dom_body; dom_body->js = bj;
@@ -844,6 +846,7 @@ uint64_t jsrt_step(void) {
   if (exited) return 0;
   uint64_t now = plat_clock_ns();
   jsdev_sleeps_due(now);
+  jsaudio_pump(now); /* keeps the audio ring fed: onneed(frames), tones; bounded, never waits */
   if (now_ms() >= wake_at_ms) {
     wake_at_ms = 1e300;
     JSValue a = JS_NewFloat64(ctx, now_ms());
@@ -887,7 +890,7 @@ uint64_t jsrt_step(void) {
   jsrt_stats.presents += n;
   if (exited) return 0;
   now = plat_clock_ns();
-  uint64_t wake = more ? now + 1 : jsdev_wake(now); /* input every 10 ms (100 ms with no device), or an earlier sleep; never past the chunk */
+  uint64_t wake = more ? now + 1 : jsaudio_wake(now, jsdev_wake(now)); /* input every 10 ms (100 ms with no device), or an earlier sleep; never past the chunk */
   if (want_frame && next_frame_ns < wake) wake = next_frame_ns;
   if (wake_at_ms < 1e300) {uint64_t w = t0_ns + (uint64_t)(wake_at_ms * 1e6); if (w < wake) wake = w;}
   if (game_started && PROF->wake) {uint64_t w = PROF->wake(now); if (w && w < wake) wake = w;}

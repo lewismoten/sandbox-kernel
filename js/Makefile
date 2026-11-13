@@ -30,7 +30,7 @@ ARMF := -mcpu=arm1176jzf-s -marm -mfloat-abi=soft -Os -ffunction-sections -fdata
 QJSFLAGS := $(ARMF) -D__DJGPP -DJS_HAVE_THREADS=0 -DNDEBUG -Wno-implicit-function-declaration -w
 JSFLAGS := $(ARMF) -std=gnu11 $(WARN) -Wno-main $(JS_PROFILE_FLAGS) -I$(SDK)/include -Isrc -isystem third_party/quickjs-ng
 LFLAGS := -nostartfiles -T$(SDK)/lib/sandbox.ld -Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--gc-sections
-JSC := src/jsrt.c src/dom.c src/gif.c src/font_data.c src/app.c src/handle.c src/jsfs.c src/jsdev.c
+JSC := src/jsrt.c src/dom.c src/gif.c src/font_data.c src/app.c src/handle.c src/jsfs.c src/jsdev.c src/jsaudio.c
 JSBOARD := src/main.c src/plat_sbx.c src/sys.c
 HOSTDIR := $(BUILD)/host
 .PHONY: all host host-profiletest host-appcheck test size repro clean

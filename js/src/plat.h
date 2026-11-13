@@ -46,3 +46,11 @@ int plat_palette(const uint8_t *pal); /* 256 entries, 6-bit VGA values */
 void plat_present(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 /* The next input event (Linux type/code/value): 1, or 0 when none is waiting. */
 int plat_event(uint16_t *type, uint16_t *code, int32_t *value);
+/* Audio (slice 4c, ABI 1.8 /dev/audio): stereo S16 at 48000 frames a second, one writer, a 16384-frame ring. All return 0 or a
+   negative errno (-16 EBUSY, -19 ENODEV when the kernel has no /dev/audio, -13 EACCES). plat_audio_write queues what fits and sets *taken
+   (0 when the ring is full: the kernel's EAGAIN is not an error); it never blocks. plat_audio_close drops what is queued. */
+struct plat_audio_info {uint64_t rate, capacity, queued, played, underruns, overruns, overrun_frames;};
+int plat_audio_open(void);
+int plat_audio_write(const int16_t *lr, uint32_t frames, uint32_t *taken);
+int plat_audio_query(struct plat_audio_info *info);
+void plat_audio_close(void);

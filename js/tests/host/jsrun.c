@@ -193,6 +193,42 @@ uint64_t plat_entropy(int *fixed) {
 void plat_reset_input(void) {
   while (next_key < nkeys && keys[next_key].at <= plat_clock_ns()) next_key++;
 }
+/* The kernel's 48 kHz audio ring (docs/audio-device.md): 16384 frames, whole frames, never blocks (full is a short count or 0),
+   drained by the virtual clock at 48 frames a millisecond; a millisecond that finds the ring short counts one underrun, but only
+   after the first write of an open. --no-audio: no /dev/audio (ENODEV); --audio-busy: another program holds it (EBUSY). */
+#define AU_CAP 16384u
+static int au_open, au_busy, au_none, au_first;
+static FILE *au_dump; /* --audio-dump file: every frame the ring accepted, as the kernel would get it (S16 stereo LE) */
+static uint64_t au_last, au_queued, au_played, au_under, au_over, au_over_frames;
+static void au_drain(void) {
+  uint64_t now = plat_clock_ns(), ms = (now - au_last) / 1000000ull;
+  if (!ms) return;
+  au_last += ms * 1000000ull;
+  if (!au_first) return;
+  uint64_t due = ms * 48u;
+  if (au_queued >= due) {au_queued -= due; au_played += due; return;}
+  au_under += ms - au_queued / 48u; au_played += au_queued; au_queued = 0;
+}
+int plat_audio_open(void) {
+  if (au_none) return -19;
+  if (au_busy || au_open) return -16;
+  au_open = 1; au_first = 0; au_queued = au_played = au_under = au_over = au_over_frames = 0; au_last = plat_clock_ns(); return 0;
+}
+int plat_audio_write(const int16_t *lr, uint32_t frames, uint32_t *taken) {
+  (void)lr; *taken = 0;
+  if (!au_open) return -9;
+  au_drain(); au_first = 1;
+  uint64_t room = AU_CAP - au_queued, n = frames < room ? frames : room;
+  if (n < frames) {au_over++; au_over_frames += frames - n;}
+  if (au_dump) {fwrite(lr, 4, n, au_dump); fflush(au_dump);}
+  au_queued += n; *taken = (uint32_t)n; return 0;
+}
+int plat_audio_query(struct plat_audio_info *o) {
+  if (!au_open) return -9;
+  au_drain();
+  *o = (struct plat_audio_info){48000, AU_CAP, au_queued, au_played, au_under, au_over, au_over_frames}; return 0;
+}
+void plat_audio_close(void) {au_open = 0; au_queued = 0;}
 /* Live heap blocks, for --cycles (a leak check): the system allocator's own count. */
 #ifdef __APPLE__
 #include <malloc/malloc.h>
@@ -211,6 +247,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--seed") && i + 1 < argc) {have_seed = 1; seed_value = strtoull(argv[++i], 0, 10);} /* Math.random starts from this, as a test */
     else if (!strcmp(argv[i], "--seed-live") && i + 1 < argc) {have_seed = seed_live = 1; seed_value = strtoull(argv[++i], 0, 10);} /* the same, but key timings are still mixed in (a test of that) */
     else if (!strcmp(argv[i], "--sleepstat")) sleepstat = 1; /* at the end: HOST sleeps N max_us M (the longest single sleep the loop asked for) */
+    else if (!strcmp(argv[i], "--no-audio")) au_none = 1;
+    else if (!strcmp(argv[i], "--audio-dump") && i + 1 < argc) au_dump = fopen(argv[++i], "wb");
+    else if (!strcmp(argv[i], "--audio-busy")) au_busy = 1;
     else if (!strcmp(argv[i], "--launcher")) launcher = 1;
     else if (!strcmp(argv[i], "--autorun")) autorun = launcher = 1; /* start as JS.ELF does: from /sd/OS/AUTORUN.TXT (argv[2] is ignored) */
     else if (!strcmp(argv[i], "--strict")) jsrt_require_manifest = 1;

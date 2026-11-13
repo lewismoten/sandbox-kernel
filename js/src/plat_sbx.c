@@ -147,3 +147,27 @@ void plat_reset_input(void) {
   at = n = 0;
   if (have_input) {sbx_input_state st; sbx_input_state_get(in_fd, &st);}
 }
+/* Audio: /dev/audio is opened for the one writer and closed again at stop (ABI 1.8; EAGAIN from a full ring is a short count). */
+static uint64_t au_fd; static int au_open;
+int plat_audio_open(void) {
+  if (au_open) return -SBX_EBUSY;
+  int32_t s = sbx_open("/dev/audio", 10, SBX_O_WRONLY, &au_fd);
+  if (s == -SBX_ENOENT) return -19; /* a kernel older than 1.8 has no /dev/audio */
+  if (s) return s;
+  au_open = 1; return 0;
+}
+int plat_audio_write(const int16_t *lr, uint32_t frames, uint32_t *taken) {
+  uint64_t done = 0; *taken = 0;
+  if (!au_open) return -SBX_EBADF;
+  int32_t s = sbx_write(au_fd, lr, frames * 4u, &done);
+  if (s == -SBX_EAGAIN) return 0;
+  if (s) return s;
+  *taken = (uint32_t)(done / 4u); plat_heartbeat(); return 0;
+}
+int plat_audio_query(struct plat_audio_info *o) {
+  sbx_audio_info i; int32_t s = au_open ? sbx_audio_query(au_fd, &i) : -SBX_EBADF;
+  if (s) return s;
+  o->rate = i.rate; o->capacity = i.capacity_frames; o->queued = i.queued_frames; o->played = i.played_frames;
+  o->underruns = i.underruns; o->overruns = i.overruns; o->overrun_frames = i.overrun_frames; return 0;
+}
+void plat_audio_close(void) {if (au_open) {sbx_close(au_fd); au_open = 0;}}

@@ -303,6 +303,95 @@
         }
     };
   }
+  // Audio (slice 4c): audio.open({rate, channels, onneed, targetMs}) -> the one writer on the kernel's 48 kHz ring. write(Int16Array)
+  // returns the frames it took (maybe fewer, maybe 0) and never blocks; onneed(frames) is called when the ring has room;
+  // tone(hz, ms, volume) queues a square-wave beep; stats() has the kernel's counters; volume, muted, close().
+  {
+    let cur = null;
+    N.onAudio = (id, frames) => {
+      const a = cur;
+      if (!a || a._id !== id || typeof a.onneed !== 'function') return;
+      try {
+        a.onneed(frames);
+      } catch (err) {
+        report(err);
+      }
+    };
+    g.audio = {
+      open(opts) {
+        const o = opts || {};
+        const id = N.audioOpen(o.rate, o.channels, o.targetMs);
+        let vol = 1,
+          muted = false,
+          fn = null,
+          closed = false;
+        const push = () => N.audioSet(id, Math.round(vol * 256), muted ? 1 : 0, typeof fn === 'function' ? 1 : 0);
+        const live = () => {
+          if (closed) throw new Error('EBADF: the audio device is closed');
+        };
+        const a = {
+          _id: id,
+          write(pcm) {
+            live();
+            return N.audioWrite(id, pcm);
+          },
+          tone(hz, ms, volume) {
+            live();
+            const v = volume === undefined ? 1 : volume;
+            if (!(v >= 0 && v <= 1)) throw new RangeError('EINVAL: tone volume 0 to 1');
+            N.audioTone(id, Math.round(hz), Math.ceil(ms), Math.round(v * 256));
+          },
+          // notes: [[hz, ms], ...] (hz 0 rests), queued in order
+          melody(notes, volume) {
+            for (const n of notes) a.tone(n[0], n[1], volume);
+          },
+          stop() {
+            live();
+            N.audioStop(id);
+          },
+          stats() {
+            live();
+            return N.audioStats(id);
+          },
+          get onneed() {
+            return fn;
+          },
+          set onneed(f) {
+            if (f !== null && f !== undefined && typeof f !== 'function') throw new TypeError('audio.onneed: a function');
+            fn = f || null;
+            if (!closed) push();
+          },
+          get volume() {
+            return vol;
+          },
+          set volume(v) {
+            if (!(v >= 0 && v <= 1)) throw new RangeError('EINVAL: volume 0 to 1');
+            vol = v;
+            if (!closed) push();
+          },
+          get muted() {
+            return muted;
+          },
+          set muted(m) {
+            muted = !!m;
+            if (!closed) push();
+          },
+          get closed() {
+            return closed;
+          },
+          close() {
+            if (closed) return;
+            closed = true;
+            if (cur === a) cur = null;
+            N.audioClose(id);
+          },
+        };
+        cur = a;
+        if (typeof o.onneed === 'function') a.onneed = o.onneed;
+        return a;
+      },
+    };
+  }
   // The screen: setMode(width, height, depth 32|16) for the page; a playing
   // <game> uses 320x200 at 8 bpp unless screen.gameLowres(false), or a larger
   // 8 bpp mode with the picture centered: screen.gameLowres(true, 384, 216)
