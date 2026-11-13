@@ -13,10 +13,22 @@
 #include "plat.h"
 #include "gif.h"
 #include "profile.h"
+#include "app.h"
+#include "handle.h"
 #define GP_W JSRT_PIC_W /* the direct picture's size, so screen.gameLowres() validates the same with any profile */
 #define GP_H JSRT_PIC_H
 #define PROF (jsrt_profile)
 static int prof_live;                  /* init ran and stop has not */
+/* The running app: its manifest's capabilities and paths. No APP.JSON means a legacy app (every capability,
+   any path: v1 apps are trusted maker apps) unless jsrt_require_manifest; the picker is always unrestricted. */
+int jsrt_require_manifest;
+static struct app_manifest manifest;
+static struct app_policy policy;
+static int restricted;                 /* a manifest app: policy applies */
+static uint32_t caps = APP_CAP_ALL;
+static char app_id[16], entry_name[16] = "MAIN.JS";
+static char start_who[24], start_why[96]; /* why the last app did not start (shown by the picker) */
+static int orphan_mode;                /* the playing element was garbage collected: restore the page's mode next turn */
 
 extern const char jsrt_prelude[];
 extern const uint32_t jsrt_prelude_len;
@@ -60,6 +72,25 @@ static void sayf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void sayf(const char *fmt, ...) {
   char b[160]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); say(b);
 }
+/* Capability and path checks: a thrown error names the capability or the reason. */
+static int need(JSContext *c, uint32_t cap, const char *what) {
+  if (!restricted || (caps & cap)) return 0;
+  const char *n = "?";
+  for (unsigned i = 0; app_cap_name(i); i++) if (cap == 1u << i) n = app_cap_name(i);
+  JS_ThrowPlainError(c, "%s: capability '%s' is not granted to this app", what, n);
+  return -1;
+}
+static int path_allowed(const char *path, int write, const char **why) {
+  return !restricted || !app_path_check(&policy, path, write, why);
+}
+static int path_ok(JSContext *c, const char *path, int write, const char *what) {
+  const char *why = "";
+  if (path_allowed(path, write, &why)) return 0;
+  JS_ThrowPlainError(c, "%s: path refused, %s: %s", what, why, path);
+  return -1;
+}
+int32_t jsrt_fs_read(const char *path, uint8_t *buf, uint32_t cap) {return path_allowed(path, 0, 0) ? plat_read(path, buf, cap) : -1;}
+int32_t jsrt_fs_list(const char *path, void (*fn)(void *, const char *, uint32_t, int, uint32_t), void *user) {return path_allowed(path, 0, 0) ? plat_list(path, fn, user) : -1;}
 static double now_ms(void) {return (double)(plat_clock_ns() - t0_ns) / 1e6;}
 static void report(void) {
   JSValue e = JS_GetException(ctx), f = JS_GetPropertyStr(ctx, native, "onError");
@@ -81,6 +112,7 @@ static uint8_t io[256 * 1024];
 static int ends(const char *s, const char *x) {size_t a = strlen(s), b = strlen(x); if (a < b) return 0; for (size_t i = 0; i < b; i++) if ((s[a - b + i] | 32) != x[i]) return 0; return 1;}
 /* dom.h's picture loader: a .GIF, or a game folder's title screen. */
 static int load_picture(const char *src, uint8_t *px, uint8_t *pal) {
+  if (!path_allowed(src, 0, 0)) return -1;
   if (ends(src, ".gif")) {
     int32_t n = plat_read(src, io, sizeof io);
     return n > 0 ? gp_gif(io, (uint32_t)n, pal, px) : -1;
@@ -101,7 +133,10 @@ static void el_finalizer(JSRuntime *r, JSValueConst v) {
   struct jel *j = JS_GetOpaque(v, el_class);
   if (!j) return;
   struct dom_el *e = j->e;
-  if (e == game_el) {game_el = 0; game_started = 0;}
+  if (e == game_el) { /* a playing element nobody holds any more still gets end() */
+    if (game_started) {game_started = 0; e->game = 0; if (PROF->end) PROF->end(); if (lowres_on) orphan_mode = 1;}
+    game_el = 0;
+  }
   while (e->first) {struct dom_el *c = e->first; dom_remove(c); JS_FreeValueRT(r, ((struct jel *)c->js)->self);}
   JS_FreeValueRT(r, j->style); JS_FreeValueRT(r, j->ctx2d);
   dom_delete(e); free(j);
@@ -125,6 +160,7 @@ static JSValue new_element(JSContext *c, int tag) {
 }
 static JSValue js_create(JSContext *c, JSValueConst this, int argc, JSValueConst *argv) {
   (void)this; (void)argc;
+  if (need(c, APP_CAP_DISPLAY, "document.createElement")) return JS_EXCEPTION;
   const char *name = JS_ToCString(c, argv[0]);
   if (!name) return JS_EXCEPTION;
   char low[16]; size_t i = 0;
@@ -231,9 +267,9 @@ static JSValue el_get(JSContext *c, JSValueConst this, int magic) {
   return JS_UNDEFINED;
 }
 static int copy_str(JSContext *c, JSValueConst v, char *out, size_t cap) {
-  const char *s = JS_ToCString(c, v);
+  size_t n; const char *s = JS_ToCStringLen(c, &n, v);
   if (!s) return -1;
-  size_t n = strlen(s);
+  if (n != strlen(s)) {JS_FreeCString(c, s); JS_ThrowTypeError(c, "a NUL character is not allowed here"); return -1;}
   if (n >= cap) {JS_FreeCString(c, s); JS_ThrowRangeError(c, "too long (at most %u characters)", (unsigned)cap - 1); return -1;}
   memcpy(out, s, n + 1); JS_FreeCString(c, s);
   return 0;
@@ -279,6 +315,7 @@ static JSValue js_play(JSContext *c, JSValueConst this, int argc, JSValueConst *
   if (!e) return JS_EXCEPTION;
   if (e->tag != DOM_GAME || e != game_el || !game_dir[0]) return JS_ThrowTypeError(c, "play(): a <game> with a src");
   if (!PROF->play) return JS_ThrowTypeError(c, "play(): this build has no game profile");
+  if (need(c, APP_CAP_DISPLAY, "game.play") || path_ok(c, game_dir, 0, "game.play")) return JS_EXCEPTION;
   char err[80] = ""; void *h = 0;
   if (PROF->play(game_dir, &h, err, sizeof err)) return JS_ThrowRangeError(c, "%s", err[0] ? err : "cannot play");
   if (lowres && !set_mode(game_w, game_h, 8)) {lowres_on = 1; memset(shown_pal, 0xff, sizeof shown_pal);}
@@ -460,7 +497,7 @@ static JSValue js_query_all(JSContext *c, JSValueConst t, int n, JSValueConst *a
 static JSValue js_focused(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)c; (void)t; (void)n; (void)a; return obj_of(dom_focused);}
 static JSValue js_now(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; (void)a; return JS_NewFloat64(c, now_ms());}
 static JSValue js_wake_at(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; double d; if (JS_ToFloat64(c, &d, a[0])) return JS_EXCEPTION; wake_at_ms = d; return JS_UNDEFINED;}
-static JSValue js_want_frame(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)c; (void)t; (void)n; (void)a; want_frame = 1; return JS_UNDEFINED;}
+static JSValue js_want_frame(JSContext *c, JSValueConst t, int n, JSValueConst *a) {(void)t; (void)n; (void)a; if (need(c, APP_CAP_DISPLAY, "requestAnimationFrame")) return JS_EXCEPTION; want_frame = 1; return JS_UNDEFINED;}
 static JSValue js_log(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; size_t len; const char *s = JS_ToCStringLen(c, &len, a[0]);
   if (!s) return JS_EXCEPTION;
@@ -474,7 +511,7 @@ static JSValue js_log(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 }
 static JSValue js_read_file(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; char path[96];
-  if (copy_str(c, a[0], path, sizeof path)) return JS_EXCEPTION;
+  if (need(c, APP_CAP_FS_READ, "fs.readFile") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readFile")) return JS_EXCEPTION;
   int32_t got = plat_read(path, io, sizeof io);
   if (got < 0) return JS_ThrowReferenceError(c, "fs.readFile: no file %s", path);
   return JS_NewStringLen(c, (const char *)io, (size_t)got);
@@ -486,7 +523,7 @@ static void list_one(void *user, const char *name, uint32_t n, int dir, uint32_t
 }
 static JSValue js_readdir(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; (void)n; char path[96];
-  if (copy_str(c, a[0], path, sizeof path)) return JS_EXCEPTION;
+  if (need(c, APP_CAP_FS_READ, "fs.readdir") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.readdir")) return JS_EXCEPTION;
   struct lister l = {c, JS_NewArray(c), 0};
   if (plat_list(path, list_one, &l) < 0) {JS_FreeValue(c, l.a); return JS_ThrowReferenceError(c, "fs.readdir: no folder %s", path);}
   return l.a;
@@ -541,6 +578,7 @@ static JSValue js_memory(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 }
 static JSValue js_set_mode(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; int32_t w, h, d = 32;
+  if (need(c, APP_CAP_DISPLAY, "screen.setMode")) return JS_EXCEPTION;
   if (JS_ToInt32(c, &w, a[0]) || JS_ToInt32(c, &h, a[1]) || (n > 2 && JS_ToInt32(c, &d, a[2]))) return JS_EXCEPTION;
   if (d != 32 && d != 16) return JS_ThrowRangeError(c, "screen.setMode: depth 32 or 16 for pages (8 is the game's)");
   if (lowres_on || set_mode((uint32_t)w, (uint32_t)h, (uint32_t)d)) return JS_ThrowRangeError(c, "screen.setMode(%d, %d, %d) refused", (int)w, (int)h, (int)d);
@@ -555,13 +593,81 @@ static JSValue js_screen(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
 }
 static JSValue js_lowres(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
   (void)t; int32_t w = GP_W, h = GP_H;
+  if (need(c, APP_CAP_DISPLAY, "screen.gameLowres")) return JS_EXCEPTION;
   lowres = JS_ToBool(c, a[0]);
   if (n > 2 && (JS_ToInt32(c, &w, a[1]) || JS_ToInt32(c, &h, a[2]))) return JS_EXCEPTION;
   if (w < (int32_t)GP_W || h < (int32_t)GP_H || w % 4 || w * h > 640 * 480) return JS_ThrowRangeError(c, "screen.gameLowres: at least 320x200, width a multiple of 4");
   game_w = (uint32_t)w; game_h = (uint32_t)h;
   return JS_UNDEFINED;
 }
+/* fs.open(path): a read-only FileHandle {size, text(), close()} holding the file's bytes. A placeholder for
+   slice 4a's binary readers; its job here is to be a real handle in the table (a path policy, a count, a leak report). */
+static JSClassID fh_class;
+struct fdata {uint8_t *buf; uint32_t n;};
+static void fdata_free(void *u) {struct fdata *f = u; free(f->buf); free(f);}
+static void fh_finalizer(JSRuntime *r, JSValueConst v) {(void)r; uintptr_t id = (uintptr_t)JS_GetOpaque(v, fh_class); if (id) jsrt_handle_close((uint32_t)id);}
+static struct fdata *fh_get(JSContext *c, JSValueConst v) {
+  uint32_t id = (uint32_t)(uintptr_t)JS_GetOpaque(v, fh_class);
+  struct fdata *f = id ? jsrt_handle_get(id, JSRT_H_FILE) : 0;
+  if (!f) JS_ThrowPlainError(c, "EBADF: the file handle is closed or stale");
+  return f;
+}
+static JSValue fh_size(JSContext *c, JSValueConst this) {struct fdata *f = fh_get(c, this); return f ? JS_NewUint32(c, f->n) : JS_EXCEPTION;}
+static JSValue fh_text(JSContext *c, JSValueConst this, int n, JSValueConst *a) {(void)n; (void)a; struct fdata *f = fh_get(c, this); return f ? JS_NewStringLen(c, (const char *)f->buf, f->n) : JS_EXCEPTION;}
+static JSValue fh_close(JSContext *c, JSValueConst this, int n, JSValueConst *a) {
+  (void)n; (void)a;
+  uint32_t id = (uint32_t)(uintptr_t)JS_GetOpaque(this, fh_class);
+  if (!id || jsrt_handle_close(id)) return JS_ThrowPlainError(c, "EBADF: the file handle is closed or stale");
+  return JS_UNDEFINED;
+}
+static const JSCFunctionListEntry fh_proto[] = {JS_CGETSET_DEF("size", fh_size, 0), JS_CFUNC_DEF("text", 0, fh_text), JS_CFUNC_DEF("close", 0, fh_close)};
+static JSValue js_open(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; char path[96];
+  if (need(c, APP_CAP_FS_READ, "fs.open") || copy_str(c, a[0], path, sizeof path) || path_ok(c, path, 0, "fs.open")) return JS_EXCEPTION;
+  int32_t got = plat_read(path, io, sizeof io);
+  if (got < 0) return JS_ThrowReferenceError(c, "fs.open: no file %s", path);
+  struct fdata *f = calloc(1, sizeof *f);
+  if (f) {f->buf = malloc(got ? (size_t)got : 1); f->n = (uint32_t)got;}
+  if (!f || !f->buf) {if (f) free(f->buf); free(f); return JS_ThrowOutOfMemory(c);}
+  memcpy(f->buf, io, (size_t)got);
+  uint32_t id = jsrt_handle_open(JSRT_H_FILE, fdata_free, f);
+  if (!id) {fdata_free(f); return JS_ThrowRangeError(c, "fs.open: too many open handles (%u); close one first", JSRT_H_MAX);}
+  JSValue o = JS_NewObjectClass(c, (int)fh_class);
+  if (JS_IsException(o)) {jsrt_handle_close(id); return o;}
+  JS_SetOpaque(o, (void *)(uintptr_t)id);
+  return o;
+}
+/* sandbox.*: what this runtime and app are. */
+static JSValue js_caps(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; (void)a; JSValue arr = JS_NewArray(c); uint32_t k = 0;
+  for (unsigned i = 0; app_cap_name(i); i++) if (!restricted || (caps & (1u << i))) JS_SetPropertyUint32(c, arr, k++, JS_NewString(c, app_cap_name(i)));
+  return arr;
+}
+static JSValue js_app(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; (void)a; JSValue o = JS_NewObject(c);
+  JS_SetPropertyStr(c, o, "id", JS_NewString(c, app_id)); JS_SetPropertyStr(c, o, "legacy", JS_NewBool(c, !restricted));
+  JS_SetPropertyStr(c, o, "name", JS_NewString(c, restricted ? manifest.name : app_id));
+  JS_SetPropertyStr(c, o, "version", JS_NewString(c, restricted ? manifest.version : "0"));
+  JS_SetPropertyStr(c, o, "api", JS_NewUint32(c, APP_API_VERSION)); JS_SetPropertyStr(c, o, "runtime", JS_NewString(c, JSRT_VERSION));
+  return o;
+}
+static JSValue js_require(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; char name[24];
+  if (copy_str(c, a[0], name, sizeof name)) return JS_EXCEPTION;
+  uint32_t bit = app_cap_bit(name);
+  if (!bit) return JS_ThrowTypeError(c, "sandbox.require: unknown capability '%s'", name);
+  return need(c, bit, "sandbox.require") ? JS_EXCEPTION : JS_UNDEFINED;
+}
+static JSValue js_start_error(JSContext *c, JSValueConst t, int n, JSValueConst *a) {
+  (void)t; (void)n; (void)a;
+  if (!start_who[0]) return JS_NULL;
+  JSValue arr = JS_NewArray(c);
+  JS_SetPropertyUint32(c, arr, 0, JS_NewString(c, start_who)); JS_SetPropertyUint32(c, arr, 1, JS_NewString(c, start_why));
+  return arr;
+}
 static const JSCFunctionListEntry native_fns[] = {
+  JS_CFUNC_DEF("open", 1, js_open), JS_CFUNC_DEF("caps", 0, js_caps), JS_CFUNC_DEF("app", 0, js_app), JS_CFUNC_DEF("require", 1, js_require),
+  JS_CFUNC_DEF("startError", 0, js_start_error),
   JS_CFUNC_DEF("setMode", 3, js_set_mode), JS_CFUNC_DEF("screen", 0, js_screen), JS_CFUNC_DEF("gameLowres", 3, js_lowres),
   JS_CFUNC_DEF("createElement", 1, js_create), JS_CFUNC_DEF("getElementById", 1, js_by_id),
   JS_CFUNC_DEF("querySelector", 1, js_query), JS_CFUNC_DEF("querySelectorAll", 1, js_query_all),
@@ -608,6 +714,7 @@ static const char *key_name(uint16_t k, const char **code) {
   *code = "Unidentified"; return "Unidentified";
 }
 static void key_event(uint16_t code, int32_t value) {
+  if (!(caps & APP_CAP_INPUT) && restricted) return; /* no input capability: the app sees no keys (F10 is the host's) */
   if (game_started && dom_focused == game_el) { /* the game has the keys */
     if (PROF->key && PROF->key(code, value) & JSRT_END) stop_game();
     return;
@@ -642,6 +749,31 @@ static JSClassID new_class(JSClassID *id, const char *name, JSClassFinalizer *fi
   JS_SetClassProto(ctx, *id, proto);
   return *id;
 }
+static void refuse(const char *why) {
+  snprintf(start_who, sizeof start_who, "APPS/%.8s", app_id); snprintf(start_why, sizeof start_why, "%s", why);
+  sayf("JS app %s refused: %s", app_id, why);
+}
+/* The app's manifest (APP.JSON) into caps, policy and the entry file; 0, or -1 with start_who/start_why set. */
+static int load_app(const char *dir) {
+  restricted = 0; caps = APP_CAP_ALL; strcpy(entry_name, "MAIN.JS"); memset(&manifest, 0, sizeof manifest);
+  const char *id = dir ? app_id_of(dir) : 0;
+  snprintf(app_id, sizeof app_id, "%s", id ? id : dir ? "APP" : "PICKER");
+  if (!dir) return 0;
+  char path[96], err[96]; snprintf(path, sizeof path, "%s/APP.JSON", dir);
+  int32_t n = plat_read(path, io, APP_MANIFEST_MAX + 1);
+  if (n < 0) {if (jsrt_require_manifest) {refuse("APP.JSON is missing"); return -1;} return 0;}
+  if (app_manifest_parse((const char *)io, (uint32_t)n, &manifest, err, sizeof err)) {refuse(err); return -1;}
+  if (manifest.api > APP_API_VERSION) {
+    snprintf(err, sizeof err, "needs runtime API %u, this is %u", (unsigned)manifest.api, APP_API_VERSION);
+    refuse(err); return -1;
+  }
+  restricted = 1; caps = manifest.caps; snprintf(entry_name, sizeof entry_name, "%s", manifest.entry);
+  app_policy_init(&policy, app_id, caps);
+  char list[104] = ""; size_t k = 0;
+  for (unsigned i = 4; app_cap_name(i) && k < sizeof list; i++) if (caps & (1u << i)) k += (size_t)snprintf(list + k, sizeof list - k, "%s%s", k ? " " : "", app_cap_name(i));
+  sayf("JS app %s %s api %u: %s", manifest.name, manifest.version, (unsigned)manifest.api, k ? list : "no extra capabilities");
+  return 0;
+}
 int jsrt_start(const char *dir, uint32_t heap_limit) {
   native = JS_UNDEFINED;
   exited = exit_code = want_frame = 0;
@@ -651,6 +783,8 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   lowres = 1; game_w = GP_W; game_h = GP_H; font_scale = 1;
   if (PROF->init) PROF->init();
   prof_live = 1;
+  orphan_mode = 0;
+  if (load_app(dir)) return -1;
   memset(&jsrt_stats, 0, sizeof jsrt_stats);
   uint64_t t = plat_clock_ns();
   t0_ns = t;
@@ -663,6 +797,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   for (unsigned i = 0; i < NSTYLE; i++) style_proto[i] = (JSCFunctionListEntry)JS_CGETSET_MAGIC_DEF(style_names[i], style_get, style_set, (int16_t)i);
   new_class(&el_class, "Element", el_finalizer, el_mark, el_proto, (int)(sizeof el_proto / sizeof el_proto[0]));
   new_class(&style_class, "CSSStyleDeclaration", style_finalizer, style_mark, style_proto, (int)NSTYLE);
+  new_class(&fh_class, "FileHandle", fh_finalizer, 0, fh_proto, (int)(sizeof fh_proto / sizeof fh_proto[0]));
   new_class(&ctx2d_class, "CanvasRenderingContext2D", style_finalizer, ctx2d_mark, ctx2d_proto, (int)(sizeof ctx2d_proto / sizeof ctx2d_proto[0]));
   if (set_mode(PLAT_W, PLAT_H, 32)) {say("JS cannot restore page mode"); return -1;}
   dom_init(load_picture, PROF->draw);
@@ -691,10 +826,10 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
     next_frame_ns = plat_clock_ns();
     return 0;
   }
-  char path[96]; snprintf(path, sizeof path, "%s/MAIN.JS", dir);
+  char path[96]; snprintf(path, sizeof path, "%s/%s", dir, entry_name);
   char *src = (char *)io; /* JS_Eval copies what it keeps */
   int32_t n = plat_read(path, io, sizeof io - 1);
-  if (n < 0) {sayf("JS no %s", path); return -1;}
+  if (n < 0) {sayf("JS no %s", path); snprintf(start_who, sizeof start_who, "APPS/%.8s", app_id); snprintf(start_why, sizeof start_why, "%s is not in the app folder", entry_name); return -1;}
   src[n] = 0;
   uint64_t before = jsrt_stats.js_ns;
   int bad = jsrt_eval(src, (uint32_t)n, path);
@@ -703,6 +838,7 @@ int jsrt_start(const char *dir, uint32_t heap_limit) {
   JSMemoryUsage u; JS_ComputeMemoryUsage(rt, &u);
   sayf("JS started %s in %u us, heap %u bytes in %u blocks%s", path, (unsigned)(jsrt_stats.start_ns / 1000), (unsigned)u.malloc_size, (unsigned)u.malloc_count, bad ? " (it threw)" : "");
   next_frame_ns = plat_clock_ns();
+  if (bad) {snprintf(start_who, sizeof start_who, "APPS/%.8s", app_id); snprintf(start_why, sizeof start_why, "%s threw an error (see the log)", entry_name);}
   return bad ? -1 : 0;
 }
 uint64_t jsrt_step(void) {
@@ -748,6 +884,7 @@ uint64_t jsrt_step(void) {
   }
   for (JSContext *c; !exited && JS_ExecutePendingJob(rt, &c) > 0;) {}
   if (exited) return 0;
+  if (orphan_mode) {orphan_mode = 0; lowres_on = 0; set_mode(mode_w, mode_h, mode_d);}
   uint64_t t = plat_clock_ns();
   struct dom_rect rects[DOM_MAX_DIRTY];
   uint32_t n = lowres_on ? 0 : dom_render(plat_fb(), rects);
@@ -768,18 +905,22 @@ uint64_t jsrt_step(void) {
 /* Dispose the entire app realm, not merely its body. No JS shutdown callbacks:
    those could restart timers or block the return path. Device handles belong
    to JS.ELF and survive; queued events and the page's state do not. */
-void jsrt_stop(void) {
+int jsrt_stop(void) {
   if (game_started && PROF->end) PROF->end();
-  if (prof_live) {prof_live = 0; if (PROF->stop) PROF->stop();}
   game_started = 0; game_el = 0;
+  if (prof_live) {prof_live = 0; if (PROF->stop) PROF->stop();}
+  char sum[80]; unsigned leaks = jsrt_handles_release_all(sum, sizeof sum); /* what the app did not close */
+  if (leaks) sayf("JS app left %u handle(s) open: %s", leaks, sum);
   if (ctx) {JS_FreeValue(ctx, native); native = JS_UNDEFINED; JS_FreeContext(ctx); ctx = 0;}
   if (rt) {JS_FreeRuntime(rt); rt = 0;}
   dom_body = dom_focused = 0;
-  want_frame = lowres_on = 0; wake_at_ms = 1e300;
+  want_frame = lowres_on = orphan_mode = 0; wake_at_ms = 1e300;
   plat_reset_input();
+  return (int)leaks;
 }
 int jsapp_start(const char *dir, uint32_t heap_limit) {
   app_heap_limit = heap_limit;
+  start_who[0] = start_why[0] = 0;
   if (!jsrt_start(dir, heap_limit)) return 0;
   jsrt_stop();
   if (dir && !jsrt_start(0, heap_limit)) return 0;
@@ -795,4 +936,18 @@ uint64_t jsapp_step(void) {
   if (picker && !next[0]) return 0; /* quit host through existing entry return */
   if (jsapp_start(next[0] ? next : 0, app_heap_limit)) {exit_code = 5; return 0;}
   return plat_clock_ns() + 1;
+}
+int jsapp_autorun(uint32_t heap_limit) {
+  static char text[512]; char dir[48], err[80];
+  int32_t n = plat_read("/sd/OS/AUTORUN.TXT", (uint8_t *)text, sizeof text - 1);
+  if (n < 0) n = 0;
+  if (app_autorun_parse(text, (uint32_t)n, dir, sizeof dir, err, sizeof err)) {
+    sayf("JS %s", err);
+    app_heap_limit = heap_limit; /* the picker, with the reason on screen */
+    snprintf(start_who, sizeof start_who, "AUTORUN.TXT"); snprintf(start_why, sizeof start_why, "%s", err);
+    if (!jsrt_start(0, heap_limit)) return 0;
+    jsrt_stop(); return -1;
+  }
+  sayf("JS autorun %s", dir[0] ? dir + 4 : "PICKER");
+  return jsapp_start(dir[0] ? dir : 0, heap_limit);
 }

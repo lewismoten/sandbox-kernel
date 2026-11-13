@@ -45,7 +45,7 @@ class Profile(unittest.TestCase):
         self.assertIn('PT draw', t, 'the draw hook ran in phase 2')
         ends = [i for i, l in enumerate(t) if l == 'PT end']
         self.assertEqual(len(ends), 2)
-        self.assertTrue(t[-1].startswith('PT stop held=0'), t[-1])
+        self.assertTrue(t[-1].startswith('PT stop open=0'), t[-1])
         self.assertEqual(t.count('PT init'), 1)
         self.assertTrue(any(l.startswith('APP ended 2 ticks') for l in t))
         self.assertEqual(rc, 0)
@@ -54,7 +54,7 @@ class Profile(unittest.TestCase):
         rc, out = run(PT, ['--ms', '600'])  # never ended by a key: the core stops the element
         t = tags(out)
         self.assertEqual([l for l in t if l in ('PT init', 'PT end')] , ['PT init', 'PT end'])
-        self.assertTrue(t[-1].startswith('PT stop held=0'), t[-1])
+        self.assertTrue(t[-1].startswith('PT stop open=0'), t[-1])
         self.assertEqual(t[-2], 'PT end')
 
     def test_inert_core_profile(self):
@@ -76,7 +76,7 @@ class Profile(unittest.TestCase):
         self.assertEqual(sum(l == 'PT init' for l in out), 50)
         stops = [l for l in out if l.startswith('PT stop')]
         self.assertEqual(len(stops), 50)
-        self.assertTrue(all(l.startswith('PT stop held=0') for l in stops))
+        self.assertTrue(all(l.startswith('PT stop open=0') for l in stops))
         self.assertEqual(sum(l == 'PT end' for l in out), sum(l.startswith('PT play ') for l in out))
 
     def test_fifty_cycles_ended_by_key(self):

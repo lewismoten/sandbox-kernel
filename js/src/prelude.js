@@ -189,8 +189,21 @@
   const log = (...a) => N.log(a.map(show).join(' '));
   g.console = { log, info: log, warn: log, error: log, debug: log };
   g.performance = { now: N.now };
-  g.fs = { readFile: N.readFile, readdir: N.readdir };
-  g.sys = { exit: N.exit, stats: N.stats, memory: N.memory, launch: N.launch };
+  g.fs = { readFile: N.readFile, readdir: N.readdir, open: N.open };
+  g.sys = { exit: N.exit, stats: N.stats, memory: N.memory, launch: N.launch, startError: N.startError };
+  // sandbox: the runtime and the app. version.api is what a manifest's "api" is compared with; capabilities are the
+  // app's granted names; require(name) throws an Error naming the capability when it is not granted.
+  {
+    const a = N.app();
+    const caps = Object.freeze(N.caps());
+    g.sandbox = Object.freeze({
+      version: Object.freeze({ api: a.api, runtime: a.runtime }),
+      app: Object.freeze({ id: a.id, name: a.name, version: a.version, legacy: a.legacy }),
+      capabilities: caps,
+      has: (name) => caps.includes(name),
+      require: N.require,
+    });
+  }
   // The screen: setMode(width, height, depth 32|16) for the page; a playing
   // <game> uses 320x200 at 8 bpp unless screen.gameLowres(false), or a larger
   // 8 bpp mode with the picture centered: screen.gameLowres(true, 384, 216)

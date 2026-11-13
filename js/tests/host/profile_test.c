@@ -9,24 +9,33 @@
 #include "profile.h"
 
 static unsigned allocs, frees, steps, draws;
-static unsigned char *held;            /* the element's session, one counted allocation */
+static unsigned char *held;            /* the element's session, one allocation owned by a core handle (handle.h) */
+static uint32_t held_id;
+static int leaky;                      /* a session "LEAKY" never closes its handle in end(): the core must report it at stop */
 static unsigned char pic[JSRT_PIC_W * JSRT_PIC_H], pal[768];
 static void logf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void logf(const char *fmt, ...) {char b[160]; va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof b, fmt, ap); va_end(ap); jsrt_log(b);}
 
 static void t_init(void) {steps = draws = 0; logf("PT init");}
-static void t_stop(void) {
-  logf("PT stop held=%d allocs=%u frees=%u", held != 0, allocs, frees);
-  if (held) {free(held); held = 0; frees++;} /* a leak the core should have prevented with end(): counted above */
-}
+static void t_stop(void) {logf("PT stop open=%u allocs=%u frees=%u", jsrt_handles_open(), allocs, frees);} /* the core's count: 0 unless a session leaked */
+static void t_release(void *u) {free(u); frees++; if (u == held) {held = 0; held_id = 0;}}
 static int t_play(const char *dir, void **h, char *err, uint32_t cap) {
   if (strstr(dir, "BAD")) {snprintf(err, cap, "no game in %s", dir); logf("PT play-refused %s", dir); return -1;}
   held = malloc(1024); allocs++; memset(held, 7, 1024);
+  leaky = strstr(dir, "LEAKY") != 0;
+  held_id = jsrt_handle_open(JSRT_H_GAME, t_release, held);
+  if (!held_id) {free(held); held = 0; snprintf(err, cap, "too many open handles"); return -1;}
   *h = held; steps = draws = 0;
   logf("PT play %s", dir);
+  if (strstr(dir, "READ")) { /* a hook reads through the app's path policy, not plat_read */
+    uint8_t b[16]; char p[96]; snprintf(p, sizeof p, "%s/GAME.GAM", dir);
+    logf("PT read %s %d", p, (int)jsrt_fs_read(p, b, sizeof b));
+    snprintf(p, sizeof p, "/sd/OS/AUTORUN.TXT");
+    logf("PT read %s %d", p, (int)jsrt_fs_read(p, b, sizeof b));
+  }
   return 0;
 }
-static void t_end(void) {logf("PT end"); if (held) {free(held); held = 0; frees++;}}
+static void t_end(void) {logf("PT end"); if (held_id && !leaky) jsrt_handle_close(held_id);}
 static int t_key(uint16_t code, int32_t value) {logf("PT key %u %d", code, (int)value); return code == 1 && value == 1 ? JSRT_END : 0;}
 static uint32_t t_step(uint64_t now, struct jsrt_direct *d) {
   (void)now; steps++;

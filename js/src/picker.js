@@ -4,8 +4,10 @@
   screen.setMode(640, 480, 32);
   const names = fs.readdir('/sd/OS/APPS').filter(name => {
     if (!/^[A-Z0-9_-]{1,8}$/.test(name)) return false;
-    try { fs.readFile('/sd/OS/APPS/' + name + '/MAIN.JS'); return true; }
-    catch { return false; }
+    for (const f of ['MAIN.JS', 'APP.JSON']) {
+      try { fs.readFile('/sd/OS/APPS/' + name + '/' + f); return true; } catch {}
+    }
+    return false;
   }).sort();
   let selected = 0;
   const rows = [];
@@ -21,6 +23,11 @@
   document.body.style.padding = 20;
   row('JS apps');
   row('Up/Down: choose   Enter: launch   Esc: quit');
+  const why = sys.startError(); // an app that did not start (or a bad AUTORUN line) says why
+  if (why) {
+    row('Could not start ' + why[0]);
+    row(why[1]);
+  }
   const slots = Array.from({length: 8}, () => row(''));
   function draw() {
     const first = Math.floor(selected / 8) * 8;
@@ -40,5 +47,6 @@
     draw();
   });
   draw();
+  if (why) console.log('start error', why[0], why[1]);
   console.log('app picker', names.join(','));
 })();

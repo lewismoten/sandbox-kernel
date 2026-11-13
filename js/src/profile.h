@@ -6,7 +6,9 @@
  * Hooks run on the single interpreter thread and must not call back into jsrt_*.
  * docs/profiles.md is the author's guide. */
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+#include "handle.h"
 #define JSRT_PROFILE_ABI 1
 #define JSRT_PIC_W 320u /* the direct picture's size (the play core's), also what screen.gameLowres() checks against */
 #define JSRT_PIC_H 200u
@@ -37,5 +39,9 @@ struct jsrt_profile {
 };
 /* Defined by exactly one profile file in the build (profile_core.c by default). */
 extern const struct jsrt_profile *const jsrt_profile;
+/* For profiles: files go through the app's path policy, not plat_read (denied: -1, the same as a missing file);
+   handles (jsrt_handle_open in handle.h) are counted and released by the core at stop. */
+int32_t jsrt_fs_read(const char *path, uint8_t *buf, uint32_t cap);
+int32_t jsrt_fs_list(const char *path, void (*fn)(void *user, const char *name, uint32_t n, int dir, uint32_t size), void *user);
 /* For profiles: one line in the platform log. */
 void jsrt_log(const char *s);
