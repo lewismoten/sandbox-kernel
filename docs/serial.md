@@ -1,7 +1,7 @@
 # The OS serial channel (`/dev/serial0`, ABI 1.10)
 
-A running OS needs to tell the host something, and hear something back, while the Mac is driving
-it over USB with synthetic input (`KEY`, `AXIS`). Until now an OS had `/dev/log`, one-way lines
+A running OS needs to tell the host something, and hear something back, while a host computer is driving
+it over USB with synthetic input (`KEY`, `AXIS`). Before ABI 1.10 an OS had only `/dev/log`, one-way lines
 shown as `LOG OS: ...`. `/dev/serial0` adds a two-way byte stream over the **same USB CDC
 link**. Nothing else needs to be plugged in.
 
@@ -40,7 +40,7 @@ OS to host: each line starts with a tag.
   `\xHH`, so a line is always printable and under 272 bytes.
 
 Host to OS: `TX <len>` and a newline, then exactly `<len>` raw bytes (1 to 64). The kernel replies
-`OK tx <accepted>`; bytes that do not fit the 256-byte buffer, or arrive while no program has the
+`OK tx <accepted>`; bytes that do not fit the 256-byte receive buffer, or arrive while no program has the
 channel open, are dropped and counted. A `TX` needs `INFO` first, like `KEY`.
 
 **TX inactivity timeout:** if the body stops arriving for 2 seconds (measured from the `TX` line or the
@@ -57,12 +57,12 @@ newlines and any byte without escaping.
 
 ## Host tool
 
-`python3 scripts/usb_kernel.py /dev/cu.usbmodem* console`: arrows, Enter, Space, Q and Esc are
+`python3 scripts/usb_kernel.py <serial device> console` (on macOS the device is `/dev/cu.usbmodem*`): arrows, Enter, Space, Q and Esc are
 pressed on `/dev/input/event0` (as `key` does); every printable key, Enter and Space is also sent
 to the OS as text; OS output shows live; kernel `LOG` lines are dimmed (or start with `# ` when the
 output is not a terminal). Ctrl-] quits.
 
-## The Pi remote page (`web/src/piRemote/`, not changed here)
+## The Pi remote page (a separate web app, `web/src/piRemote/`; it is not in this repository)
 
 It already opens the same Web Serial port and sorts each line with `classify()` in `protocol.ts`
 (`LOG`, `INFO`, `OK`, `ERR`; anything else is `other`). To show OS messages it needs one more case:

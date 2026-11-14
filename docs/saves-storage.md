@@ -26,7 +26,7 @@ close, `sbx_rename`); only the accepted path grows.
 
 At most **64 game folders** under `/OS/SAVES` and **32 files** in one game's folder. Creating a
 new folder or file past a cap fails at `sbx_fsync` with `-122` (quota) and writes nothing;
-existing games and files keep saving. The caps keep a runaway app from filling the card.
+existing games and files keep saving. The caps limit how many folders and files an app can create. They are not a byte quota: each file can still be up to 1 MiB, so they do not by themselves keep an app from filling the card.
 
 ## Power-cut behavior
 
