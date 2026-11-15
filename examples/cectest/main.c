@@ -54,6 +54,14 @@ static void dec(sb *o, uint32_t v) { char t[11]; uint32_t k = 0; do { t[k++] = (
 static void hex2(sb *o, uint32_t v) { static const char h[] = "0123456789ABCDEF"; char c[3] = {h[v >> 4 & 15], h[v & 15], 0}; cat(o, c); }
 static void hexn(sb *o, uint32_t v) { static const char h[] = "0123456789ABCDEF"; char c[2] = {h[v & 15], 0}; cat(o, c); }
 
+/* seconds.milliseconds, from a time in ms on this screen's clock */
+static void secs(sb *o, uint32_t ms) { dec(o, ms / 1000u); cat(o, "."); char c[4] = {(char)('0' + ms / 100u % 10u), (char)('0' + ms / 10u % 10u), (char)('0' + ms % 10u), 0}; cat(o, c); }
+/* "T 12.345 X3 IN 2.4S GAP 1.1S": when the newest arrived, how many frames of it, over how long, the last gap */
+static void timing(sb *o, uint32_t at, uint32_t count, uint32_t first, uint32_t gap) {
+  cat(o, "T "); secs(o, at - kms0); cat(o, " X"); dec(o, count);
+  if (count > 1) { cat(o, " IN "); secs(o, at - first); cat(o, "S GAP "); secs(o, gap); cat(o, "S"); }
+}
+
 typedef struct { uint32_t code; const char *name; } nm;
 static const nm OPS[] = {
   {0x00, "FEATURE ABORT"}, {0x04, "IMAGE VIEW ON"}, {0x0D, "TEXT VIEW ON"}, {0x1A, "GIVE DECK STATUS"}, {0x1B, "DECK STATUS"},
@@ -99,7 +107,8 @@ static void keyname(sb *o, uint32_t k) {
   cat(o, "KEY "); dec(o, k); if (n) { cat(o, " "); cat(o, n); }
 }
 
-typedef struct { uint8_t len, raw[16]; uint16_t key; uint32_t count, last_ms; uint8_t rel; } ev;
+typedef struct { uint8_t len, raw[16]; uint16_t key; uint32_t count, last_ms, first_ms, at_ms, gap_ms; uint8_t rel; } ev;   /* first_ms, at_ms: first and latest counted arrival; gap_ms: between the last two */
+static uint32_t kms0;   /* kernel ms at this screen's clock zero */
 static ev hist[NEV];   /* newest first */
 static uint32_t nhist;
 static sbx_cec_info cur, last_drawn;
@@ -136,12 +145,12 @@ static int take(const uint8_t *raw, uint32_t len, uint16_t key, uint32_t ms) {
     uint8_t press = len >= 2 && raw[1] == 0x44;
     if (press && i == 0 && !e.rel && ms - e.last_ms < 900u) { hist[0].last_ms = ms; return 0; }   /* the remote's repeat while held */
     for (uint32_t j = i; j > 0; j--) hist[j] = hist[j - 1];
-    e.count++; e.rel = 0; e.last_ms = ms; hist[0] = e; return 1;
+    e.count++; e.rel = 0; e.gap_ms = ms - e.at_ms; e.at_ms = ms; e.last_ms = ms; hist[0] = e; return 1;
   }
   if (nhist < NEV) nhist++;
   for (uint32_t j = nhist - 1; j > 0; j--) hist[j] = hist[j - 1];
   hist[0].len = (uint8_t)len; for (uint32_t i = 0; i < len; i++) hist[0].raw[i] = raw[i];
-  hist[0].key = key; hist[0].count = 1; hist[0].last_ms = ms; hist[0].rel = 0;
+  hist[0].key = key; hist[0].count = 1; hist[0].last_ms = ms; hist[0].first_ms = hist[0].at_ms = ms; hist[0].gap_ms = 0; hist[0].rel = 0;
   return 1;
 }
 static void logev(void) {
@@ -149,13 +158,17 @@ static void logev(void) {
   if (hist[0].len) { dec(&o, hist[0].raw[0] >> 4); cat(&o, ">"); dec(&o, hist[0].raw[0] & 15); cat(&o, " "); }
   describe(&o, hist[0].raw, hist[0].len, hist[0].key);
   cat(&o, hist[0].key ? " KEY " : " NOT MAPPED"); if (hist[0].key) dec(&o, hist[0].key);
-  cat(&o, " X"); dec(&o, hist[0].count);
+  cat(&o, " "); timing(&o, hist[0].at_ms, hist[0].count, hist[0].first_ms, hist[0].gap_ms);
   say(o.b);
 }
+static uint32_t clock_ms;   /* this screen's clock, from kernel time */
+#define CLK_X 730u
+static void draw_clock(void) { sb c = {{0}, 0}; secs(&c, clock_ms); rect(CLK_X, 2, width - CLK_X, 34, 0x0010); text(CLK_X, 6, c.b, 4, 0x07FF); }
 static void draw(void) {
   rect(0, 0, width, height, 0x0010);
   uint32_t y = 8;
   text(16, y, have_trace ? "CEC TEST   HOLD SELECT 3 S OR PRESS ESC TO EXIT" : "CEC TEST   PRESS ESC OR Q ON A USB KEYBOARD TO EXIT", 2, 0xAD55); y += 28;
+  draw_clock();
   if (have_trace) { sb o = {{0}, 0};
     cat(&o, "THIS PI: PHYS "); hexn(&o, cur.phys >> 12); cat(&o, "."); hexn(&o, cur.phys >> 8); cat(&o, "."); hexn(&o, cur.phys >> 4); cat(&o, "."); hexn(&o, cur.phys);
     cat(&o, "  LOGICAL "); if (cur.laddr == 15) cat(&o, "NONE"); else { dec(&o, cur.laddr); cat(&o, " "); cat(&o, dev_name(cur.laddr)); }
@@ -182,7 +195,7 @@ static void draw(void) {
     if (e->key) { keyname(&d, e->key); } else cat(&d, "NOT MAPPED");
     text(16, y, d.b, 3, e->key ? 0x07E0 : 0xF800); y += 38;
     for (uint32_t i = 0; i < nhist; i++) {
-      sb h = {{0}, 0}; dec(&h, hist[i].count); cat(&h, "X ");
+      sb h = {{0}, 0}; secs(&h, hist[i].at_ms - kms0); cat(&h, " X"); dec(&h, hist[i].count); if (hist[i].count > 1) { cat(&h, "/"); secs(&h, hist[i].at_ms - hist[i].first_ms); cat(&h, "S"); } cat(&h, " ");
       if (hist[i].len) { dec(&h, hist[i].raw[0] >> 4); cat(&h, ">"); dec(&h, hist[i].raw[0] & 15); cat(&h, " "); }
       describe(&h, hist[i].raw, hist[i].len, hist[i].key);
       if (hist[i].rel) cat(&h, " [REL]");
@@ -204,7 +217,8 @@ int main(const sbx_startup *start) {
   width = (uint32_t)mode.width; height = (uint32_t)mode.height;
   if (sbx_open("/dev/input/event0", 17, SBX_O_RDONLY | SBX_O_NONBLOCK, &input)) return 6;
   say("CECTEST started");
-  uint64_t seq = 1, now = 0;
+  uint64_t seq = 1, now = 0, t0 = 0, clk_drawn = 0;
+  sbx_clock_ns(&t0);
   int dirty = 1, first = 1;
   for (;;) {
     if (sbx_health(start->generation, seq++)) return 5;
@@ -212,6 +226,7 @@ int main(const sbx_startup *start) {
     int32_t st = sbx_cec_get(input, &cur);
     if (st == 0) {
       have_trace = 1;
+      if (first) kms0 = cur.now_ms - (uint32_t)((now - t0) / 1000000u);
       if (cur.seq != seen_seq) {
         uint64_t fresh = cur.seq - seen_seq; if (fresh > cur.count) fresh = cur.count;
         if (first) fresh = 0;   /* frames from before this screen started are not new */
@@ -233,10 +248,12 @@ int main(const sbx_startup *start) {
         if (have_trace && cur.count && cur.rec[cur.count - 1].key == SBX_KEY_ESC && cur.now_ms - cur.rec[cur.count - 1].ms < 1500u) continue;
         return 0;
       }
-      if (!have_trace) { if (take(0, 0, (uint16_t)e.code, (uint32_t)(now / 1000000u))) { logev(); dirty = 1; } }
+      if (!have_trace) { if (take(0, 0, (uint16_t)e.code, kms0 + (uint32_t)((now - t0) / 1000000u))) { logev(); dirty = 1; } }
     }
     if (have_trace && sel_start && sel_last - sel_start >= 3000u && cur.count && cur.now_ms - sel_last < 900u) return 0;
-    if (dirty) { dirty = 0; draw(); if (sbx_fb_present(fb, 0, 0, width, height)) return 8; }
+    clock_ms = (uint32_t)((now - t0) / 1000000u);
+    if (!dirty && now - clk_drawn >= 100000000u) { clk_drawn = now; draw_clock(); if (sbx_fb_present(fb, CLK_X, 2, width - CLK_X, 34)) return 8; }
+    if (dirty) { dirty = 0; clk_drawn = now; draw(); if (sbx_fb_present(fb, 0, 0, width, height)) return 8; }
     if (sbx_sleep_until(now + 50000000u)) return 7;
   }
 }

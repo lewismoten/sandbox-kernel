@@ -50,9 +50,9 @@ announcement, received keys and replies, a stuck send, and the log bound.
    sending keys. Active Source (on announce and on Set Stream Path to us) is followed by an
    unsolicited directed Menu Status "activated" for TVs that wait for it. Give Device Vendor ID gets a broadcast Device Vendor ID of 000000 (no vendor
    claimed; the value is a convention, not a registered id). Anything else directed at us gets
-   Feature Abort "unrecognized opcode" (Feature Abort itself is ignored). These messages request TV input selection; they do
+   Feature Abort "unrecognized opcode" (Feature Abort itself is ignored; a broadcast is never aborted), and CEC.TXT gets one "UNRECOGNISED xx from n" line per such opcode, so the log shows what a TV asks that is not known. Vendor id 000000 was kept after review: a registered id would claim another company's name. These messages request TV input selection; they do
    not guarantee that a TV changes input.
-6. Keys: User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
+6. Keys (2026-11-14: Contents Menu 0B is Esc, Fast Forward 49 and Rewind 48 are Page Down and Page Up; a Fire TV remote sends those): User Control Pressed goes through `cec_keys` to `input_frame` (the same queue the USB
    keyboard and the synthetic device use): Select and Enter are Enter, arrows are arrows, Exit is
    Esc, Play, Pause, Play Function and Pause-Play Function are Space (Record Function is not passed on), 0 to 9, Clear, channel up and down, the four colors (F1 to F4), Root menu is Home, Setup menu
    is Menu. A remote's repeat (Pressed again about every 100 to 500 ms) becomes a key repeat for

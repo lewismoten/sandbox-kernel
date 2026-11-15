@@ -151,3 +151,14 @@ enum cec_sm_event cec_sm_rx(struct cec_sm *s, const struct cec_msg *m) {
     }
     return CEC_SM_EV_NONE;
 }
+
+/* The directed opcodes cec_sm_rx answers itself; anything else gets a Feature Abort, and the driver logs it once. */
+int cec_sm_handles(unsigned op) {
+    switch (op) {
+    case CEC_OP_USER_CONTROL_PRESSED: case CEC_OP_USER_CONTROL_RELEASED: case CEC_OP_GIVE_PHYSICAL_ADDR:
+    case CEC_OP_GIVE_OSD_NAME: case CEC_OP_GIVE_POWER_STATUS: case CEC_OP_GET_CEC_VERSION:
+    case CEC_OP_GIVE_DEVICE_VENDOR_ID: case CEC_OP_MENU_REQUEST: case CEC_OP_REPORT_POWER_STATUS:
+    case CEC_OP_FEATURE_ABORT: return 1;
+    default: return 0;
+    }
+}

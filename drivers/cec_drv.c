@@ -133,6 +133,7 @@ void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t no
     d->bus_ok = 0; d->tx_eom_stale = d->rx_flag_bad = d->rx_flag_off = d->rx_int_prev = d->rx_pending = d->last_raw_len = d->rx_eom_prev = 0; d->rx_stale = d->flag_stuck = 0;
     d->flags_sig = d->flags_ms = d->rx_flag_ms = d->rx_via_flags = d->last_raw_ms = d->rx_dups = 0;
     d->hpd_known = 0; d->phys_want = 0; d->phys_failed = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
+    for (unsigned i = 0; i < 8; i++) d->unk_seen[i] = 0;
     d->rx_frames = d->tx_frames = d->tx_good = d->tx_bad = d->key_events = d->spurious = 0;
     cec_log_init(&d->log); cec_keys_init(&d->keys);
     n = put_str(l, 0, "init phys "); n = put_hex(l, n, (uint8_t[]){(uint8_t)(phys >> 8), (uint8_t)phys}, 2);
@@ -267,7 +268,13 @@ static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
         n = cec_keys_pressed(&d->keys, ui, now, ev); emit(d, ev, n); break;
     }
     case CEC_SM_EV_KEY_RELEASED: n = cec_keys_released(&d->keys, ev); emit(d, ev, n); break;
-    default: if (op != CEC_OP_USER_CONTROL_PRESSED) say_frame(d, now, "RX", &m); break;
+    default: if (op != CEC_OP_USER_CONTROL_PRESSED) say_frame(d, now, "RX", &m);
+        if (cec_dest(&m) == d->sm.laddr && !cec_sm_handles((unsigned)op) && !(d->unk_seen[op >> 5] & (1u << (op & 31)))) {   /* once per opcode: what the TV asks that we do not know */
+            char l[CEC_LOG_LINE]; unsigned k = put_str(l, 0, "UNRECOGNISED "); uint8_t ob = (uint8_t)op;
+            k = put_hex(l, k, &ob, 1); k = put_str(l, k, " from "); k = put_dec(l, k, cec_initiator(&m)); k = put_str(l, k, ": Feature Abort sent"); l[k] = 0; say(d, now, l);
+            d->unk_seen[op >> 5] |= 1u << (op & 31);
+        }
+        break;
     }
     return 1;
 }

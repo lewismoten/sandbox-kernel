@@ -18,12 +18,15 @@ uint16_t cec_keys_map(uint8_t ui) {
     case 0x04: return K_RIGHT;
     case 0x09: return K_HOME;                    /* Root menu */
     case 0x0A: return K_MENU;                    /* Setup menu */
+    case 0x0B: return K_ESC;                     /* Contents menu: a Fire TV remote's menu key; GMOS has no menu key, Esc is its back/close */
     case 0x0D: return K_ESC;                     /* Exit / Back */
     case 0x20: return K_0;                       /* Number 0 */
     case 0x2B: return K_ENTER;                   /* Enter */
     case 0x2C: return K_BACKSPACE;               /* Clear */
     case 0x30: return K_PAGEUP;                  /* Channel up */
     case 0x31: return K_PAGEDOWN;                /* Channel down */
+    case 0x48: return K_PAGEUP;                  /* Rewind */
+    case 0x49: return K_PAGEDOWN;                /* Fast forward */
     case 0x44: case 0x46: case 0x60: case 0x61: return K_SPACE; /* Play, Pause, Play Function, Pause-Play Function (not Record Function, 0x62) */
     case 0x71: return K_F1;                      /* Blue, Red, Green, Yellow */
     case 0x72: return K_F1 + 1;

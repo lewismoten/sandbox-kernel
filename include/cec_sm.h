@@ -54,4 +54,5 @@ void cec_sm_tx_done(struct cec_sm *s, uint64_t tx_id, enum cec_sm_tx_result resu
 /* Wake the TV and take the screen: Image View On, then Active Source. */
 int cec_sm_standby(struct cec_sm *s);
 void cec_sm_announce(struct cec_sm *s);
+int cec_sm_handles(unsigned op);   /* 1 if a directed message with this opcode is answered by cec_sm_rx; others get a Feature Abort */
 #endif
