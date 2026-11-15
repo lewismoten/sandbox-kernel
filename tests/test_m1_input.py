@@ -86,7 +86,8 @@ class Input(u.CallsBase):
         self.assertEqual(struct.unpack_from('<5Q2q',peek(self.c,q,72),16),(1,1,64,768,32,-32768,32767))   # flag 1: synthetic
         poke(self.c,q,self.hdr(72)+struct.pack('<Q',1)+bytes(48));self.assertEqual(self.ioctl(fd,0x30000,q,72),-EINVAL)  # output not zero
         poke(self.c,q,self.hdr(64)+bytes(48));self.assertEqual(self.ioctl(fd,0x30000,q,64),-EINVAL)        # wrong size
-        self.assertEqual(self.ioctl(fd,0x30002,q,72),-25)                          # unknown request
+        self.assertEqual(self.ioctl(fd,0x30003,q,72),-25)                          # unknown request
+        self.assertEqual(self.ioctl(fd,0x30002,q,72),-EINVAL)                      # INPUT_CEC: wrong size
         r,log=self.open('/dev/log',1);self.assertEqual(self.ioctl(log,0x30000,q,72),-25)
     def test_removal(self):
         fd=self.ev();frame(self.c,(EV_KEY,28,1));self.c.input_remove()
