@@ -190,17 +190,17 @@ static void test_rx_keys_and_replies(void) {
     static const uint8_t gps[] = {0x04, 0x8F}, gvid[] = {0x04, 0x8C}, deck[] = {0x04, 0x1A}, bunk[] = {0x0F, 0x32, 'e', 'n', 'g'};
     static const uint8_t rps[] = {0x40, 0x90, 0x00}, vid[] = {0x4F, 0x87, 0x00, 0x00, 0x00}, fab[] = {0x40, 0x00, 0x1A, 0x00};
     before = chip.sent_n;
-    inject(&chip, gps, 2); cec_drv_task(&drv, 3100); expect(&chip, before, rps, 3); finish_tx(&chip, 1); cec_drv_task(&drv, 3110);
-    inject(&chip, gvid, 2); cec_drv_task(&drv, 3120); expect(&chip, before + 1, vid, 5); finish_tx(&chip, 1); cec_drv_task(&drv, 3130);
-    inject(&chip, deck, 2); cec_drv_task(&drv, 3140); expect(&chip, before + 2, fab, 4); finish_tx(&chip, 1); cec_drv_task(&drv, 3150);
-    inject(&chip, deck, 2); cec_drv_task(&drv, 3200); finish_tx(&chip, 1); cec_drv_task(&drv, 3210);
-    inject(&chip, bunk, 5); cec_drv_task(&drv, 3300); cec_drv_task(&drv, 3310);
+    inject(&chip, gps, 2); cec_drv_task(&drv, 6100); expect(&chip, before, rps, 3); finish_tx(&chip, 1); cec_drv_task(&drv, 6110);
+    inject(&chip, gvid, 2); cec_drv_task(&drv, 6120); expect(&chip, before + 1, vid, 5); finish_tx(&chip, 1); cec_drv_task(&drv, 6130);
+    inject(&chip, deck, 2); cec_drv_task(&drv, 6140); expect(&chip, before + 2, fab, 4); finish_tx(&chip, 1); cec_drv_task(&drv, 6150);
+    inject(&chip, deck, 2); cec_drv_task(&drv, 6200); finish_tx(&chip, 1); cec_drv_task(&drv, 6210);
+    inject(&chip, bunk, 5); cec_drv_task(&drv, 6300); cec_drv_task(&drv, 6310);
     assert(chip.sent_n == before + 4);                                   /* a broadcast is never aborted */
     { const char *u = strstr(drv.log.text, "UNRECOGNISED 1A from 0"); assert(u && !strstr(u + 1, "UNRECOGNISED 1A")); }   /* logged once */
     /* the buttons a Fire TV remote sends: Contents Menu and Fast Forward are keys now */
     keys.n = 0; static const uint8_t ff[] = {0x04, 0x44, 0x49}, cm[] = {0x04, 0x44, 0x0B};
-    inject(&chip, ff, 3); cec_drv_task(&drv, 4000); assert(keys.n == 1 && keys.code[0] == 109);
-    inject(&chip, cm, 3); cec_drv_task(&drv, 4100); assert(keys.code[keys.n - 1] == 1 && keys.val[keys.n - 1] == 1);
+    inject(&chip, ff, 3); cec_drv_task(&drv, 9000); assert(keys.n == 1 && keys.code[0] == 109);
+    inject(&chip, cm, 3); cec_drv_task(&drv, 9100); assert(keys.code[keys.n - 1] == 1 && keys.val[keys.n - 1] == 1);
 }
 
 static void test_registers_wiped(void) {
@@ -457,9 +457,9 @@ static void test_tv_session_after_sticky_c5(void) {
     assert(drv.rx_frames == 2 && strstr(drv.log.text, "RX 0>4 83 (Give Physical Address)"));
     cec_drv_task(&drv, 3040); assert(chip.sent_n == sent + 1 && chip.sent[sent][1] == 0x84);   /* we answer Report Physical Address */
     finish_tx(&chip, 1); cec_drv_task(&drv, 3100);
-    inject_quiet(&chip, up, 3); cec_drv_task(&drv, 4000);                            /* the key, with c5 already high */
+    inject_quiet(&chip, up, 3); cec_drv_task(&drv, 9000);                            /* the key, with c5 already high */
     assert(keys.n == 1 && keys.code[0] == 103 && keys.val[0] == 1 && drv.rx_frames == 3);
-    inject_quiet(&chip, rel, 2); cec_drv_task(&drv, 4100);
+    inject_quiet(&chip, rel, 2); cec_drv_task(&drv, 9100);
     assert(drv.rx_frames == 4 && keys.n == 2 && keys.val[1] == 0);
     inject_quiet(&chip, up, 3); cec_drv_task(&drv, 4400);                            /* the same key again later is a new press */
     assert(keys.n == 3 && keys.val[2] == 1);
