@@ -10,7 +10,8 @@ static uint64_t boot_trigger,last_full_trigger,last_trigger,wake_until;
 static bool sleeping,reset_pin=true;
 static unsigned busy_commands,resets_after_sleep;
 /* A model of the controller's RAM and of the SPI command stream, so the tests can check what reached 0x24/0x26. */
-static uint8_t ram24[4000],ram26[4000];
+static uint8_t ram24[4000],ram26[4000],glass_model[4000];
+static bool scramble; /* pessimistic model: a wake reset garbles the old plane (0x26) */
 static unsigned mwx0,mwx1,mwy0,mwy1,cx,cy,nparam,logn,ram_writes;
 static uint8_t params[8];
 struct entry {uint8_t cmd,first[8];unsigned count;};
@@ -34,6 +35,8 @@ static volatile uint32_t *panel_reg(uint32_t address) {
     if(logn<512) {logv[logn].cmd=b;logv[logn].count=0;memset(logv[logn].first,0,8);logn++;}
     if(b==0x20) {
      last_trigger=clock_us();
+     /* a partial drives only pixels whose new and old RAM differ; a full drives them all */
+     for(unsigned i=0;i<4000;i++) glass_model[i]=mode==0xf7?ram24[i]:(uint8_t)((glass_model[i]&(uint8_t)~(ram24[i]^ram26[i]))|(ram24[i]&(uint8_t)(ram24[i]^ram26[i])));
      if(mode==0xf7) {
       if(!full_count)boot_trigger=last_trigger;
       full_count++;last_full_trigger=last_trigger;
@@ -62,7 +65,7 @@ static volatile uint32_t *panel_reg(uint32_t address) {
 void gpio_mode(unsigned pin,unsigned mode_) {(void)pin;(void)mode_;}
 void gpio_set(unsigned pin,bool value) {
  if(pin==25)dc=value;
- if(pin==17) {if(value&&!reset_pin&&sleeping) {sleeping=false;wake_until=clock_us()+10000;resets_after_sleep++;}reset_pin=value;}
+ if(pin==17) {if(value&&!reset_pin&&sleeping) {sleeping=false;if(scramble)for(unsigned i=0;i<4000;i++)ram26[i]=(uint8_t)(i*37+11);wake_until=clock_us()+10000;resets_after_sleep++;}reset_pin=value;}
 }
 bool gpio_get(unsigned pin) {(void)pin;return fault==1||sleeping||clock_us()<wake_until;} /* BUSY is high in deep sleep and after the wake reset */
 #include "../drivers/panel.c"
@@ -82,3 +85,5 @@ void panel_probe_log_entry(unsigned i,uint8_t out[13]) {
  out[0]=logv[i].cmd;memcpy(out+1,logv[i].first,8);out[9]=(uint8_t)logv[i].count;out[10]=(uint8_t)(logv[i].count>>8);out[11]=(uint8_t)(logv[i].count>>16);out[12]=0;
 }
 void panel_probe_ram(uint8_t a[4000],uint8_t b[4000]) {memcpy(a,ram24,4000);memcpy(b,ram26,4000);}
+void panel_probe_scramble(bool on) {scramble=on;}
+void panel_probe_glass_model(uint8_t out[4000]) {memcpy(out,glass_model,4000);}

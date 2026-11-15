@@ -35,7 +35,8 @@ static void window(void) {
  cmd(0x4e);datum(wx0);cmd(0x4f);datum(wy0&255);datum(wy0>>8);
  total=(unsigned)(wx1-wx0+1)*(wy1-wy0+1);
 }
-static uint8_t window_byte(unsigned i) {unsigned w=(unsigned)(wx1-wx0+1);return frame[(wy0+i/w)*16+wx0+i%w];} /* i-th byte of the window, rows of 16 bytes */
+static uint8_t window_byte_of(const uint8_t *p,unsigned i) {unsigned w=(unsigned)(wx1-wx0+1);return p[(wy0+i/w)*16+wx0+i%w];}
+static uint8_t window_byte(unsigned i) {return window_byte_of(frame,i);} /* i-th byte of the window, rows of 16 bytes */
 static void whole_window(void) {wx0=0;wx1=15;wy0=0;wy1=249;}
 /* The smallest window holding every byte that differs from what is on the glass. */
 static void changed_window(void) {
@@ -78,12 +79,18 @@ void panel_task(const char *state,uint32_t seconds) {
   if(!disabled) {memcpy(sent,frame,4000);sent_valid=true;eink_note_refresh(full,clock_us());}
   wait_phase(9,0);return;
  }
+ case 14: { /* a partial after a wake: the old plane (0x26) is rewritten with what is on the glass, so the controller compares against the truth and drives every changed pixel */
+  unsigned stop=pos+128;if(stop>total)stop=total;while(pos<stop&&!disabled)datum(window_byte_of(shown,pos++));if(pos<total)return;
+  window();cmd(0x24);pos=0;phase=7;return;
+ }
  case 11:if(!expired(since,delay))return;phase=0;return;
  case 12:if(!expired(since,1000))return;gpio_set(17,true);wait_phase(13,20000);return; /* reset released: the controller wakes from deep sleep */
  case 13: /* BUSY stays high while it wakes: no command until it falls (after the 20 ms settle the cold boot also waits) */
   if(!expired(since,delay))return;
   if(gpio_get(24)) {if(expired(since,5000000)) disable("Panel BUSY timeout");return;}
-  cmd(0x3c);datum(0x80);cmd(0x18);datum(0x80);setup();cmd(0x24);pos=0;phase=7;return;
+  cmd(0x3c);datum(0x80);cmd(0x18);datum(0x80);setup();
+  if(full) {cmd(0x24);pos=0;phase=7;} else {cmd(0x26);pos=0;phase=14;}
+  return;
  default:break;
  }
  if(phase)return;

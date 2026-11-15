@@ -88,22 +88,42 @@ class Panel(SupervisorBase):
         self.assertEqual(self.c.eink_page(bytes(page), len(page), C.c_uint64(self.c.clock_us())), 0)
         self.pump()
         log = self.log()
-        self.assertEqual([e[0] for e in log], [0x3c, 0x18, 0x01, 0x11, 0x44, 0x45, 0x4e, 0x4f, 0x24, 0x22, 0x20,
+        self.assertEqual([e[0] for e in log], [0x3c, 0x18, 0x01, 0x11, 0x44, 0x45, 0x4e, 0x4f, 0x26, 0x44, 0x45, 0x4e, 0x4f, 0x24, 0x22, 0x20,
                                                0x44, 0x45, 0x4e, 0x4f, 0x26, 0x10])
         self.assertEqual(log[0][1][:1], b'\x80')  # border waveform for partial updates
         self.assertEqual(log[1][1][:1], b'\x80')  # internal temperature sensor: a reset forgets it
-        self.assertEqual(log[9][1][:1], b'\xff')  # partial refresh mode
-        self.assertEqual(log[16][1][:1], b'\x01')  # deep sleep mode 1 keeps RAM
+        self.assertEqual(log[14][1][:1], b'\xff')  # partial refresh mode
+        self.assertEqual(log[21][1][:1], b'\x01')  # deep sleep mode 1 keeps RAM
         x0, x1 = log[4][1][:2]
         y0, y1 = log[5][1][0] | log[5][1][1] << 8, log[5][1][2] | log[5][1][3] << 8
         n = (x1-x0+1)*(y1-y0+1)
         self.assertLess(n, 100)
-        self.assertEqual((log[8][2], log[15][2]), (n, n))  # new and old planes get the same small window
-        self.assertEqual(log[11][1][:2], bytes([x0, x1]))  # the old plane is synced over the same rectangle
+        self.assertEqual((log[13][2], log[20][2]), (n, n))  # new and old planes get the same small window
+        self.assertEqual(log[16][1][:2], bytes([x0, x1]))  # the old plane is synced over the same rectangle
         self.assertEqual(log[6][1][:1], bytes([x0]))
         a, b = self.ram()
         self.assertEqual(a, self.glass())  # new plane holds what was sent
         self.assertEqual(b, self.glass())  # old plane equals what is on the glass after every partial
+
+    def test_partial_after_wake_rewrites_old_plane_with_the_glass(self):
+        # even if a wake reset garbles 0x26, every partial writes 0x26 = shown, then 0x24, before 0x22/0x20
+        self.c.panel_probe_scramble(True)
+        self.boot()
+        page = bytearray(eink.PAGE)
+        for i in range(6):
+            self.jump(self.c.clock_us()+3_000_000)
+            page[1000+i*7] ^= 0xa5
+            self.c.panel_probe_log_reset()
+            self.assertEqual(self.c.eink_page(bytes(page), len(page), C.c_uint64(self.c.clock_us())), 0)
+            self.pump()
+            cmds = [e[0] for e in self.log()]
+            self.assertLess(cmds.index(0x26), cmds.index(0x24))
+            self.assertLess(cmds.index(0x24), cmds.index(0x22))
+            self.assertLess(cmds.index(0x22), cmds.index(0x20))
+            g = C.create_string_buffer(4000)
+            self.c.panel_probe_glass_model(g)
+            self.assertEqual(g.raw, self.glass())  # no stroke of the previous picture stays on the model glass
+            self.assertFalse(self.c.panel_probe_disabled())
 
     def test_seconds_tick_is_a_small_window(self):
         self.boot()
