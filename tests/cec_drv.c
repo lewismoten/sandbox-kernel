@@ -447,7 +447,7 @@ static void test_tv_session_after_sticky_c5(void) {
     claim4(); keys.n = 0; chip.sticky_int = 1;
     static const uint8_t poll[] = {0x04}, gpa[] = {0x04, 0x83}, up[] = {0x04, 0x44, 0x01}, rel[] = {0x04, 0x45};
     inject_quiet(&chip, poll, 1); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;       /* bit 23 only, as logged at 972 ms */
-    cec_drv_task(&drv, 2000);
+    cec_drv_task(&drv, 2000); cec_drv_task(&drv, 2160);                              /* no RX_EOM: read once it has waited out the end of frame */
     assert(drv.rx_frames == 1 && strstr(drv.log.text, "rx raw 1B 04 via flags") && strstr(drv.log.text, "RX 0>4"));
     assert(chip.r[CEC_R_CNTRL_5 / 4] & CEC_C5_RX_CEC_INT);                           /* still high after the clear */
     for (uint32_t t = 2040; t < 2600; t += 40) cec_drv_task(&drv, t);               /* quiet: no phantom frames */
@@ -464,6 +464,54 @@ static void test_tv_session_after_sticky_c5(void) {
     inject_quiet(&chip, up, 3); cec_drv_task(&drv, 4400);                            /* the same key again later is a new press */
     assert(keys.n == 3 && keys.val[2] == 1);
     assert(strstr(drv.log.text, "TX 4>15 84:") && strstr(drv.log.text, "(Report Physical Address) broadcast"));
+}
+
+/* 2026-11-14 PI-2: a read made while a frame is still arriving cleared the receiver and wiped it. */
+static void test_no_read_mid_frame(void) {
+    static const uint8_t up[] = {0x04, 0x44, 0x01};
+    claim4(); keys.n = 0; chip.clear_pulses = 0; unsigned f0 = drv.rx_frames;
+    /* RX interrupt level up, RX_EOM clear, length field 0, bytes of the last frame (a poll) still in the buffer */
+    inject_quiet(&chip, up, 3); chip.r[CEC_R_CNTRL_1 / 4] &= ~(CEC_C1_RX_EOM | CEC_C1_REC_WRD_MASK);
+    for (uint32_t t = 1000; t < 1090; t += 30) { cec_drv_task(&drv, t); assert(chip.clear_pulses == 0 && drv.rx_frames == f0 && keys.n == 0); }
+    assert(drv.rx_waits == 1 && drv.rx_pending && strstr(drv.log.text, "receive waited for end of frame"));
+    /* the frame ends: RX_EOM and REC_WRD for 3 bytes */
+    chip.r[CEC_R_CNTRL_1 / 4] |= CEC_C1_RX_EOM | (2u << CEC_C1_REC_WRD_SHIFT);
+    cec_drv_task(&drv, 1120); cec_drv_task(&drv, 1150); cec_drv_task(&drv, 1200);
+    assert(keys.n == 1 && keys.code[0] == 103 && keys.val[0] == 1 && drv.rx_frames == f0 + 1 && chip.clear_pulses == 1);
+    /* a frame that never ends is read once after the wait, and only once */
+    claim4(); keys.n = 0; chip.clear_pulses = 0;
+    inject_quiet(&chip, up, 3); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;
+    for (uint32_t t = 2000; t < 2400; t += 30) cec_drv_task(&drv, t);
+    assert(keys.n == 1 && chip.clear_pulses == 1);
+}
+
+/* a held button repeats every 100 to 500 ms: each repeat is a key event of value 2, none dropped */
+static void test_held_repeats(void) {
+    static const uint8_t up[] = {0x04, 0x44, 0x01};
+    claim4(); keys.n = 0;
+    uint32_t t = 10000; unsigned gaps[] = {100, 100, 250, 500, 100, 300};
+    inject(&chip, up, 3); cec_drv_task(&drv, t);
+    for (unsigned i = 0; i < 6; i++) {
+        t += gaps[i];
+        inject_quiet(&chip, up, 3); chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM;      /* the interrupt level rises first ... */
+        cec_drv_task(&drv, t - 40); cec_drv_task(&drv, t - 10);
+        chip.r[CEC_R_CNTRL_1 / 4] |= CEC_C1_RX_EOM;                                    /* ... then the frame ends */
+        cec_drv_task(&drv, t);
+    }
+    unsigned rep = 0; for (unsigned i = 0; i < keys.n; i++) rep += keys.val[i] == 2;
+    assert(keys.val[0] == 1 && rep >= 6 && drv.rx_frames == 7);
+}
+
+/* the old stale case: the same bytes and no new frame are ignored, and the receiver is not cleared for them */
+static void test_stale_read_ignored(void) {
+    static const uint8_t up[] = {0x04, 0x44, 0x01};
+    claim4(); keys.n = 0; inject(&chip, up, 3); cec_drv_task(&drv, 5000); assert(keys.n == 1);
+    chip.clear_pulses = 0;
+    chip.r[CEC_R_CNTRL_1 / 4] &= ~CEC_C1_RX_EOM; chip.r[CEC_R_CNTRL_5 / 4] &= ~CEC_C5_RX_CEC_INT; cec_drv_task(&drv, 5200);
+    chip.r[CEC_R_CNTRL_5 / 4] |= CEC_C5_RX_CEC_INT;                                  /* a rise with nothing new behind it */
+    for (uint32_t t = 5300; t < 5800; t += 30) cec_drv_task(&drv, t);
+    unsigned pr = 0; for (unsigned i = 0; i < keys.n; i++) pr += keys.val[i] != 0;   /* the release from the key timer is not a press */
+    assert(pr == 1 && drv.rx_stale == 1 && chip.clear_pulses == 0);
 }
 
 int main(void) {
@@ -484,5 +532,8 @@ int main(void) {
     test_late_tv(); assert(!chip.lost); puts("PASS TV that appears 60 s late");
     test_capture_bounds(); puts("PASS capture is bounded");
     test_edid_retry(); puts("PASS a failed EDID read is read again");
+    test_no_read_mid_frame(); puts("PASS no read or clear while a frame is arriving");
+    test_held_repeats(); puts("PASS held-button repeats all arrive");
+    test_stale_read_ignored(); puts("PASS a stale read is ignored without a clear");
     return 0;
 }

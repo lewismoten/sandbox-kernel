@@ -130,7 +130,7 @@ static void phys_refresh(struct cec_drv *d, uint32_t now, const char *why) {
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms) {
     struct cec_timing t; char l[CEC_LOG_LINE]; unsigned n;
     d->tx_busy = 0; d->hold = 0; d->announced = 0; d->last_ui = 0; d->ui_seen = 0; d->tx_id = 0;
-    d->bus_ok = 0; d->tx_eom_stale = d->rx_flag_bad = d->rx_flag_off = d->rx_int_prev = d->rx_pending = d->last_raw_len = d->rx_eom_prev = 0; d->rx_stale = d->flag_stuck = 0;
+    d->bus_ok = 0; d->tx_eom_stale = d->rx_flag_bad = d->rx_flag_off = d->rx_int_prev = d->rx_pending = d->last_raw_len = d->rx_eom_prev = 0; d->rx_stale = d->flag_stuck = 0; d->rx_waits = d->rx_wait_ms = d->rx_wait_on = 0;
     d->flags_sig = d->flags_ms = d->rx_flag_ms = d->rx_via_flags = d->last_raw_ms = d->rx_dups = 0;
     d->hpd_known = 0; d->phys_want = 0; d->phys_failed = 0; d->retry_armed = 0; d->backoff_ms = 0; d->restarts = d->hpd_rises = 0; d->phys_try_ms = now_ms;
     for (unsigned i = 0; i < 8; i++) d->unk_seen[i] = 0;
@@ -213,8 +213,20 @@ static void rx_note(struct cec_drv *d, uint32_t c5, uint32_t c1) {
     d->rx_int_prev = now_hi; d->rx_eom_prev = eom;
 }
 
-static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
+/* done: the CPU status bit (or a send timeout) says the receive finished. Otherwise the frame is only read when RX_EOM says it
+ * is complete: the 2026-11-14 PI-2 log (held remote keys, c1 F2... then a "stale" C0... read) showed a read made mid-frame, from
+ * the rising RX interrupt level, whose CLEAR_RECEIVE_OFF reset the receiver and wiped the frame in flight; the TV saw a failed
+ * transfer and retried into the same collision. So an unfinished frame is left alone (rx_pending stays set) and looked at again
+ * on the next pass; if it still has not ended after CEC_RX_WAIT_MS (the 2026-11-12 Insignia log had real frames with RX_EOM never
+ * set) it is read once, as before. Returns 2 when it waited. */
+#define CEC_RX_WAIT_MS 150u
+static int rx_frame(struct cec_drv *d, uint32_t now, const char *via, int done) {
     uint32_t c1 = d->rd(d->ctx, CEC_R_CNTRL_1);
+    if (!done && !(c1 & CEC_C1_RX_EOM)) {
+        if (!d->rx_wait_on) { d->rx_wait_on = 1; d->rx_wait_ms = now; d->rx_waits++; if (d->rx_waits <= 8u) say_regs(d, now, "receive waited for end of frame;"); }
+        if ((uint32_t)(now - d->rx_wait_ms) < CEC_RX_WAIT_MS) return 2;
+    }
+    d->rx_wait_on = 0;
     unsigned len = 1u + ((c1 & CEC_C1_REC_WRD_MASK) >> CEC_C1_REC_WRD_SHIFT);
     uint8_t raw[16]; struct cec_msg m;
     if (len > 16u) len = 16u;
@@ -222,15 +234,17 @@ static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
         uint32_t w = d->rd(d->ctx, CEC_R_RX_DATA + (i >> 2) * 4u);
         for (unsigned k = 0; k < 4; k++) raw[i + k] = (uint8_t)(w >> (8u * k));
     }
+    unsigned same = len == d->last_raw_len; for (unsigned i = 0; same && i < len; i++) if (raw[i] != d->last_raw[i]) same = 0;
+    if (same && !(c1 & CEC_C1_RX_EOM) && d->rx_frames) {   /* no end-of-frame flag and the bytes of the last frame: the buffer's old content, not a new frame. No clear: it could reset a frame arriving now */
+        d->rx_pending = 0;
+        d->rx_int_prev = (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT) ? 1u : 0u; d->rx_eom_prev = 0;
+        d->rx_stale++; if (d->rx_stale <= 8u) say_regs(d, now, "stale receive read;"); return 1;
+    }
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 | CEC_C1_CLEAR_RECEIVE_OFF);   /* ready for the next frame */
     d->wr(d->ctx, CEC_R_CNTRL_1, c1 & ~CEC_C1_CLEAR_RECEIVE_OFF);
     d->rx_pending = 0;
     d->rx_int_prev = (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT) ? 1u : 0u;   /* the levels after the clear are the baseline: a bit that stays high is not a new frame, one that fell and rises is */
     d->rx_eom_prev = (d->rd(d->ctx, CEC_R_CNTRL_1) & CEC_C1_RX_EOM) ? 1u : 0u;
-    unsigned same = len == d->last_raw_len; for (unsigned i = 0; same && i < len; i++) if (raw[i] != d->last_raw[i]) same = 0;
-    if (same && !(c1 & CEC_C1_RX_EOM) && d->rx_frames) {   /* no end-of-frame flag and the bytes of the last frame: the buffer's old content, not a new frame */
-        d->rx_stale++; if (d->rx_stale <= 8u) say_regs(d, now, "stale receive read;"); return 1;
-    }
     if (same && (uint32_t)(now - d->last_raw_ms) < 20u) {
         d->rx_dups++; return 1;                                      /* the same frame read again within 20 ms: a stale one, not a new press (a held remote repeats every 100 ms or more) */
     }
@@ -313,18 +327,21 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         int rx_new = d->rx_pending;
         int rx_flag = !d->rx_flag_off && !d->tx_busy && rx_new && (uint32_t)(now - d->rx_flag_ms) >= 30u;
         if (st & CEC_CPU_CEC) {
-            if (rx_new && !(tx_flag && !(c1 & CEC_C1_RX_EOM))) rx_frame(d, now, "status");
+            if (rx_new && !(tx_flag && !(c1 & CEC_C1_RX_EOM))) rx_frame(d, now, "status", 1);
             else if (d->tx_busy) tx_done(d, now);
             else { d->spurious++; say_regs(d, now, "idle event;"); }
             d->wr(d->ctx, CEC_R_CPU_CLEAR, CEC_CPU_CEC);
         } else if (tx_flag) {
             say(d, now, "send finished (c1 flag, status bit clear)"); tx_done(d, now);
         } else if (rx_flag) {
+            uint32_t c1w = d->rd(d->ctx, CEC_R_CNTRL_1);
+            if (!(c1w & CEC_C1_RX_EOM) && (!d->rx_wait_on || (uint32_t)(now - d->rx_wait_ms) < CEC_RX_WAIT_MS)) { rx_frame(d, now, "flags", 0); goto rx_waited; }   /* waiting for the end of the frame: look again next pass, not 30 ms on */
             d->rx_flag_ms = now; d->rx_via_flags++;
             if (d->rx_via_flags <= 5u) say_regs(d, now, "receive flag, status bit clear;");
-            rx_frame(d, now, "flags");
+            rx_frame(d, now, "flags", 0);
             if (d->rd(d->ctx, CEC_R_CNTRL_5) & CEC_C5_RX_CEC_INT) d->flag_stuck++;   /* only counted: the 2026-11-12 run switched the path off for this and never saw another frame */
         }
+        rx_waited:;
     }
     cec_sm_tick(&d->sm, now);
     if (d->tx_busy && !d->sm.inflight) {                            /* the core gave up on it: cancel the hardware */
@@ -334,7 +351,7 @@ void cec_drv_task(struct cec_drv *d, uint32_t now) {
         rx_note(d, d->rd(d->ctx, CEC_R_CNTRL_5), d->rd(d->ctx, CEC_R_CNTRL_1));
         if (d->rx_pending) {
             say_regs(d, now, "receiver flagged at timeout;");
-            rx_frame(d, now, "timeout");                                /* read it, as the interrupt handler would, and re-arm the receiver */
+            rx_frame(d, now, "timeout", 1);                                /* read it, as the interrupt handler would, and re-arm the receiver */
         }
         d->wr(d->ctx, CEC_R_CPU_CLEAR, CEC_CPU_CEC);
         if (cec_is_poll(&d->tx)) {

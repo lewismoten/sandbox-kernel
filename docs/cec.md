@@ -146,6 +146,10 @@ frames from the one status bit, so a missed bit is a missed frame. Changes, all 
 - log: every received frame as `rx raw <n>B <bytes> via status|flags|timeout c1 <word>`, a `flags;` line (c1 c5 st mask hotplug) whenever
   the status, RX flag, EOM or GOOD bits change (at most every 250 ms), `mk` (CPU_MASK_STATUS), raw HOTPLUG (`hp`) and HOTPLUG_INT (`hi`)
   on every register line.
+  A read never starts while a frame is still arriving: with the status bit clear it needs RX_EOM, and until then it only logs
+  `receive waited for end of frame` and looks again on the next pass (after 150 ms without RX_EOM it reads once, as before). Reading
+  pulses CLEAR_RECEIVE_OFF, which resets the receiver (2026-11-14 PI-2: held remote keys had frames wiped in flight). A stale read
+  (the last frame's bytes, RX_EOM clear) is dropped without that pulse.
 
 Hotplug: the offset 0x00c and bit 0 match Linux (`HDMI_HOTPLUG`, `VC4_HDMI_HOTPLUG_CONNECTED`), so the read is probably not at a wrong
 address; the firmware may drive HDMI without setting it (inferred). `hp` and `hi` in the log show the whole words.
