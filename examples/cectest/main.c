@@ -54,6 +54,7 @@ static void dec(sb *o, uint32_t v) { char t[11]; uint32_t k = 0; do { t[k++] = (
 static void hex2(sb *o, uint32_t v) { static const char h[] = "0123456789ABCDEF"; char c[3] = {h[v >> 4 & 15], h[v & 15], 0}; cat(o, c); }
 static void hexn(sb *o, uint32_t v) { static const char h[] = "0123456789ABCDEF"; char c[2] = {h[v & 15], 0}; cat(o, c); }
 
+static uint32_t kms0;   /* kernel ms at this screen's clock zero */
 /* seconds.milliseconds, from a time in ms on this screen's clock */
 static void secs(sb *o, uint32_t ms) { dec(o, ms / 1000u); cat(o, "."); char c[4] = {(char)('0' + ms / 100u % 10u), (char)('0' + ms / 10u % 10u), (char)('0' + ms % 10u), 0}; cat(o, c); }
 /* "T 12.345 X3 IN 2.4S GAP 1.1S": when the newest arrived, how many frames of it, over how long, the last gap */
@@ -108,7 +109,6 @@ static void keyname(sb *o, uint32_t k) {
 }
 
 typedef struct { uint8_t len, raw[16]; uint16_t key; uint32_t count, last_ms, first_ms, at_ms, gap_ms; uint8_t rel; } ev;   /* first_ms, at_ms: first and latest counted arrival; gap_ms: between the last two */
-static uint32_t kms0;   /* kernel ms at this screen's clock zero */
 static ev hist[NEV];   /* newest first */
 static uint32_t nhist;
 static sbx_cec_info cur, last_drawn;
