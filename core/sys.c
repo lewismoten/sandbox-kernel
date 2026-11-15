@@ -328,7 +328,7 @@ static int ioctl_input(unsigned i,const struct k_ioctl *r) {
   static struct k_cec_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
   if(us_check(r->buffer,sizeof q,U_W)) return -EFAULT;
   const struct cec_drv *d=cec_hw_drv(); if(!d) return -ENODEV;
-  struct cec_trace_rec t[CEC_TRACE_N]; unsigned n=cec_drv_trace(d,t);
+  unsigned n=d->trace_seq<CEC_TRACE_N?d->trace_seq:CEC_TRACE_N; struct cec_trace_rec t[CEC_TRACE_N]; for(unsigned k=0;k<n;k++) t[k]=d->trace[(d->trace_seq-n+k)%CEC_TRACE_N]; /* oldest first */
   q.seq=d->trace_seq;q.now_ms=d->sm.now_ms;q.phys=d->sm.phys;q.laddr=d->sm.laddr;q.active=d->sm.active;q.state=(uint8_t)d->sm.state;q.count=(uint8_t)n;
   for(unsigned k=0;k<n;k++){q.rec[k].ms=t[k].ms;q.rec[k].len=t[k].len;for(unsigned j=0;j<16;j++)q.rec[k].raw[j]=t[k].raw[j];q.rec[k].key=t[k].key;}
   return us_copy_out(r->buffer,&q,sizeof q);

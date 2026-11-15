@@ -288,12 +288,6 @@ static void hotplug_phys(struct cec_drv *d, uint32_t now) {
         phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
 }
 
-unsigned cec_drv_trace(const struct cec_drv *d, struct cec_trace_rec *out) {
-    unsigned n = d->trace_seq < CEC_TRACE_N ? d->trace_seq : CEC_TRACE_N;
-    for (unsigned i = 0; i < n; i++) out[i] = d->trace[(d->trace_seq - n + i) % CEC_TRACE_N];
-    return n;
-}
-
 void cec_drv_task(struct cec_drv *d, uint32_t now) {
     struct cec_key_event ev[CEC_KEYS_MAX_EVENTS];
     if (d->sm.state == CEC_SM_NO_ADDRESS && d->last_state == CEC_SM_NO_ADDRESS && !d->sm.inflight && !d->tx_busy) {

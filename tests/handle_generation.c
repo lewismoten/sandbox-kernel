@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: MIT; exercise production slot state at lifetime boundaries. */
 #include "../core/sys.c"
-const struct cec_drv *cec_hw_drv(void){return 0;}
 #include <assert.h>
 #include <stdio.h>
 int main(void) {

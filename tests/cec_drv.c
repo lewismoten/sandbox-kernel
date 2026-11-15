@@ -154,7 +154,8 @@ static void test_trace(void) {   /* the ring the CEC test program reads: every r
     uint8_t up[3] = {0x04, 0x44, 0x01}, vol[3] = {0x04, 0x44, 0x41}, rel[2] = {0x04, 0x45};
     unsigned base = drv.trace_seq;
     inject(&chip, up, 3); cec_drv_task(&drv, 9000); inject(&chip, vol, 3); cec_drv_task(&drv, 9500); inject(&chip, rel, 2); cec_drv_task(&drv, 9700);
-    unsigned n = cec_drv_trace(&drv, t);
+    unsigned n = drv.trace_seq < CEC_TRACE_N ? drv.trace_seq : CEC_TRACE_N;   /* the order core/sys.c copies them in */
+    for (unsigned k = 0; k < n; k++) t[k] = drv.trace[(drv.trace_seq - n + k) % CEC_TRACE_N];
     assert(drv.trace_seq == base + 3 && n >= 3);
     assert(t[n - 3].len == 3 && t[n - 3].raw[2] == 0x01 && t[n - 3].key == 103);
     assert(t[n - 2].raw[2] == 0x41 && t[n - 2].key == 0);          /* volume up: not mapped */

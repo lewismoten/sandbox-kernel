@@ -48,7 +48,5 @@ struct cec_drv {
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms);
 /* One pass: service a pending event before expiring a stuck send, release held
  * keys, and start the next queued frame after any cancellation hold-off. */
-/* Copy the received-frame ring oldest first into out (CEC_TRACE_N records); returns how many are valid. */
-unsigned cec_drv_trace(const struct cec_drv *d, struct cec_trace_rec *out);
 void cec_drv_task(struct cec_drv *d, uint32_t now_ms);
 #endif
