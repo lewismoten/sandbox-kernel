@@ -73,6 +73,7 @@ const uint32_t *mmu_table(void) {return ktable;}
 uint32_t *kernel_table(void) {return ktable;}
 void watchdog_feed(void) {}
 static char logs[1<<16];static unsigned logn;
+const struct cec_drv *cec_hw_drv(void){return 0;} /* no CEC hardware on the host */
 void log_line(const char *s) {size_t n=strlen(s);if(logn+n+2>=sizeof(logs))logn=0;memcpy(logs+logn,s,n);logn+=(unsigned)n;logs[logn++]='\n';logs[logn]=0;}
 const char *take_log(void) {static char copy[1<<16];memcpy(copy,logs,logn+1);logn=0;logs[0]=0;return copy;}
 static uint8_t hw[3900*540]; /* the kernel's 960x540x32 screen, pitch padded */

@@ -84,6 +84,7 @@ enum {
 /* Class 3 is input (/dev/input/event0, opened read-only and nonblocking). */
 #define SBX_IOC_INPUT_QUERY SBX_IOC(3, 0)
 #define SBX_IOC_INPUT_STATE SBX_IOC(3, 1) /* current state; also empties the queue */
+#define SBX_IOC_INPUT_CEC SBX_IOC(3, 2) /* the last 8 received CEC frames (sbx_cec_info); ENOTTY on a kernel without it */
 #define SBX_INPUT_SYNTHETIC 1u /* query flag: a synthetic source (USB KEY/AXIS commands) */
 /* Event types and codes follow the Linux input conventions (event-codes.rst). */
 #define SBX_EV_SYN 0u
@@ -266,6 +267,16 @@ typedef struct sbx_input_state { /* SBX_IOC_INPUT_STATE output */
   uint64_t keys[SBX_INPUT_KEYS / 64]; /* bit (code % 64) of word (code / 64) is set while down */
   int64_t axes[SBX_INPUT_AXES];
 } sbx_input_state;
+typedef struct sbx_cec_rec { uint32_t ms; uint8_t len, raw[16]; uint8_t pad; uint16_t key; } sbx_cec_rec; /* raw: header byte (initiator<<4|destination), opcode, operands; key: Linux code it maps to, 0 none */
+typedef struct sbx_cec_info { /* SBX_IOC_INPUT_CEC output */
+  sbx_header h;
+  uint64_t seq;            /* frames received since boot; changes when anything arrives */
+  uint32_t now_ms;
+  uint16_t phys;           /* our physical address, 0xFFFF unknown */
+  uint8_t laddr, active, state, count; /* logical address (15 none), we are the active source, 0 poll 1 claimed 2 none, valid records */
+  uint8_t pad[6];
+  sbx_cec_rec rec[8];      /* oldest first */
+} sbx_cec_info;
 typedef struct sbx_serial_info { /* SBX_IOC_SERIAL_QUERY output (1.10) */
   sbx_header h;
   uint64_t transport, tx_bytes, tx_dropped, rx_bytes, rx_dropped, tx_pending, rx_pending;

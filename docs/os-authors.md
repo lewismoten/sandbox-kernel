@@ -464,6 +464,10 @@ Backspace 14 (Clear), Page Up/Down 104/109 (channel), Home 102 (Root menu), Menu
 menu), F1-F4 59-62 (blue, red, green, yellow). Only arrows and Page Up/Down send value 2
 (repeat) while the button is held; Enter, Esc and Space come once per press. A press with no
 further CEC "pressed" for 550 ms ends with a key-up if the TV never sends "released".
+`INPUT_CEC=0x30002` (`sbx_cec_get`, `sbx_cec_info`, 232 bytes; ENOTTY on a kernel without it) returns the last 8
+received CEC frames oldest first (raw bytes, kernel uptime ms, the Linux key a User Control Pressed maps to, 0 if
+none), the total received (`seq`), our physical and logical address and the active-source flag. `examples/cectest`
+uses it. It adds no minor version: probe it by calling it.
 
 The default `USB_ROLE=device` build supplies `KEY`/`AXIS` input and the CDC recovery
 console. `make USB_ROLE=host all` instead links TinyUSB HID host with one hub,
@@ -647,7 +651,7 @@ with app PCM for ring space (`core/mixer.c:19`, `core/mixer.c:85`,
 ring, tone and mixer status. `TONE HZ MS` accepts 50–4000 Hz and 1–1000 ms, replying
 `OK tone` or `ERR tone args`, `no-hdmi`, or `busy`. Both require an INFO session
 (`core/protocol.c:118`, `core/audio_null.c:48`, `drivers/hdmi_audio.c:176`). HDMI-CEC runs as a polled kernel service; apps control idle standby through
-the power policy above. There is no raw CEC app interface.
+the power policy above. The only CEC app interface is the read-only `INPUT_CEC` trace above.
 
 ### Numeric errors
 

@@ -149,6 +149,17 @@ static void claim4(void) {
     assert(drv.sm.state == CEC_SM_CLAIMED && chip.sent_n == 6);
 }
 
+static void test_trace(void) {   /* the ring the CEC test program reads: every received frame, oldest first, with the key it maps to */
+    struct cec_trace_rec t[CEC_TRACE_N];
+    uint8_t up[3] = {0x04, 0x44, 0x01}, vol[3] = {0x04, 0x44, 0x41}, rel[2] = {0x04, 0x45};
+    unsigned base = drv.trace_seq;
+    inject(&chip, up, 3); cec_drv_task(&drv, 9000); inject(&chip, vol, 3); cec_drv_task(&drv, 9500); inject(&chip, rel, 2); cec_drv_task(&drv, 9700);
+    unsigned n = cec_drv_trace(&drv, t);
+    assert(drv.trace_seq == base + 3 && n >= 3);
+    assert(t[n - 3].len == 3 && t[n - 3].raw[2] == 0x01 && t[n - 3].key == 103);
+    assert(t[n - 2].raw[2] == 0x41 && t[n - 2].key == 0);          /* volume up: not mapped */
+    assert(t[n - 1].len == 2 && t[n - 1].raw[1] == 0x45 && t[n - 1].key == 0 && t[n - 1].ms == 9700u);
+}
 static void test_rx_keys_and_replies(void) {
     claim4(); keys.n = 0;
     static const uint8_t up[] = {0x04, 0x44, 0x01}, unk[] = {0x04, 0x44, 0x66}, rel[] = {0x04, 0x45};
@@ -445,6 +456,7 @@ int main(void) {
     test_next_candidate_and_none(); puts("PASS candidates and silence");
     test_timeout(); puts("PASS send timeout");
     test_rx_keys_and_replies(); puts("PASS rx, keys, replies");
+    test_trace(); puts("PASS received frames are traced for the CEC test");
     test_registers_wiped(); puts("PASS registers wiped and rewritten");
     test_flags_without_status_bit(); puts("PASS flags without the status bit");
     test_reset_keeps_receiver(); puts("PASS reset keeps the receiver");

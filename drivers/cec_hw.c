@@ -131,6 +131,8 @@ void cec_hw_task(void) {
 }
 
 /* POWER and 'SD last' lines from log_line (core/main.c) go into the same saved log, through the same rate limit. */
+const struct cec_drv *cec_hw_drv(void) { return up ? &drv : 0; }
+
 void cec_hw_note(const char *s) {
     if (!up || !s) return;
     if ((s[0]=='P'&&s[1]=='O'&&s[2]=='W'&&s[3]=='E'&&s[4]=='R'&&s[5]==' ') || (s[0]=='S'&&s[1]=='D'&&s[2]==' '&&s[3]=='l'&&s[4]=='a'&&s[5]=='s'&&s[6]=='t')) cec_log_line(&drv.log, now_ms(), s);

@@ -9,6 +9,9 @@
 #include "cec_log.h"
 #include "cec_regs.h"
 
+/* The last CEC_TRACE_N received frames, for the CEC test program (ioctl 0x30002 on the input device). */
+#define CEC_TRACE_N 8u
+struct cec_trace_rec { uint32_t ms; uint8_t len, raw[16]; uint16_t key; };   /* key: Linux code the kernel maps a User Control Pressed to, 0 none */
 struct cec_drv {
     uint32_t (*rd)(void *ctx, uint32_t off);
     void (*wr)(void *ctx, uint32_t off, uint32_t v);
@@ -35,6 +38,7 @@ struct cec_drv {
     uint32_t backoff_ms, retry_ms, phys_try_ms, restarts, hpd_rises;
     uint8_t rx_eom_prev; uint32_t rx_stale, flag_stuck; uint8_t tx_eom_stale, rx_flag_bad, rx_flag_off, rx_int_prev, rx_pending, last_raw_len; uint8_t last_raw[16]; uint32_t last_raw_ms, rx_dups;  /* flag-based completion/receive detection (see cec_drv.c) */
     uint32_t flags_sig, flags_ms, rx_flag_ms, rx_via_flags;
+    uint32_t trace_seq; struct cec_trace_rec trace[CEC_TRACE_N];   /* every received frame, oldest overwritten */
     uint32_t reprogrammed;        /* times the registers were found changed and written again */
 };
 
@@ -44,5 +48,7 @@ struct cec_drv {
 void cec_drv_init(struct cec_drv *d, uint16_t phys, uint32_t hsm_hz, uint32_t now_ms);
 /* One pass: service a pending event before expiring a stuck send, release held
  * keys, and start the next queued frame after any cancellation hold-off. */
+/* Copy the received-frame ring oldest first into out (CEC_TRACE_N records); returns how many are valid. */
+unsigned cec_drv_trace(const struct cec_drv *d, struct cec_trace_rec *out);
 void cec_drv_task(struct cec_drv *d, uint32_t now_ms);
 #endif

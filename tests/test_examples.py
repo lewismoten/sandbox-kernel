@@ -38,6 +38,8 @@ class ExampleBuild(unittest.TestCase):
     def test_hello(self): self.check('hello', 'HELLO.ELF')
     @unittest.skipUnless(ARM_AVAILABLE, 'ARM cross-compiler unavailable')
     def test_clock(self): self.check('clock', 'CLOCK.ELF')
+    @unittest.skipUnless(ARM_AVAILABLE, 'ARM cross-compiler unavailable')
+    def test_cectest(self): self.check('cectest', 'CECTEST.ELF')
     def test_hello_is_short(self):
         self.assertLess(len((ROOT / 'examples/hello/main.c').read_text().splitlines()), 150)
 

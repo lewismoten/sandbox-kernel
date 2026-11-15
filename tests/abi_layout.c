@@ -35,6 +35,7 @@ SIZE(k_audio_info,sbx_audio_info); SAME(k_audio_info,sbx_audio_info,rate); SAME(
 SIZE(k_input_info,sbx_input_info); SAME(k_input_info,sbx_input_info,flags); SAME(k_input_info,sbx_input_info,instance); SAME(k_input_info,sbx_input_info,queue_records); SAME(k_input_info,sbx_input_info,keys); SAME(k_input_info,sbx_input_info,axes); SAME(k_input_info,sbx_input_info,axis_min); SAME(k_input_info,sbx_input_info,axis_max);
 SIZE(k_serial_info,sbx_serial_info); SAME(k_serial_info,sbx_serial_info,transport); SAME(k_serial_info,sbx_serial_info,rx_pending);
 SIZE(k_input_state,sbx_input_state); SAME(k_input_state,sbx_input_state,keys); SAME(k_input_state,sbx_input_state,axes);
+SIZE(k_cec_info,sbx_cec_info); SAME(k_cec_info,sbx_cec_info,seq); SAME(k_cec_info,sbx_cec_info,rec); SIZE(k_cec_rec,sbx_cec_rec);
 _Static_assert(K_ABI_MAJOR==SBX_ABI_MAJOR&&K_ABI_MINOR==SBX_ABI_MINOR,"ABI version");
 #ifdef __arm__
 #include <sandbox/syscall.h>

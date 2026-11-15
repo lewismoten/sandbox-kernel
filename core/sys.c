@@ -8,6 +8,7 @@
 #include "clock.h"
 #include "eink.h"
 #include "abi.h"
+#include "cec_drv.h"
 #include "assets.h"
 #include "fatput.h"
 #include "fb.h"
@@ -321,7 +322,17 @@ static int ioctl_audio(const struct k_ioctl *r) {
  q.played_frames=a->played;q.underruns=a->underruns;q.overruns=a->overruns;q.overrun_frames=a->overrun_frames;
  return us_copy_out(r->buffer,&q,sizeof q);
 }
+const struct cec_drv *cec_hw_drv(void); /* the CEC driver, or 0 when it is not running (host builds stub it) */
 static int ioctl_input(unsigned i,const struct k_ioctl *r) {
+ if(r->request==0x30002u) {
+  static struct k_cec_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
+  if(us_check(r->buffer,sizeof q,U_W)) return -EFAULT;
+  const struct cec_drv *d=cec_hw_drv(); if(!d) return -ENODEV;
+  struct cec_trace_rec t[CEC_TRACE_N]; unsigned n=cec_drv_trace(d,t);
+  q.seq=d->trace_seq;q.now_ms=d->sm.now_ms;q.phys=d->sm.phys;q.laddr=d->sm.laddr;q.active=d->sm.active;q.state=(uint8_t)d->sm.state;q.count=(uint8_t)n;
+  for(unsigned k=0;k<n;k++){q.rec[k].ms=t[k].ms;q.rec[k].len=t[k].len;for(unsigned j=0;j<16;j++)q.rec[k].raw[j]=t[k].raw[j];q.rec[k].key=t[k].key;}
+  return us_copy_out(r->buffer,&q,sizeof q);
+ }
  if(r->request==0x30000u) {
   struct k_input_info q; int e=class_in(r->buffer,r->bytes,&q,sizeof q); if(e) return e;
   if(q.flags|q.instance|q.queue_records|q.keys|q.axes|(uint64_t)q.axis_min|(uint64_t)q.axis_max) return -EINVAL;

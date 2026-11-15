@@ -239,6 +239,9 @@ static int rx_frame(struct cec_drv *d, uint32_t now, const char *via) {
     {   char l[CEC_LOG_LINE]; unsigned n = put_str(l, 0, "rx raw "); n = put_dec(l, n, len); n = put_str(l, n, "B ");
         n = put_hex(l, n, raw, len); n = put_str(l, n, " via "); n = put_str(l, n, via);
         n = put_str(l, n, " c1 "); for (int k = 7; k >= 0; k--) l[n++] = hexd[(c1 >> (4 * k)) & 15u]; l[n] = 0; say(d, now, l); }
+    {   struct cec_trace_rec *t = &d->trace[d->trace_seq % CEC_TRACE_N]; d->trace_seq++;
+        t->ms = now; t->len = (uint8_t)(len > 16u ? 16u : len); for (unsigned i = 0; i < t->len; i++) t->raw[i] = raw[i];
+        t->key = (t->len >= 3u && (t->raw[0] & 0x0Fu) != 0x0Fu && t->raw[1] == CEC_OP_USER_CONTROL_PRESSED) ? cec_keys_map(t->raw[2]) : 0u; }
     if (cec_parse(&m, raw, len)) { say(d, now, "RX bad frame"); return 0; }
     int op = cec_opcode(&m);
     if(d->wake && d->sm.state==CEC_SM_CLAIMED && cec_initiator(&m)!=CEC_ADDR_BROADCAST) {
@@ -283,6 +286,12 @@ static void hotplug_phys(struct cec_drv *d, uint32_t now) {
     }
     if (d->phys && ((d->phys_want && (!d->phys_failed || (uint32_t)(now - d->phys_try_ms) >= 3000u)) || (d->phys_assumed && (uint32_t)(now - d->phys_try_ms) >= 3000u)) && !d->tx_busy)
         phys_refresh(d, now, d->phys_want ? "display connected" : "EDID read again");
+}
+
+unsigned cec_drv_trace(const struct cec_drv *d, struct cec_trace_rec *out) {
+    unsigned n = d->trace_seq < CEC_TRACE_N ? d->trace_seq : CEC_TRACE_N;
+    for (unsigned i = 0; i < n; i++) out[i] = d->trace[(d->trace_seq - n + i) % CEC_TRACE_N];
+    return n;
 }
 
 void cec_drv_task(struct cec_drv *d, uint32_t now) {

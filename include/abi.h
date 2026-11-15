@@ -27,6 +27,8 @@ struct k_clock {struct k_header h; uint64_t clock,ns;}; /* clock_gettime (13): c
 struct k_sleep {struct k_header h; uint64_t deadline;}; /* sleep_until (14): absolute monotonic ns */
 struct k_input_info {struct k_header h; uint64_t flags,instance,queue_records,keys,axes; int64_t axis_min,axis_max;};
 struct k_input_state {struct k_header h; uint64_t keys[12]; int64_t axes[32];};
+struct k_cec_rec {uint32_t ms; uint8_t len,raw[16]; uint8_t pad; uint16_t key;};
+struct k_cec_info {struct k_header h; uint64_t seq; uint32_t now_ms; uint16_t phys; uint8_t laddr,active,state,count; uint8_t pad[6]; struct k_cec_rec rec[8];}; /* input ioctl 0x30002: the last 8 received CEC frames, oldest first */
 struct k_serial_info {struct k_header h; uint64_t transport,tx_bytes,tx_dropped,rx_bytes,rx_dropped,tx_pending,rx_pending;}; /* ABI 1.10 */
 struct k_input_event {uint64_t ns; uint16_t type,code; int32_t value;};
 struct k_eink_info {struct k_header h; uint64_t width,height,page_bytes,title_max,mark_bytes,min_interval_ms,max_per_minute,flags;}; /* ABI 1.9 */
@@ -42,7 +44,7 @@ K_SIZE(k_header,16); K_SIZE(k_open,56); K_SIZE(k_io,48); K_SIZE(k_close,24);
 K_SIZE(k_seek,48);
 K_SIZE(k_rename,48);K_SIZE(k_dirent_meta,24);
 K_SIZE(k_ioctl,48); K_SIZE(k_exit,24); K_SIZE(k_fb_mode,56); K_SIZE(k_fb_present,48); K_SIZE(k_fb_set,40); K_SIZE(k_fb_palette,1056); K_SIZE(k_mmap,64); K_SIZE(k_startup,40);
-K_SIZE(k_eink_info,80); K_SIZE(k_eink_title,272); K_SIZE(k_audio_info,80); K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_serial_info,72); K_SIZE(k_dirent,8);
+K_SIZE(k_eink_info,80); K_SIZE(k_eink_title,272); K_SIZE(k_audio_info,80); K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_serial_info,72); K_SIZE(k_cec_rec,24); K_SIZE(k_cec_info,232); K_SIZE(k_dirent,8);
 _Static_assert(offsetof(struct k_open,fd)==48&&offsetof(struct k_io,transferred)==40&&offsetof(struct k_fb_mode,buffer_bytes)==48,"tail fields");
 #undef K_SIZE
 /* Check a record header against the registers: 0 or a negative errno.

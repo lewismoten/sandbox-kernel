@@ -82,6 +82,7 @@ boot: all
 examples:
 	$(MAKE) -C examples/hello
 	$(MAKE) -C examples/clock
+	$(MAKE) -C examples/cectest
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 test-asan: test
