@@ -82,7 +82,7 @@ milliseconds since the first CEC clock call during initialization.
 
 **How these logs are written.** `CEC.TXT` (24 KiB) and `AUDIO.TXT` (8704 bytes) are fixed-size files in `/OS/SAVES/KERNEL`: created once at full size, then only their changed 512-byte sectors are rewritten in place, one sector per main-loop pass (`fatlog_set` copies the text, `fatlog_pump` writes; `core/fatput.c`). Nothing else on the card is touched after creation, so a power cut can lose a few lines, never the FAT or another file. The file is the log text followed by NUL padding up to its size; `usb_kernel.py logs` strips the trailing NULs, and a program reading it should too. If the power is cut while a shifted log (oldest lines dropped) is being written, old and new lines can be spliced together and NULs can sit mid-file; trailing-NUL stripping does not remove those. If another name shares the log's cluster chain (a cut move), the log is left unwritten until that name is removed. If the log cannot be created (a full card), three tries are made and then it is given up for the rest of the boot, with one line in the USB log.
 
-Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lines (the kernel
+Earlier boots are kept: `CEC.TXT` becomes `CEC.1` and `CEC.1` becomes `CEC.2` before a boot's first save (`core/cec_rot.c`), so a test at the TV survives being unplugged and moved. `ceclog --previous 1` (or 2) prints one from the card; `logs` collects them. Over USB: `python3 scripts/usb_kernel.py <port> ceclog` prints the newest 12 lines (the kernel
 replays them to a new reader about a second after it connects), so a session can be read afterward
 without pulling the card.
 

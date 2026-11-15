@@ -25,3 +25,13 @@ class AudioRotation(unittest.TestCase):
                             '-Iinclude', 'core/audio_rot.c', 'tests/audio_rot.c', '-o', exe],
                            cwd=ROOT, check=True)
             subprocess.run([exe], cwd=ROOT, check=True, timeout=10)
+
+
+class CecRotation(unittest.TestCase):
+    def test_three_boots_kept_and_empty_or_missing_skipped(self):
+        with tempfile.TemporaryDirectory(prefix='cec-rot-') as directory:
+            exe = str(Path(directory) / 'cec-rot')
+            subprocess.run(['cc', '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                            '-Iinclude', 'core/cec_rot.c', 'tests/cec_rot.c', '-o', exe],
+                           cwd=ROOT, check=True)
+            subprocess.run([exe], cwd=ROOT, check=True, timeout=10)

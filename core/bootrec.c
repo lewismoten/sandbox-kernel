@@ -29,7 +29,14 @@ void bootrec_boot(enum boot_decision d,bool new_boot) {
  if(d!=BD_NONE) save(0);
 }
 void bootrec_keyboards(unsigned kbd) {if(decision!=BD_NONE) save(kbd);}
+/* USB.TXT keeps one previous boot as USB.1: renamed once, before this boot's first save (like CEC.1 and AUDIO.1). A missing or empty file is skipped. */
+static void usblog_keep_previous(void) {
+ static bool done;static uint8_t scratch[USBLOG_MAX+80];if(done) return;done=true;
+ char probe[1];if(slurp("/OS/SAVES/KERNEL/USB.TXT",probe,1)<=0) return;
+ fatsave_rename("KERNEL","USB.TXT","USB.1",scratch,sizeof scratch);
+}
 void bootrec_usblog(uint32_t attach,uint32_t remove) {
+ usblog_keep_previous();
  static uint8_t out[USBLOG_MAX+80];uint32_t n=0;const char *t=usblog_text(&n);
  for(uint32_t i=0;i<n;i++) out[i]=(uint8_t)t[i];
  const char *a="events attach=";while(*a)out[n++]=(uint8_t)*a++;

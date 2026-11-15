@@ -310,6 +310,18 @@ def stop_program(port):
     print(line,flush=True)
     return 0 if line in ('OK stop','OK stop idle') else 1
 
+def cec_previous(port,which,lines):
+    """The CEC log of an earlier boot from the card: CEC.1 (the boot before this one) or CEC.2 (the one before that).
+    Both stay after a power cycle (the kernel renames CEC.TXT to CEC.1 before a boot's first save)."""
+    print(handshake(port),file=sys.stderr)
+    name={1:'CEC.1',2:'CEC.2'}[which]
+    try: data=read_card_file(port,KERNEL_LOG_DIR+name).rstrip(b'\0')
+    except FileNotFoundError:
+        print(f'{name}: not on the card (no earlier boot saved a CEC log)',file=sys.stderr);return 1
+    text=data.decode('utf-8','replace').splitlines()
+    for line in (text[-lines:] if lines>0 else text): print(line)
+    return 0
+
 def cec_log(port,seconds):
     """CECLOG: the newest CEC session lines (the kernel replays 12 to a new reader about a second after
     it connects, then streams new ones). The whole bounded log is /OS/SAVES/KERNEL/CEC.TXT on the card."""
@@ -529,11 +541,11 @@ def collect_logs(port,out=None):
     print(handshake(port),file=sys.stderr)
     folder=pathlib.Path(out) if out is not None else pathlib.Path(time.strftime('kernel-logs-%Y%m%d-%H%M%S'))
     folder.mkdir(parents=True,exist_ok=True)
-    for name in ('BOOT.TXT','USB.TXT','CEC.TXT','AUDIO.TXT','AUDIO.1','AUDIO.2','FAULT.TXT'):
+    for name in ('BOOT.TXT','USB.TXT','USB.1','CEC.TXT','CEC.1','CEC.2','AUDIO.TXT','AUDIO.1','AUDIO.2','FAULT.TXT'):
         try: data=read_card_file(port,KERNEL_LOG_DIR+name)
         except FileNotFoundError:
             print(f'{name}: unavailable (GET open refused)',file=sys.stderr);continue
-        if name in ('CEC.TXT','AUDIO.TXT','AUDIO.1','AUDIO.2'): data=data.rstrip(b'\0')   # fixed-size in-place logs end in NUL padding (docs/cec.md)
+        if name in ('CEC.TXT','CEC.1','CEC.2','AUDIO.TXT','AUDIO.1','AUDIO.2'): data=data.rstrip(b'\0')   # fixed-size in-place logs end in NUL padding (docs/cec.md)
         path=folder/name;path.write_bytes(data)
         print(f'Wrote {path} ({len(data)} bytes)')
     return 0
@@ -557,13 +569,13 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('port');sub=ap.add_subparsers(dest='action',required=True)
     p=sub.add_parser('get',help='read an existing card file; small UTF-8 text defaults to stdout');p.add_argument('path');p.add_argument('out',nargs='?',type=pathlib.Path)
     p=sub.add_parser('fault',help='explain the saved fault record');p.add_argument('--elf',type=pathlib.Path)
-    p=sub.add_parser('logs',help='collect BOOT, USB, CEC and FAULT records');p.add_argument('--out',type=pathlib.Path)
+    p=sub.add_parser('logs',help='collect BOOT, USB (and USB.1), CEC (and CEC.1, CEC.2), AUDIO and FAULT records');p.add_argument('--out',type=pathlib.Path)
     p=sub.add_parser('einkshot',help='save the last sent e-ink image as PNG');p.add_argument('out',type=pathlib.Path)
     p=sub.add_parser('fbshot',help='save the live HDMI framebuffer as RGB PNG');p.add_argument('out',type=pathlib.Path);p.add_argument('--scale',type=int,default=1)
     sub.add_parser('info');sub.add_parser('tail');p=sub.add_parser('send');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('install-host',help='install a persistent host companion in the idle kernel slot');p.add_argument('kernel',type=pathlib.Path)
     p=sub.add_parser('put',help='install a file as /OS/<name>');p.add_argument('file',type=pathlib.Path);p.add_argument('--name')
-    p=sub.add_parser('ceclog',help='show the newest HDMI-CEC session lines (claim result, frames, keys)');p.add_argument('--seconds',type=float,default=8)
+    p=sub.add_parser('ceclog',help='show the newest HDMI-CEC session lines (claim result, frames, keys)');p.add_argument('--seconds',type=float,default=8);p.add_argument('--previous',type=int,choices=(1,2),help='show the saved log of the boot before (1) or two boots before (2) from the card instead of the live lines');p.add_argument('--lines',type=int,default=0,help='with --previous: only the last N lines (0 = all)')
     p=sub.add_parser('run',help='start /OS/<name> and show the log');p.add_argument('name');p.add_argument('--seconds',type=float,default=15)
     p=sub.add_parser('name',help='give this Pi a short name (1-8 of A-Z 0-9 -), shown on the e-ink and in INFO; stored as /OS/NAME.TXT');p.add_argument('text')
     sub.add_parser('usblog',help='print /OS/SAVES/KERNEL/USB.TXT: what the keyboard (host) kernel found on the USB bus last boot')
@@ -602,7 +614,7 @@ def main():
             with tempfile.TemporaryDirectory() as d:
                 f=pathlib.Path(d)/'NAME.TXT';f.write_text(n+'\n');return send_file(port,f,'NAME.TXT')
         if a.action=='stop': return stop_program(port)
-        if a.action=='ceclog': return cec_log(port,a.seconds)
+        if a.action=='ceclog': return cec_previous(port,a.previous,a.lines) if a.previous else cec_log(port,a.seconds)
         if a.action=='putgame': return send_folder(port,a.folder,a.dir.upper(),index=a.index)
         if a.action=='putindex': return send_index(port,a.file)
         if a.action=='putapp': return send_folder(port,a.folder,a.dir.upper(),'APPS')

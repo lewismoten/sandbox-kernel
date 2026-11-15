@@ -13,6 +13,8 @@
 #include "hdmi_audio.h"
 #include "input.h"
 #include "fatput.h"
+#include "assets.h"
+#include "cec_rot.h"
 #include "os.h"
 #include "bootinfo.h"
 #include "looptrace.h"
@@ -99,11 +101,29 @@ void cec_hw_init(void) {
     boot_note("CEC started (CEC.TXT after a TV session; docs/cec.md)");
 }
 
+/* Older boots' logs (core/cec_rot.c): CEC.TXT -> CEC.1 -> CEC.2 before this boot's first write, one rename per main-loop pass. */
+static uint8_t rot_scratch[FATLOG_CEC_CAP];
+static unsigned rot_step; static bool rot_done;
+static int rot_rename(const char *from, const char *to, void *ctx) { (void)ctx; return fatsave_rename("KERNEL", from, to, rot_scratch, sizeof rot_scratch); }
+static bool rot_has_text(const char *name, void *ctx) {
+    (void)ctx; char path[40] = "/OS/SAVES/KERNEL/"; unsigned n = 17; uint8_t b = 0;
+    for (const char *p = name; *p && n < 38u; p++) path[n++] = *p;
+    path[n] = 0;
+    int h = asset_open(path, n, 0); if (h < 0) return false;
+    int r = asset_read(h, &b, 1); asset_close(h);
+    return r == 1 && b != 0;   /* fixed-size logs are NUL padding when empty */
+}
+
 static void save_log(uint32_t now) {
     if (!up || !drv.log.dirty || !storage_ready || protocol_busy() || saves >= SAVE_MAX) return;   /* os_running() no longer skips: fatlog_pump is bounded and idle while card_busy */
     uint32_t every = os_running() ? SAVE_OS_EVERY_MS : (now < SAVE_SLOW_AFTER_MS ? SAVE_EVERY_MS : SAVE_SLOW_EVERY_MS);
     if (now < SAVE_FIRST_MS || (saves && (uint32_t)(now - last_save_ms) < every)) return;
     if (!os_running() && saves > 1u && drv.log.lines + drv.log.dropped < saved_total + 6u && now - last_save_ms < 600000u) return;   /* little new: wait */
+    if (!rot_done) {   /* keep the previous boots first; the log stays dirty and this boot's first write follows on a later pass */
+        struct cec_rot_io io = { rot_rename, rot_has_text, 0 };
+        if (!cec_rot_step(&io, &rot_step)) rot_done = true;
+        return;
+    }
     drv.log.dirty = 0; last_save_ms = now; saves++; saved_total = drv.log.lines + drv.log.dropped;
     uint32_t t0 = micros(), bytes = drv.log.len;
     if (fatlog_set(FATLOG_CEC, (const uint8_t *)drv.log.text, drv.log.len)) log_line("CEC.TXT write failed");   /* copied to RAM; the main loop writes it a sector at a time (fatlog_pump) */

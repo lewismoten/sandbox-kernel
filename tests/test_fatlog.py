@@ -66,6 +66,19 @@ class FatLog(InstallBase):
         self.set(b'new\n', AUDIO); self.drain()      # the next boot's file is created again
         self.assertEqual(self.read('/OS/SAVES/KERNEL/AUDIO.TXT').rstrip(b'\0'), b'new\n')
 
+    def test_cec_log_rotates_to_cec1_cec2_and_the_next_boot_creates_a_fresh_file(self):
+        rn = self.c.fatsave_rename; rn.argtypes = [C.c_char_p, C.c_char_p, C.c_char_p, C.c_void_p, C.c_uint32]
+        buf = C.create_string_buffer(24576); d = '/OS/SAVES/KERNEL/'
+        for boot in (b'boot one\n', b'boot two\n', b'boot three\n'):
+            self.set(boot); self.drain()                          # this boot's first save
+            self.assertEqual(self.read(d + 'CEC.TXT').rstrip(b'\0'), boot); self.assertEqual(len(self.read(d + 'CEC.TXT')), 24576)
+            if boot == b'boot three\n': break
+            if boot == b'boot two\n': self.assertEqual(rn(b'KERNEL', b'CEC.1', b'CEC.2', buf, 24576), 0)
+            self.assertEqual(rn(b'KERNEL', b'CEC.TXT', b'CEC.1', buf, 24576), 0)   # the next boot's rotation
+        self.assertEqual(self.read(d + 'CEC.1').rstrip(b'\0'), b'boot two\n')
+        self.assertEqual(self.read(d + 'CEC.2').rstrip(b'\0'), b'boot one\n')
+        self.assertEqual(self.read(d + 'CEC.TXT').rstrip(b'\0'), b'boot three\n')
+
     def test_every_write_cut_keeps_fat_intact_and_earlier_lines_readable(self):
         old = self.lines(400); self.set(old); self.drain()
         baseline = self.work / 'log-baseline.img'; sparse_copy(self.disk, baseline)

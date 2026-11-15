@@ -104,15 +104,22 @@ class FaultCLI(unittest.TestCase):
             usb.fault_symbols(record,'GMOS.ELF')
         self.assertIn('symbol resolution failed',self.stderr.getvalue())
     def test_logs_bytes_multiple_chunks_and_missing(self):
-        files={usb.KERNEL_LOG_DIR+n:bytes(range(256))*2+b'\r\n' for n in ('BOOT.TXT','USB.TXT','AUDIO.TXT','AUDIO.1','AUDIO.2','FAULT.TXT')}
+        files={usb.KERNEL_LOG_DIR+n:bytes(range(256))*2+b'\r\n' for n in ('BOOT.TXT','USB.TXT','USB.1','CEC.1','AUDIO.TXT','AUDIO.1','AUDIO.2','FAULT.TXT')}
         port=Port(files)
         with tempfile.TemporaryDirectory() as directory:
             folder=pathlib.Path(directory)/'logs'
             self.assertEqual(usb.collect_logs(port,folder),0)
-            self.assertEqual(sorted(p.name for p in folder.iterdir()),['AUDIO.1','AUDIO.2','AUDIO.TXT','BOOT.TXT','FAULT.TXT','USB.TXT'])
+            self.assertEqual(sorted(p.name for p in folder.iterdir()),['AUDIO.1','AUDIO.2','AUDIO.TXT','BOOT.TXT','CEC.1','FAULT.TXT','USB.1','USB.TXT'])
             for p in folder.iterdir():self.assertEqual(p.read_bytes(),files[usb.KERNEL_LOG_DIR+p.name])
         self.assertIn('CEC.TXT: unavailable',self.stderr.getvalue())
-        self.assertEqual(len(port.sent),19)
+        self.assertEqual(len(port.sent),26)
+    def test_ceclog_previous_shows_the_saved_boot_without_padding(self):
+        port=Port({usb.KERNEL_LOG_DIR+'CEC.1':b'one\ntwo\nthree\n'+b'\0'*50})
+        with mock.patch('builtins.print') as pr:
+            self.assertEqual(usb.cec_previous(port,1,2),0)
+        self.assertEqual([c.args[0] for c in pr.call_args_list if 'file' not in c.kwargs],['two','three'])
+        self.assertEqual(usb.cec_previous(Port({}),2,0),1)
+        self.assertIn('CEC.2: not on the card',self.stderr.getvalue())
     def test_logs_crc_does_not_publish_bad_file(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError,'CRC'):

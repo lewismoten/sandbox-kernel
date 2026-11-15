@@ -599,6 +599,8 @@ The last three boots are kept: before a boot's first write, `AUDIO.TXT` becomes 
 and no EDID seen) writes nothing, so the Mac-attached boot after a monitor test leaves that test's
 record in `AUDIO.TXT`. `logs` also fetches `AUDIO.1` and `AUDIO.2`.
 
+`CEC.TXT` keeps three boots the same way (`core/cec_rot.c`): after the 8 s mark and before this boot's first save, `CEC.1` becomes `CEC.2`, then `CEC.TXT` becomes `CEC.1`, one rename per main-loop pass (each a copy-on-write of 24 KiB, no more than `AUDIO`'s rename ever held the loop for, three times the size, never two in one pass). A missing or empty `CEC.TXT` (a boot that never saved) rotates nothing, so a TV session's log survives the boots that follow it. `USB.TXT` keeps one earlier boot as `USB.1`, renamed once before the boot's first USB.TXT save (`core/bootrec.c`). `FAULT.TXT` is written only when a program faults, so it is not rotated. `logs` fetches `CEC.1`, `CEC.2` and `USB.1`; `ceclog --previous 1|2 [--lines N]` prints a saved earlier boot.
+
 Every initialization decision and backend change is recorded in the bounded
 `/OS/SAVES/KERNEL/AUDIO.TXT`, including failures before the HDMI-mode check. The file
 starts with `AUDIO v2 boot=N mode=<link|keyboard|...> gen=G dropped_lines=N`, followed by `<uptime_ms> <record>` lines.
@@ -771,8 +773,8 @@ and one serial reader at a time.
 | `get PATH [OUT]` | read a card-root file while the OS runs: CRC-checked chunks up to 4 MiB; without OUT, printable UTF-8 text up to 64 KiB |
 | `ls PATH` | list a card-root directory using short aliases; [wire format and path limits](serial.md#reading-card-files-protocol-2-extension) |
 | `fault [--elf PROGRAM.ELF]` | explain `/OS/SAVES/KERNEL/FAULT.TXT`, decode ARM1176 FSR and optionally resolve PC/LR with a matching ELF; current records omit LR |
-| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `CEC.TXT`, `AUDIO.TXT`, `AUDIO.1`, `AUDIO.2` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
-| `ceclog [--seconds N]` | show CEC session lines for 8 s by default, including the replayed log tail |
+| `logs [--out DIR]` | collect `BOOT.TXT`, `USB.TXT`, `USB.1`, `CEC.TXT`, `CEC.1`, `CEC.2`, `AUDIO.TXT`, `AUDIO.1`, `AUDIO.2` and `FAULT.TXT`; default folder `kernel-logs-YYYYMMDD-HHMMSS` |
+| `ceclog [--seconds N] [--previous 1\|2 [--lines N]]` | show CEC session lines for 8 s by default, including the replayed log tail; `--previous` prints the saved log of the boot before (`CEC.1`) or two before (`CEC.2`) from the card |
 | `usblog` | print the saved USB bus log with newlines restored |
 | `lastboot` | print Pi name and previous/current boot decisions |
 | `name TEXT` | uppercase and install a 1–8 character Pi name (`A-Z 0-9 -`) as `/OS/NAME.TXT`; takes effect next boot, requires the OS stopped |
