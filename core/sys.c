@@ -9,6 +9,7 @@
 #include "abi.h"
 #include "assets.h"
 #include "fatput.h"
+#include "cache_commit.h"
 #include "fb.h"
 #include "input.h"
 #include "audio_null.h"
@@ -76,7 +77,7 @@ static void release(unsigned i) {
  fds[i].kind=K_FREE;fds[i].has_pend=false;
  if(fds[i].gen<=HANDLE_GEN_MAX) fds[i].gen++; /* MAX+1 is the permanent retirement marker */
 }
-static bool cache_writing(void) {for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
+static bool cache_writing(void) {if(cache_commit_pending())return true;for(unsigned i=0;i<SYS_HANDLES;i++)if(fds[i].kind==K_CACHE)return true;return false;}
 void sys_reset(void) {
  for(unsigned i=0;i<SYS_HANDLES;i++) release(i);
  eink_reset(); /* the kernel has the panel back, whatever ended the program */
@@ -339,6 +340,7 @@ static int ioctl_input(unsigned i,const struct k_ioctl *r) {
    zero padding to 8}; "." and ".." are left out. An entry that does not fit
    waits for the next call; a buffer too small for it is EINVAL. */
 static int getdents(struct k_io *r,bool metadata,bool long_names) {
+ if(cache_commit_pending())return -EBUSY;
  /* Stack ownership invalidates at entry/exit, on ALL success/error paths.
   * Only call20 shares bytes between entries; calls11/18 retain old behavior. */
  struct asset_dir_sector sector;sector.lba=~0u;
@@ -394,11 +396,11 @@ static int sleep_until(const struct k_sleep *r) {
  for(int i=63;i>=0;i--) {rem=(rem<<1)|((n>>i)&1u);us<<=1;if(rem>=1000u) {rem-=1000u;us|=1u;}}
  sys_wake_us=us>clock_us()?us:0; return 0;
 }
-static const uint32_t sizes[22]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48};
+static const uint32_t sizes[24]={[1]=56,[2]=48,[3]=48,[4]=24,[5]=48,[6]=64,[9]=48,[11]=48,[12]=24,[13]=32,[14]=24,[16]=24,[17]=32,[18]=48,[19]=48,[20]=48,[21]=48,[22]=40,[23]=32};
 int32_t sys_call(const uint32_t reg[8]) {
  sys_calls++;
  uint32_t call=reg[7],va=reg[0],bytes=reg[1];
- if(call>21||!sizes[call]) return -ENOSYS;
+ if(call>23||!sizes[call]) return -ENOSYS;
  if(reg[3]|reg[4]|reg[5]|reg[6]) return -EINVAL;
  if(reg[2]!=K_ABI_MAJOR) return -93;
  if(bytes<16||bytes>4096||bytes%8) return -EINVAL;
@@ -409,6 +411,7 @@ int32_t sys_call(const uint32_t reg[8]) {
  int e=abi_check(rec,bytes,K_ABI_MAJOR,known,known); if(e) return e;
  /* outputs must be zero on entry; the record must be writable if it has any */
  switch(call) {
+  case 23: if(((struct k_cache_status *)rec)->state||((struct k_cache_status *)rec)->error)return -EINVAL; break;
   case 1: if(((struct k_open *)rec)->fd) return -EINVAL; break;
   case 2: case 3: case 11: case 18: case 20: if(((struct k_io *)rec)->transferred) return -EINVAL; break;
   case 6: if(((struct k_mmap *)rec)->address) return -EINVAL; break;
@@ -416,7 +419,7 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 13: if(((struct k_clock *)rec)->ns) return -EINVAL; break;
   case 21: if(((struct k_app_arena *)rec)->address|((struct k_app_arena *)rec)->actual_bytes) return -EINVAL; break;
  }
- if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20||call==21)&&us_check(va,bytes,U_W)) return -EFAULT;
+ if((call==1||call==2||call==3||call==6||call==9||call==11||call==13||call==18||call==20||call==21||call==23)&&us_check(va,bytes,U_W)) return -EFAULT;
  switch(call) {
   case 1: {
    struct k_open *r=(struct k_open *)rec;
@@ -476,6 +479,29 @@ int32_t sys_call(const uint32_t reg[8]) {
   case 14: return sleep_until((const struct k_sleep *)rec);
   case 17: return health((const struct k_health *)rec);
   case 16: sys_exit_status=((struct k_exit *)rec)->status; return SYS_EXITED;
+  case 22: {
+   const struct k_cache_submit *r=(const struct k_cache_submit *)rec;
+   int i=lookup(r->fd);if(i<0)return i;
+   if(fds[i].kind!=K_CACHE)return -EINVAL;
+   if(cache_commit_pending()||asset_cache_readers())return -EBUSY;
+   char name[13];memcpy(name,cache_name,13);
+   if(r->to||r->to_bytes) {
+    if(r->to>>32)return -EFAULT;
+    if(!r->to||!r->to_bytes)return -EINVAL;
+    if(r->to_bytes>255)return -ENAMETOOLONG;
+    char path[256],game[9];
+    if(us_copy_in(path,r->to,(uint32_t)r->to_bytes))return -EFAULT;
+    if((e=write_path(path,(uint32_t)r->to_bytes,game,name)))return e;
+    if(strcmp(game,cache_game))return -EINVAL;
+   }
+   e=cache_commit_start(cache_game,name,cache_bytes,cache_used);
+   if(!e)release((unsigned)i);
+   return e;
+  }
+  case 23: {
+   struct k_cache_status *r=(struct k_cache_status *)rec;
+   r->state=cache_commit_state();r->error=cache_commit_error();break;
+  }
   case 21: return os_app_arena(va,(struct k_app_arena *)rec,bytes);
  }
  return us_copy_out(va,rec,bytes)?-EFAULT:0;

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; original OS supervisor and restart policy
  * (docs/design.md, faults and recovery; first form, without an OS A/B pair). */
 #include "kernel.h"
+#include "cache_commit.h"
 #include "assets.h"
 #include "abi.h"
 #include "elf.h"
@@ -30,7 +31,7 @@ int os_stop_result(void) {return stop_result;}
 static uint64_t start_us,health_us; static uint32_t healths; static bool ready;
 static uint8_t file[ELF_MAX_FILE] __attribute__((aligned(8)));
 bool os_running(void) {return running;}
-bool os_can_start(void) {return !running && !stop_requested && owner.state==AA_IDLE;}
+bool os_can_start(void) {return !cache_commit_pending() && !running && !stop_requested && owner.state==AA_IDLE;}
 bool os_cleanup_pending(void) {return owner.state==AA_QUIESCING && !cleanup.error;}
 bool os_defer_fallback(void) {
  if(stop_requested || !os_cleanup_pending()) return false;
@@ -218,6 +219,7 @@ void os_task(void) {
   fb_home();
  }
  if(owner.state==AA_QUIESCING) {
+  if(cache_commit_pending())return; /* finish accepted snapshot before restart */
   int r=us_clean_step(&owner,&cleanup);
   if(r==1) {
    r=us_reset(mmu_table());

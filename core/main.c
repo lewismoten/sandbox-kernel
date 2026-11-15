@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "kernel.h"
+#include "cache_commit.h"
 #include "fb.h"
 #include "os.h"
 #include "autostart.h"
@@ -63,7 +64,7 @@ void kernel_main(void) {
  uint32_t healthy=micros(),diagnostics_start=micros();bool health_failed=false;
  if(h[3]&&!trial) {error("Trial metadata mismatch");for(;;)service_io();}
  for(;;) {
-  clock_us();audio_null_task();usb_task();protocol_task();os_task();
+  clock_us();audio_null_task();usb_task();protocol_task();cache_commit_task();os_task();
   if(autostart_cancelled()) autostart=false;
   if(autostart&&expired(boot_time,10000000)&&!protocol_busy()) {
    autostart=false;
@@ -75,7 +76,7 @@ void kernel_main(void) {
    if(ticks==old_ticks) {error("Timer progress lost");for(;;)service_io();}
    old_ticks=ticks;start=micros();watchdog_feed();
   }
-  if(trial&&!protocol_busy()&&expired(healthy,1000000)) {
+  if(trial&&!cache_commit_pending()&&!protocol_busy()&&expired(healthy,1000000)) {
    uint32_t c[128];healthy=micros();
    if(!storage_ready||!updates_ready||!usb_healthy()||!control_healthy())health_failed=true;
    /* Read and compare the authoritative record before trial confirmation. */

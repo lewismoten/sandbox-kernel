@@ -25,10 +25,10 @@ static void stopped(void) {
 static void start(const char *path) {
  assert(os_start(path)==0);assert(os_running()&&probe_epoch());
  struct k_startup s;assert(!us_copy_in(&s,U_START_VA,sizeof s));
- assert(sizeof s==40&&s.size==48&&s.major==1&&s.minor==10);
+ assert(sizeof s==40&&s.size==48&&s.major==1&&s.minor==11);
  assert(s.image_bytes==U_IMAGE_QUOTA&&s.stack_bytes==U_STACK_BYTES);
  assert(us_check(0x30000000,1,U_R)==-14);
- uint32_t r[8]={0};r[2]=1;r[7]=22;assert(sys_call(r)==-38);
+ uint32_t r[8]={0};r[2]=1;r[7]=24;assert(sys_call(r)==-38);
 }
 /* Also included with main renamed by the arena native probe. */
 int main(int argc,char **argv);

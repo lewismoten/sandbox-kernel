@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "tusb.h"
 #include "fatput.h"
+#include "cache_commit.h"
 #include "os.h"
 #include "autostart.h"
 #include "input.h"
@@ -66,7 +67,7 @@ static void file_command(const char *p) {
  if(!path_token(&p,put_name)||*p++!=' '||!decimal(&p,&size)||*p++!=' '||!hex(&p,crc,4)||*p++!=' '||!hex(&p,put_hash,32)||*p) {fail("command");return;}
  if(!size||size>FATPUT_MAX) {fail("size");return;}
  if(!storage_ready) {fail("not-ready");return;}
- if(!session||control[4]!=NO_SLOT||os_running()) {refuse("not-ready");return;}
+ if(!session||control[4]!=NO_SLOT||os_running()||cache_commit_pending()) {refuse("not-ready");return;}
  expected=size;transport_crc=((uint32_t)crc[0]<<24)|((uint32_t)crc[1]<<16)|((uint32_t)crc[2]<<8)|crc[3];received=0;block_end=size<1024?size:1024;activity=micros();
  putf=true;phase=1;usb_reply("READY 1024\n");
 }
@@ -147,7 +148,7 @@ static void command_line(void) {
  for(unsigned i=0;i<8;i++) {unsigned c=(uint8_t)*p++;if(c>='0'&&c<='9')c-='0';else if(c>='a'&&c<='f')c=c-'a'+10;else {fail("crc-format");return;}crc=(crc<<4)|c;}
  if(*p||size<64||size>MAX_IMAGE) {fail("size");return;}
  if(!storage_ready) {fail("not-ready");return;}
- if(!session||!updates_ready||control[4]!=NO_SLOT) {refuse("not-ready");return;}
+ if(!session||!updates_ready||control[4]!=NO_SLOT||cache_commit_pending()) {refuse("not-ready");return;}
  expected=size;transport_crc=crc;received=0;block_end=size<1024?size:1024;activity=micros();inactive=1-control[3];
  phase=1;usb_reply("READY 1024\n"); /* no panel, hashing or storage here */
 }

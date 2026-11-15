@@ -1,7 +1,7 @@
 # ABI 1.7: per-game save folders, `/sd/OS/SAVES/<GAME>/`
 
 ABI 1.7 introduced the `/OS/SAVES/<GAME>/` write scope. The current independent
-kernel/SDK headers and startup record report **1.10**. This scope added no call
+kernel/SDK headers and startup record report **1.11**. This scope added no call
 numbers or records. Older applications are unaffected; physical save writes
 and power cuts remain hardware-untested.
 
@@ -50,3 +50,22 @@ bad card never blocks saving or frees clusters that may belong to something else
 `core/fatput.c`: `fatsave_put`, `fatsave_remove`, `fatsave_rename` (game + name, never a path).
 `core/sys.c`: `save_path`/`write_path`. `core/assets.c`: `SAVES` counts as a guarded folder.
 Tests: `make test`, `tests/test_saves.py`.
+
+## ABI 1.11 cooperative saves
+
+The current headers/startup report **1.11**. Saves share the opt-in
+`sbx_cache_submit` (22) / `sbx_cache_status` (23) interface and single job with the
+cache: see [the full contract](cache-storage.md#abi-111-opt-in-cooperative-publication).
+Stage a save with the existing `0x601` writer, then submit directly to its final
+name (or a different name in the **same game folder**). The destination switches
+by the existing COW directory-entry publication; no on-disk TMP or later rename
+is required. Submission consumes the fd, freezes the kernel-owned bytes and does
+no SD I/O. Poll pending/done/error while continuing frames and health. Legacy
+fsync/close/rename semantics and save quotas/attribute restrictions are unchanged.
+
+While pending, all SD asset I/O and mutations return EBUSY (including cache and
+other games); other devices remain available. Deferred quota, full-media and I/O
+failures appear in status. An error can follow destination publication; validate
+or retry after completion. Accepted jobs finish after program exit/reset; abrupt
+power loss discards pending RAM. The existing old-or-new whole-sector failure
+model, orphan-cluster and physical-card limitations still apply.

@@ -1,17 +1,28 @@
 /* SPDX-License-Identifier: MIT; BCM2835 EMMC chapter 5, SD physical commands.
  * PIO single-block only; no dependency on vendor/Circle/Linux SD code. */
 #include "kernel.h"
+#ifndef SELECTOR
+#include "cache_commit.h"
+static void sd_service(void) {
+ if(cache_commit_pending()) cache_commit_checkpoint(false); else service_io();
+}
+#else
+#define sd_service service_io
+#endif
 #define SD (PERIPH+0x300000)
-#define R(o) REG(SD+(o))
+#ifndef SD_REG
+#define SD_REG(o) REG(SD+(o))
+#endif
+#define R(o) SD_REG(o)
 static bool high_capacity;
 static uint32_t capacity,rca;
 static bool wait_bits(unsigned reg,uint32_t mask,uint32_t value,uint32_t timeout) {
- uint32_t t=micros(); while((R(reg)&mask)!=value) { service_io(); if(expired(t,timeout)) return false; } return true;
+ uint32_t t=micros(); while((R(reg)&mask)!=value) { sd_service(); if(expired(t,timeout)) return false; } return true;
 }
 static bool command(unsigned idx,uint32_t arg,unsigned flags) {
  if(!wait_bits(0x24,1,0,100000)) return false;
  R(0x30)=~0u; R(0x08)=arg; barrier(); R(0x0c)=(idx<<24)|flags;
- uint32_t t=micros(); while(!(R(0x30)&0x8001)) { service_io(); if(expired(t,100000)) return false; }
+ uint32_t t=micros(); while(!(R(0x30)&0x8001)) { sd_service(); if(expired(t,100000)) return false; }
  uint32_t s=R(0x30); R(0x30)=s&0xffff0001u;
  return !(s&0xffff8000u);
 }
@@ -107,23 +118,27 @@ bool sd_init_after_handoff(const uint32_t in[8]) {
 }
 uint32_t sd_sectors(void) { return capacity; }
 static bool transfer(uint32_t lba,void *read_data,const void *write_data,bool write) {
+ #ifndef SELECTOR
+ if(cache_commit_blocked()) return false;
+ cache_commit_checkpoint(true);
+ #endif
  if(lba>=capacity) return false;
  if(!wait_bits(0x24,3,0,100000)) return false;
  R(0x04)=(1<<16)|512;
  if(!command(write?24:17,lba,0x3a0000|(write?0:0x10))) return false;
  uint32_t t=micros(),ready=write?0x10:0x20;
- while(!(R(0x30)&(ready|0xffff8000u))) { service_io(); if(expired(t,250000)) return false; }
+ while(!(R(0x30)&(ready|0xffff8000u))) { sd_service(); if(expired(t,250000)) return false; }
  if(R(0x30)&0xffff8000u) return false;
  R(0x30)=ready;
  uint8_t *b=read_data;
  const uint8_t *out=write_data;
  for(unsigned i=0;i<128;i++) { uint32_t w; if(write) { memcpy(&w,out+i*4,4); R(0x20)=w; } else { w=R(0x20); memcpy(b+i*4,&w,4); } }
- t=micros(); while(!(R(0x30)&0xffff8002u)) { service_io(); if(expired(t,500000)) return false; }
+ t=micros(); while(!(R(0x30)&0xffff8002u)) { sd_service(); if(expired(t,500000)) return false; }
  if(R(0x30)&0xffff8000u) { return false; }
  R(0x30)=2;
  /* CMD13 polls card programming state: host DATA_DONE alone is insufficient. */
  if(write) {
-  t=micros(); do { if(!command(13,rca,0x1a0000)) return false; uint32_t status=R(0x10); if(status&0xfdffe008u) return false; if((status&0x1f00)==0x900) return true; service_io(); } while(!expired(t,1000000)); return false;
+  t=micros(); do { if(!command(13,rca,0x1a0000)) return false; uint32_t status=R(0x10); if(status&0xfdffe008u) return false; if((status&0x1f00)==0x900) return true; sd_service(); } while(!expired(t,1000000)); return false;
  }
  return true;
 }

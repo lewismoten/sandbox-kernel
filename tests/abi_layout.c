@@ -7,6 +7,8 @@
 SIZE(k_startup_ext,sbx_startup_ext); SAME(k_startup_ext,sbx_startup_ext,prefix); SAME(k_startup_ext,sbx_startup_ext,app_generation);
 SIZE(k_app_arena,sbx_app_arena_rec); SAME(k_app_arena,sbx_app_arena_rec,h); SAME(k_app_arena,sbx_app_arena_rec,owner_generation); SAME(k_app_arena,sbx_app_arena_rec,requested_bytes); SAME(k_app_arena,sbx_app_arena_rec,address); SAME(k_app_arena,sbx_app_arena_rec,actual_bytes);
 _Static_assert(SBX_CALL_APP_ARENA==21 && SBX_EOVERFLOW==75,"arena constants");
+SIZE(k_cache_submit,sbx_cache_submit_rec); SAME(k_cache_submit,sbx_cache_submit_rec,fd); SAME(k_cache_submit,sbx_cache_submit_rec,to); SAME(k_cache_submit,sbx_cache_submit_rec,to_bytes);
+SIZE(k_cache_status,sbx_cache_status_rec); SAME(k_cache_status,sbx_cache_status_rec,state); SAME(k_cache_status,sbx_cache_status_rec,error);
 SIZE(k_header,sbx_header); SAME(k_header,sbx_header,size); SAME(k_header,sbx_header,flags); SAME(k_header,sbx_header,reserved0); SAME(k_header,sbx_header,reserved1);
 SIZE(k_open,sbx_open_rec); SAME(k_open,sbx_open_rec,path); SAME(k_open,sbx_open_rec,path_bytes); SAME(k_open,sbx_open_rec,flags); SAME(k_open,sbx_open_rec,mode); SAME(k_open,sbx_open_rec,fd);
 SIZE(k_io,sbx_io_rec); SAME(k_io,sbx_io_rec,fd); SAME(k_io,sbx_io_rec,buffer); SAME(k_io,sbx_io_rec,count); SAME(k_io,sbx_io_rec,transferred);

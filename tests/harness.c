@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT; fake block media and CDC, real core logic. */
 #include "host_exports.h"
 #include "kernel.h"
+#include "cache_commit.h"
 #include "tusb.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,8 +32,14 @@ extern int os_start(const char *path);
 static uint32_t read_fail_lba=~0u;
 void fail_read_sector(uint32_t lba) {read_fail_lba=lba;}
 void protocol_on_next_sd_read(void) {pump_read=true;}
-bool sd_read(uint32_t lba,void *p) {reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
-bool sd_write(uint32_t lba,const void *p) {if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
+static uint32_t slow_us;
+void inject_sd_latency(uint32_t us) {slow_us=us;}
+static void sd_latency(void) {
+ uint32_t remaining=slow_us;
+ while(remaining) {uint32_t n=remaining>100?100:remaining;now+=n;remaining-=n;cache_commit_checkpoint(false);}
+}
+bool sd_read(uint32_t lba,void *p) {if(cache_commit_blocked())return false;sd_latency();reads++;if(nested_run){nested_run=false;nested_result=os_start("/OS/DIAG.ELF");}if(pump_read){pump_read=false;protocol_task();}return lba!=read_fail_lba&&fseek(disk,(long)lba*512,SEEK_SET)==0&&fread(p,1,512,disk)==512;}
+bool sd_write(uint32_t lba,const void *p) {if(cache_commit_blocked())return false;sd_latency();if(writes++>=fail_after)return false;return fseek(disk,(long)lba*512,SEEK_SET)==0&&fwrite(p,1,512,disk)==512&&fflush(disk)==0;}
 void error(const char *s) {last_error=s;}
 void reboot(void) {abort();}
 void usb_reply(const char *s) {size_t n=strlen(s);if(out+n>=sizeof(output))abort();memcpy(output+out,s,n+1);out+=n;}

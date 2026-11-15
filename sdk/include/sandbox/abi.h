@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #define SBX_ABI_MAJOR 1u
-#define SBX_ABI_MINOR 10u /* 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
+#define SBX_ABI_MINOR 11u /* 1.11: opt-in cooperative cache/save commit (22/23); 1.10: /dev/serial0 (class 6); 1.9: /dev/eink e-ink title and page; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope; 1.6: opt-in generation-bound app arena */
 
 /* Call numbers (r7 on ARM32). Only the calls with records below are implemented. */
 enum {
@@ -18,7 +18,8 @@ enum {
   SBX_CALL_CLOSE = 4, SBX_CALL_IOCTL = 5, SBX_CALL_MMAP = 6, SBX_CALL_SEEK = 9, SBX_CALL_GETDENTS = 11,
   SBX_CALL_FSYNC = 12, SBX_CALL_CLOCK_GETTIME = 13, SBX_CALL_SLEEP_UNTIL = 14, SBX_CALL_EXIT = 16, SBX_CALL_HEALTH = 17,
   SBX_CALL_GETDENTS_META = 18, SBX_CALL_RENAME = 19,
-  SBX_CALL_GETDENTS_LONG_META = 20, SBX_CALL_APP_ARENA = 21
+  SBX_CALL_GETDENTS_LONG_META = 20, SBX_CALL_APP_ARENA = 21,
+  SBX_CALL_CACHE_SUBMIT = 22, SBX_CALL_CACHE_STATUS = 23
 };
 
 /* Negative return values. */
@@ -130,6 +131,24 @@ typedef struct sbx_close_rec {
   sbx_header h;
   uint64_t fd;
 } sbx_close_rec;
+/* ABI 1.11: submit consumes the RAM writer only on success; no media I/O.
+   Optional destination must be in the writer's folder (zero/zero uses its name).
+   Direct COW publication: no on-disk temp or subsequent fsync/rename needed.
+   Poll does no I/O. State/result retained until next accepted submission.
+   While pending: writers/mutation and SD asset I/O return EBUSY; retry later.
+   Accepted bytes belong to the kernel and finish even after exit/reset.
+   Error can follow publication (cleanup/readback failed); re-read destination
+   after completion to resolve. Legacy calls retain synchronous behavior. */
+#define SBX_COMMIT_IDLE 0u
+#define SBX_COMMIT_PENDING 1u
+#define SBX_COMMIT_DONE 2u
+#define SBX_COMMIT_ERROR 3u
+typedef struct sbx_cache_submit_rec {
+  sbx_header h; uint64_t fd, to, to_bytes;
+} sbx_cache_submit_rec;
+typedef struct sbx_cache_status_rec {
+  sbx_header h; uint64_t state; int64_t error; /* outputs zero on entry */
+} sbx_cache_status_rec;
 typedef struct sbx_rename_rec {
   sbx_header h;
   uint64_t from, from_bytes, to, to_bytes;
@@ -283,6 +302,7 @@ static inline uint64_t sbx_app_generation(const sbx_startup *s) {
 #define SBX_CHECK(type, bytes) _Static_assert(sizeof(type) == (bytes), #type " size")
 #define SBX_AT(type, field, at) _Static_assert(offsetof(type, field) == (at), #type "." #field)
 SBX_CHECK(sbx_header, 16);
+SBX_CHECK(sbx_cache_submit_rec, 40); SBX_CHECK(sbx_cache_status_rec, 32);
 SBX_CHECK(sbx_eink_info, 80); SBX_CHECK(sbx_eink_title_rec, 272); SBX_AT(sbx_eink_title_rec, name, 32); SBX_AT(sbx_eink_title_rec, mark, 48);
 SBX_CHECK(sbx_startup_ext, 48); SBX_AT(sbx_startup_ext, prefix, 0); SBX_AT(sbx_startup_ext, app_generation, 40);
 SBX_CHECK(sbx_app_arena_rec, 48); SBX_AT(sbx_app_arena_rec, h, 0);

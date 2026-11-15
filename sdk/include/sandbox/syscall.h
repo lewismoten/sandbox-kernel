@@ -78,6 +78,16 @@ static inline int32_t sbx_rename(const char *from, uint32_t from_bytes, const ch
   sbx_rename_rec r = {SBX_HEADER(sbx_rename_rec), (uint32_t)(uintptr_t)from, from_bytes, (uint32_t)(uintptr_t)to, to_bytes};
   return sbx_syscall(SBX_CALL_RENAME, &r, sizeof r);
 }
+/* Gate on startup major 1, minor >=11. On success fd is consumed; on error
+   it remains open. to=NULL, to_bytes=0 publishes to the open writer's name. */
+static inline int32_t sbx_cache_submit(uint64_t fd, const char *to, uint32_t to_bytes) {
+  sbx_cache_submit_rec r = {SBX_HEADER(sbx_cache_submit_rec), fd, (uint32_t)(uintptr_t)to, to_bytes};
+  return sbx_syscall(SBX_CALL_CACHE_SUBMIT, &r, sizeof r);
+}
+static inline int32_t sbx_cache_status(sbx_cache_status_rec *r) {
+  *r = (sbx_cache_status_rec){SBX_HEADER(sbx_cache_status_rec), 0, 0};
+  return sbx_syscall(SBX_CALL_CACHE_STATUS, r, sizeof *r);
+}
 /* ABI 1.3: absolute [0,file size], including EOF. Failure preserves position. */
 static inline int32_t sbx_seek(uint64_t fd, int64_t offset, uint64_t *position) {
   sbx_seek_rec r = {SBX_HEADER(sbx_seek_rec), fd, offset, SBX_SEEK_SET, 0};

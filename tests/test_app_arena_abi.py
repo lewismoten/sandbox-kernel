@@ -63,7 +63,7 @@ class ArenaABI(CallsBase):
             self.assertEqual(d&~4095,0x04000000+before+p*4096)
     def test_startup_extension(self):
         s=peek(self.c,START_VA,48)
-        self.assertEqual(struct.unpack_from('<IHH',s),(48,1,10))
+        self.assertEqual(struct.unpack_from('<IHH',s),(48,1,11))
         self.assertEqual(struct.unpack_from('<Q',s,40)[0],self.c.probe_epoch())
         self.assertEqual(struct.unpack_from('<3Q',s,16),(8<<20,1<<20,16))
         self.assertEqual(self.c.us_check(START_VA,48,W),-14)
@@ -80,7 +80,7 @@ class ArenaABI(CallsBase):
         for n in (0,15,16,40,47,4104):
             self.assertEqual(self.call(21,None,size=n),-22)
         for i in range(1,8): self.assertEqual(self.call(21,None,size=48,va=self.REC+i),-14)
-        self.assertEqual(self.call(22,None,size=0,major=0),-38)
+        self.assertEqual(self.call(24,None,size=0,major=0),-38)
         self.c.os_request_stop()
         self.rejected(self.arena(epoch=0,requested=0),-16)
         self.rejected(self.arena(address=1),-22)

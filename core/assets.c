@@ -3,6 +3,7 @@
  * loop is bounded by cluster or entry counts; corrupt metadata fails with
  * -EIO and a code in asset_fail, never a hang or an out-of-volume read. */
 #include "kernel.h"
+#include "cache_commit.h"
 #include "assets.h"
 #include "vfat.h"
 const char *asset_fail="none";
@@ -37,6 +38,7 @@ static int next_cluster(uint32_t c,uint32_t *next) {
  *next=n; return 0;
 }
 int asset_mount(void) {
+ if(cache_commit_pending())return -16;
  for(unsigned i=0;i<ASSET_HANDLES;i++) if(handles[i].used) {handles[i].used=false;handles[i].gen=bump(handles[i].gen);}
  v.mounted=false;fat_lba=~0u;v.base=0;v.end=sd_sectors();
  uint8_t *s=buf; int r;
@@ -142,6 +144,7 @@ static struct handle *get(int id) {
  return h->used&&h->gen==(uint16_t)((uint32_t)id>>3)&&((uint32_t)id>>3)<=0xffffu?h:NULL;
 }
 int asset_open(const char *path,uint32_t n,uint32_t flags) {
+ if(cache_commit_pending())return -16;
  if(!v.mounted) return fail("ASSET UNMOUNTED",ASSET_ENODEV);
  if(flags&~3u) return fail("ASSET FLAGS",ASSET_EINVAL);
  if(flags) return fail("ASSET READ ONLY",ASSET_EROFS);
@@ -186,6 +189,7 @@ int asset_open(const char *path,uint32_t n,uint32_t flags) {
  return id;
 }
 int asset_seek(int id,uint64_t offset) {
+ if(cache_commit_pending())return -16;
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(h->dir) return fail("ASSET NOT SEEKABLE",ASSET_ESPIPE);
  if(offset>h->size) return fail("ASSET OFFSET",ASSET_EINVAL);
@@ -205,6 +209,7 @@ int asset_seek(int id,uint64_t offset) {
  h->cluster=c;h->pos=pos;h->err=0;return 0;
 }
 int asset_read(int id,void *out,uint32_t count) {
+ if(cache_commit_pending())return -16;
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(h->dir) return fail("ASSET IS DIR",ASSET_EINVAL);
  if(count>ASSET_MAX_READ) return fail("ASSET COUNT",ASSET_EINVAL);
@@ -233,6 +238,7 @@ static void format_name(const uint8_t *e,char out[13]) {
  out[k]=0;
 }
 int asset_readdir_long_batch(int id,struct asset_long_dirent *out,uint32_t meta[3],struct asset_dir_sector *s) {
+ if(cache_commit_pending())return -16;
  struct handle *h=get(id); if(!h) return fail("ASSET BADF",ASSET_EBADF);
  if(!h->dir) return fail("ASSET NOT DIR",ASSET_ENOTDIR);
  if(!out) return fail("ASSET BUFFER",ASSET_EINVAL);

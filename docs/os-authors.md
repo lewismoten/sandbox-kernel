@@ -374,7 +374,7 @@ the recovery console. **Any other value counts as a fault** (and uses the restar
 ## 4. What is supported, by ABI version
 
 The major version is 1 and the current minor is the `SBX_ABI_MINOR` in
-`sdk/include/sandbox/abi.h:13` (currently **1.10**, also `include/abi.h:8`). Minors only add.
+`sdk/include/sandbox/abi.h:13` (currently **1.11**, also `include/abi.h:8`). Minors only add.
 Every returning syscall returns 0 or a negative errno. `exit` does not return to user
 code; `SYS_EXITED=1` is internal to the supervisor (`core/sys.c:475`, `core/os.c:171`).
 Existing call numbers and record layouts stay compatible. (The first row lists the ABI 1.0 draft
@@ -393,6 +393,7 @@ described in `docs/design.md`.)
 | 1.8 | **Audio:** `/dev/audio`, write-only, one writer (`EBUSY` for a second open): stereo signed 16-bit little-endian at a fixed 48,000 frames a second, whole 4-byte frames only (`EINVAL` otherwise). `write` never blocks: it queues what fits in the 16,384-frame ring (about 341 ms; `include/audio_ring.h:20`) and returns that many bytes, or `EAGAIN` when nothing fits. `ioctl` `SBX_IOC_AUDIO_QUERY` (0x20000) reports rate, capacity, queued, played, underruns and overruns. Short drains are filled with silence. HDMI drains the ring when its backend starts; otherwise the null backend silently drains it. No ABI minor was added for this backend or its internal mixer. See the audio rules below and `docs/audio-device.md`. |
 | 1.9 | **E-ink API:** `/dev/eink` (write-only): set the OS's name and 40x40 mark on the status screen, or `write` a whole 250x122 page; ioctl class 4; the kernel enforces refresh limits (`EAGAIN`) and takes the panel back on any fault or exit. See `docs/eink.md`. |
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
+| 1.11 | Opt-in cooperative cache/save publication: `sbx_cache_submit` (22) consumes a staged writer, queues direct COW publication without SD I/O; `sbx_cache_status` (23) polls pending/done/error. Legacy fsync/rename stay synchronous. While pending, SD asset I/O and other mutations return EBUSY; continue frames/health and retry after completion. See `docs/cache-storage.md`. |
 
 **Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Hardware-untested:** HDMI audio output on physical sinks and the new e-ink/serial
 paths are not established by these code checks. **Not yet:** gamepads, Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
@@ -592,7 +593,7 @@ it still reads `kernel,no-os` when updates are ready (it never meant "no OS") an
 otherwise, so older `usb_kernel.py` clients keep working. New clients read `updates=` and `os=`.
 
 `INFO 2` is protocol version 2. Its literal `ABI=1.0` is stale and does **not** identify
-the app ABI: startup reports the current major/minor (1.10 on this branch). Gate app
+the app ABI: startup reports the current major/minor (1.11 on this branch). Gate app
 features on startup, never that INFO field (`core/protocol.c:135`, `core/os.c:111`,
 `include/abi.h:8`). INFO also reports `profile=zero-w-armv6`, `capacity=2097152`,
 `install_timeout=120`, and `serial=usb|none` (`core/protocol.c:143`).
@@ -701,13 +702,16 @@ as left out in `docs/js.md`).
 - **Two faults in 60 s ends your program.** An autostarted one is replaced by `DIAG.ELF`;
   a `RUN` one is not.
 - **Read-only card.** Only the cache and save folders can be written, and only after
-  `fsync`. A writer open blocks other mutation (`EBUSY`); a read handle on those folders
-  blocks writing too, so close directory handles first.
+  `fsync` or opt-in ABI 1.11 submission. A writer open blocks other mutation (`EBUSY`); a read handle on those folders
+  blocks writing too, so close directory handles first. ABI 1.11 offers opt-in
+  asynchronous publication: submit a RAM writer and poll status; pending SD
+  asset calls return EBUSY, so retry them while continuing health and frames.
 - **Handles:** 16 total, at most eight SD files/directories, one framebuffer handle,
   one input reader, one audio writer, one e-ink handle and one serial owner
   (`include/assets.h:6`, `core/sys.c:94`, `core/input.c:54`, `core/serial.c:7`).
 - **Check your minor version.** Gate features on the startup ABI version: with major 1,
-  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink and >= 10 for serial
+  require minor >= 7 for saves, >= 8 for audio, >= 9 for e-ink, >= 10 for serial
+  and >= 11 for cooperative cache/save commits
   (`include/abi.h:8`). Fall back to silence or no saves when the version is lower.
   Unsupported operations do not all return `ENOSYS`: unknown syscall numbers return
   `ENOSYS` (-38), unknown device ioctls return `ENOTTY` (-25), and absent device

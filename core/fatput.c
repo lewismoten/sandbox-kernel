@@ -10,6 +10,7 @@
 #include "kernel.h"
 #include "assets.h"
 #include "fatput.h"
+#include "cache_commit.h"
 const char *fatput_fail="none";
 static struct asset_volume v;
 static uint8_t s[512],chk[512];
@@ -21,10 +22,11 @@ static void put32(uint8_t *p,uint32_t x) {for(int i=0;i<4;i++) p[i]=(uint8_t)(x>
 static int fail(const char *w,int e) {fatput_fail=w;return -e;}
 static bool cluster_ok(uint32_t c) {return c>=2&&c<v.clusters+2;}
 static uint32_t lba_of(uint32_t c,uint32_t i) {return v.data+(c-2)*v.spc+i;}
-static int rd(uint32_t lba,uint8_t *b) {return lba>=v.base&&lba<v.end&&sd_read(lba,b)?0:fail("PUT READ",5);}
+static int rd(uint32_t lba,uint8_t *b) {cache_commit_checkpoint(true);return lba>=v.base&&lba<v.end&&sd_read(lba,b)?0:fail("PUT READ",5);}
 /* Writes reach only the FAT copies, the data area, or the FSInfo sector. */
 static int wr(uint32_t lba,const uint8_t *b,uint32_t fsinfo) {
  if(!((lba>=v.fat&&lba<v.data)||(lba>=v.data&&lba<v.end)||(fsinfo&&lba==fsinfo))) return fail("PUT RANGE",5);
+ cache_commit_checkpoint(true);
  if(!sd_write(lba,b)) return fail("PUT WRITE",5);
  if(!sd_read(lba,chk)||memcmp(chk,b,512)) return fail("PUT READBACK",5);
  return 0;
@@ -33,6 +35,7 @@ static int wr(uint32_t lba,const uint8_t *b,uint32_t fsinfo) {
    FAT sector once, not once per cluster (the watchdog allows 8 s). */
 static uint8_t fc[2][512]; static uint32_t fc_sec=~0u;
 static int fat_get(uint32_t c,uint32_t *out) {
+ cache_commit_checkpoint(false);
  uint32_t sec=c/128; int r;
  if(sec>=v.fat_size) return fail("PUT FAT RANGE",5);
  if(sec!=fc_sec) {fc_sec=~0u; if((r=rd(v.fat+sec,fc[0]))||(r=rd(v.fat+v.fat_size+sec,fc[1]))) return r; fc_sec=sec;}
@@ -263,6 +266,7 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  return cache?0:asset_mount();
 }
 int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
+ if(cache_commit_blocked())return -16;
  int r=fatput_check(path);if(r)return r;
  if(bytes>FATPUT_MAX)return -27;
  /* Installer timestamps are fixed. Unpublish BEFORE any content mutation,
@@ -272,6 +276,7 @@ int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
 }
 /* Names, never paths: this entry cannot escape /OS/CACHE. */
 int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes) {
+ if(cache_commit_blocked())return -16;
  if(asset_cache_readers())return -16;
  return put_file(name,data,bytes,true,0);
 }
@@ -293,6 +298,7 @@ static int cache_dir(uint32_t *dir,const char *game) {
  return 0;
 }
 static int remove_cache(const char *name,bool discard,const char *game) {
+ if(cache_commit_blocked())return -16;
  if(asset_cache_readers())return -16;
  uint8_t nm[11],e[32];uint32_t dir,n=0;struct slot hit,free_slot;
  int r=fatput_name(name,nm);if(r)return r;
@@ -326,6 +332,7 @@ static int remove_cache(const char *name,bool discard,const char *game) {
 int fatcache_remove(const char *name) {return remove_cache(name,false,0);}
 int fatcache_invalidate(void) {return remove_cache("GAMES.IDX",true,0);}
 int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
+ if(cache_commit_blocked())return -16;
  uint8_t a[11],b[11];int r=fatput_name(from,a);if(r)return r;
  if((r=fatput_name(to,b)))return r;
  if(!memcmp(a,b,11))return -22;
@@ -345,11 +352,13 @@ int fatcache_rename(const char *from,const char *to,uint8_t *scratch,uint32_t ca
 /* ABI 1.7: /OS/SAVES/<GAME>/<NAME> only; plain 8.3 names, never paths. Same
    copy-on-write publication as the cache, but strict about what it replaces. */
 int fatsave_put(const char *game,const char *name,const uint8_t *data,uint32_t bytes) {
+ if(cache_commit_blocked())return -16;
  if(asset_cache_readers())return -16;
  return put_file(name,data,bytes,true,game);
 }
 int fatsave_remove(const char *game,const char *name) {return remove_cache(name,false,game);}
 int fatsave_rename(const char *game,const char *from,const char *to,uint8_t *scratch,uint32_t cap) {
+ if(cache_commit_blocked())return -16;
  uint8_t a[11],b[11],g[11];int r=fatput_name(from,a);if(r)return r;
  if((r=fatput_name(to,b)))return r;
  if((r=save_dir_name(game,g)))return r;

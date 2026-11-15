@@ -5,11 +5,18 @@
 #include <stdint.h>
 #include <stddef.h>
 #define K_ABI_MAJOR 1u
-#define K_ABI_MINOR 10u /* 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
+#define K_ABI_MINOR 11u /* 1.11: opt-in cooperative cache/save commit (calls 22/23); 1.10: /dev/serial0; 1.9: /dev/eink; 1.8: /dev/audio; 1.7: /OS/SAVES/<GAME>/ write scope */
 struct k_header {uint32_t size,flags,reserved0,reserved1;};
 struct k_open {struct k_header h; uint64_t path,path_bytes,flags,mode,fd;};
 struct k_io {struct k_header h; uint64_t fd,buffer,count,transferred;};
 struct k_close {struct k_header h; uint64_t fd;};
+/* 1.11: call 22 consumes a staged writer on success, queues direct COW
+ * publication to to (same scope/folder), no SD I/O. to=to_bytes=0 uses
+ * the writer name. Call 23 polls without doing I/O; state 0 idle, 1 pending,
+ * 2 done, 3 error; error is a negative errno, zero otherwise. One job, result
+ * retained until next accepted submit. Legacy fsync/close/rename unchanged. */
+struct k_cache_submit {struct k_header h; uint64_t fd,to,to_bytes;};
+struct k_cache_status {struct k_header h; uint64_t state; int64_t error;};
 struct k_rename {struct k_header h; uint64_t from,from_bytes,to,to_bytes;};
 struct k_seek {struct k_header h; uint64_t fd; int64_t offset; uint64_t whence,position;};
 struct k_ioctl {struct k_header h; uint64_t fd,request,buffer,bytes;};
@@ -39,7 +46,7 @@ _Static_assert(sizeof(struct k_startup_ext)==48,"startup extension");
 _Static_assert(offsetof(struct k_startup_ext,app_generation)==40,"app epoch offset");
 #define K_SIZE(t,n) _Static_assert(sizeof(struct t)==(n),#t)
 K_SIZE(k_header,16); K_SIZE(k_open,56); K_SIZE(k_io,48); K_SIZE(k_close,24);
-K_SIZE(k_seek,48);
+K_SIZE(k_seek,48); K_SIZE(k_cache_submit,40); K_SIZE(k_cache_status,32);
 K_SIZE(k_rename,48);K_SIZE(k_dirent_meta,24);
 K_SIZE(k_ioctl,48); K_SIZE(k_exit,24); K_SIZE(k_fb_mode,56); K_SIZE(k_fb_present,48); K_SIZE(k_fb_set,40); K_SIZE(k_fb_palette,1056); K_SIZE(k_mmap,64); K_SIZE(k_startup,40);
 K_SIZE(k_eink_info,80); K_SIZE(k_eink_title,272); K_SIZE(k_audio_info,80); K_SIZE(k_health,32); K_SIZE(k_clock,32); K_SIZE(k_sleep,24); K_SIZE(k_input_info,72); K_SIZE(k_input_state,368); K_SIZE(k_input_event,16); K_SIZE(k_serial_info,72); K_SIZE(k_dirent,8);

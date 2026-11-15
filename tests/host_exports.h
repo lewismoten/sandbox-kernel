@@ -6,6 +6,7 @@
 void advance(uint32_t us);
 uint32_t write_count(void);
 void inject_failure(uint32_t after);
+void inject_sd_latency(uint32_t us);
 void open_disk(const char *path);
 void close_disk(void);
 void set_media_sectors(uint32_t sectors);

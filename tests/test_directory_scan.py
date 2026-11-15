@@ -34,6 +34,7 @@ void open_disk(const char *p);
 void close_disk(void);
 uint32_t read_count(void);
 void fail_sector(uint32_t lba);
+bool cache_commit_pending(void){return false;}
 static FILE *f; static uint32_t reads, bad=~0u;
 void open_disk(const char *p){f=fopen(p,"rb");}
 void close_disk(void){fclose(f);}

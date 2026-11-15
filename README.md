@@ -32,9 +32,10 @@ Goals:
 Read the [design](docs/design.md), [milestones and acceptance tests](docs/milestones.md),
 [credits](NOTICE.md), and [contribution rules](CONTRIBUTING.md).
 The kernel is MIT-licensed and written independently; earlier Linux and Circle plans do not define it.
-The current SDK is **ABI 1.10**: [audio](docs/audio-device.md) arrived in 1.8,
+The current SDK is **ABI 1.11**: [audio](docs/audio-device.md) arrived in 1.8,
 [OS e-ink titles/pages](docs/eink.md) in 1.9, and [two-way USB serial](docs/serial.md)
-in 1.10. HDMI audio is linked with a null fallback; recorded board evidence is
+in 1.10. Opt-in cooperative cache/save publication arrived in 1.11
+([storage contract](docs/cache-storage.md)). HDMI audio is linked with a null fallback; recorded board evidence is
 limited to DMA drain counters, with listening and sustained-load qualification
 still hardware-untested. The separate [PCM host core](docs/audio-host-core.md)
 remains unlinked. [CEC](docs/cec.md) remains host-only and hardware-untested.
