@@ -266,7 +266,7 @@ static int put_file(const char *path,const uint8_t *data,uint32_t bytes,bool cac
  return cache?0:asset_mount();
 }
 int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
- if(cache_commit_blocked())return -16;
+ if(cache_commit_blocked())return fail("busy",16);
  int r=fatput_check(path);if(r)return r;
  if(bytes>FATPUT_MAX)return -27;
  /* Installer timestamps are fixed. Unpublish BEFORE any content mutation,
@@ -276,7 +276,7 @@ int fatput(const char *path,const uint8_t *data,uint32_t bytes) {
 }
 /* Names, never paths: this entry cannot escape /OS/CACHE. */
 int fatcache_put(const char *name,const uint8_t *data,uint32_t bytes) {
- if(cache_commit_blocked())return -16;
+ if(cache_commit_blocked())return fail("busy",16);
  if(asset_cache_readers())return -16;
  return put_file(name,data,bytes,true,0);
 }

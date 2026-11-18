@@ -46,6 +46,27 @@ class AsyncCache(CallsBase):
             self.assertLessEqual(maximum, budget)
         self.fail('worker did not finish')
 
+    def test_busy_return_reports_current_reason_not_previous_error(self):
+        # Direct API regression. Protocol reachability is narrower: PUTF rejects
+        # a running OS at admission; only a fault-restart window was identified.
+        self.c.fatcache_put.argtypes = [C.c_char_p, C.c_char_p, C.c_uint32]
+        self.assertEqual(self.c.fatput(b'bad/name', b'x', 1), -22)
+        prior = C.c_char_p.in_dll(self.c, 'fatput_fail').value
+        self.assertNotEqual(prior, b'busy')
+        fd = self.stage(b'pending bytes')
+        self.assertEqual(self.submit(fd), 0)
+        before = self.c.read_count(), self.c.write_count()
+        self.assertEqual(self.c.fatput(b'OTHER.BIN', b'x', 1), -16)
+        self.assertEqual(C.c_char_p.in_dll(self.c, 'fatput_fail').value, b'busy')
+        # Re-seed a distinct stale reason without bypassing the real parser.
+        self.c.fatput_check.argtypes = [C.c_char_p]
+        self.assertEqual(self.c.fatput_check(b'bad/name'), -22)
+        self.assertEqual(C.c_char_p.in_dll(self.c, 'fatput_fail').value, prior)
+        self.assertEqual(self.c.fatcache_put(b'OTHER.IDX', b'x', 1), -16)
+        self.assertEqual(C.c_char_p.in_dll(self.c, 'fatput_fail').value, b'busy')
+        self.assertEqual((self.c.read_count(), self.c.write_count()), before)
+        self.assertEqual(self.finish()[0], (2, 0))
+
     def test_large_slow_card_bound_completion_busy_and_legacy(self):
         data = bytes(range(256))*4096  # full 1 MiB
         fd = self.stage(data)
