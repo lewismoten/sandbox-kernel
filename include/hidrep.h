@@ -16,10 +16,22 @@ struct hidrep_out {
  uint16_t system[HIDREP_ACTIVE];   /* usages held on page 0x01 (0x81 power down, 0x82 sleep, 0x83 wake) */
  uint8_t id;                     /* the report ID, 0 when the descriptor has none */
 };
-/* Reads a report descriptor. 0, or -1 for a truncated or malformed one. Fields past the table
- * are dropped (the caller still gets the ones that fit). */
+/* Isolated host-tested subset, NOT wired into USB. 0 on success; -1 rejects
+ * malformed/truncated input or a capability overflow: >24 nonconstant nonzero
+ * fields TOTAL (array slots count too), >8 distinct IDs with Input items
+ * (including implicit ID 0), Report Size >32, Report Count >65535 even when
+ * size=0, or cumulative bits >65535 per ID (including constant padding).
+ * Global Push/Pop and usage/page values >16 bits are explicitly unsupported
+ * and rejected, not interpreted via truncation. Other unknown items, Output,
+ * Feature and collection semantics are ignored; this is not a full HID validator.
+ * Local usage lists retain at most 24 entries; arrays use only the first usage
+ * or range minimum. Only decode a table after parse returned 0: error output
+ * may be partial. No general keyboard/NKRO or full usage-range semantics. */
 int hidrep_parse(const uint8_t *desc,uint32_t len,struct hidrep *out);
 /* Decodes one received report (ID byte first when the descriptor uses IDs). 0, or -1 when the
- * report is short or its ID is unknown. */
+ * report is short or its ID is unknown. Consumer/system output retains the first
+ * four active usages per page in field order; additional active usages are
+ * deliberately truncated, not a complete pressed-state set. Buttons cover 1..32;
+ * motion covers Generic Desktop X/Y/wheel only. */
 int hidrep_decode(const struct hidrep *h,const uint8_t *rep,uint32_t len,struct hidrep_out *o);
 #endif

@@ -4,7 +4,7 @@
 #include <string.h>
 
 #define MAXID 8
-static int32_t sext(uint32_t v,unsigned n) {return n>=32?(int32_t)v:(int32_t)(v<<(32-n))>>(32-n);}
+static int32_t sext(uint32_t v,unsigned n) {return n==0?0:n>=32?(int32_t)v:(int32_t)(v<<(32-n))>>(32-n);}
 
 int hidrep_parse(const uint8_t *d,uint32_t len,struct hidrep *h) {
  if(!d||!h) return -1;
@@ -21,17 +21,21 @@ int hidrep_parse(const uint8_t *d,uint32_t len,struct hidrep *h) {
   unsigned type=(b>>2)&3u,tag=b>>4;
   i+=1+sz;
   if(type==1) {           /* global */
+   if(tag==10||tag==11||(tag==0&&v>UINT16_MAX)) return -1; /* unsupported, not silently truncated */
    if(tag==0) page=(uint16_t)v; else if(tag==1) lmin=sext(v,8*sz); else if(tag==2) lmax=sext(v,8*sz);
    else if(tag==7) size=v; else if(tag==9) count=v;
    else if(tag==8) {id=(uint8_t)v;h->uses_ids=1;}
   } else if(type==2) {    /* local */
+   if(tag<=2&&v>UINT16_MAX) return -1; /* extended usage pages are not implemented */
    if(tag==0) {if(nu<HIDREP_FIELDS) usages[nu++]=(uint16_t)v;}
    else if(tag==1) {umin=(uint16_t)v;have_range=1;} else if(tag==2) umax=(uint16_t)v;
   } else if(type==0 && tag==8) {   /* Input */
    unsigned slot=0;while(slot<MAXID&&used[slot]&&ids[slot]!=id) slot++;
    if(slot==MAXID) return -1;
    ids[slot]=id;used[slot]=1;
-   if(size>32) return -1;
+   if(size>32||count>UINT16_MAX) return -1; /* bound work even for size zero */
+   if((uint64_t)pos[slot]+(uint64_t)count*size>UINT16_MAX) return -1;
+   if(!(v&1u)&&size>0&&count>(uint32_t)HIDREP_FIELDS-h->n) return -1;
    for(uint32_t c=0;c<count;c++) {
     if(!(v&1u)&&h->n<HIDREP_FIELDS&&size>0) {
      struct hidrep_field *f=&h->f[h->n++];

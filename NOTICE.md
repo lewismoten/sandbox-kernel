@@ -7,6 +7,7 @@ AI models used on this repository:
 
 | Model | Tool | What it did |
 | --- | --- | --- |
+| GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Narrow K-01 update-phase wait, K-02 current busy error, K-03 consumed-writer documentation and real FAT/syscall host regressions; H-01..H-04 isolated parser bounds/explicit capability rejection and strict C11 ASan+UBSan tests (2026-11-18). Exact four-file parser port from c0c50c537cd30fdb7baec236ab22162e9c4811c6 preserves Lewis Moten and Claude Sonnet 5.5 (Claude Code) original contribution. No USB wiring, FAT algorithm/save source changes, physical measurements or integration acceptance. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Slice C ABI 1.6/call 21, distinct startup app epoch, original kernel SDK wrapper and synthetic non-audio qualification, production dispatcher/transaction rollback and compatibility tests (2026-11-09). No audio wiring, GMOS SDK refresh or physical acceptance. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Framebuffer probe HOST_TEST compilation and Darwin/Linux linker-flag selection with regression coverage (2026-11-09). No production code changes; macOS execution remains a separate acceptance gate. |
 | GPT-6.1 Sol (OpenAI) | Hermes Agent (openai-codex), Mercury Quill | Production framebuffer pattern span inversion from the independently reviewed MIT proposal, exact 587-surface oracle/sanitizer and floor-mutation host tests, ARM stack evidence (2026-11-09). No mapping, USB or hardware qualification changes. |
