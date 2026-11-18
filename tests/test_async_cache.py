@@ -124,11 +124,20 @@ class AsyncCache(CallsBase):
         self.assertEqual(state, (3, -5))
         self.assertEqual(self.status(), state)
         self.assertEqual(self.read('/OS/CACHE/GAMES.IDX'), b'old')
+        # Terminal ERROR retains status, not a resubmittable writer. Exercise
+        # the real dispatcher: old fd cannot submit, fsync, write or close.
+        self.assertEqual(self.submit(fd), -9)
+        self.assertEqual(self.call(12, self.hdr(24)+struct.pack('<Q', fd)), -9)
+        self.assertEqual(self.io(3, fd, self.BUF, 1)[0], -9)
+        self.assertEqual(self.close(fd), -9)
+        self.assertEqual(self.status(), state)
         self.c.inject_failure(0xffffffff)
-        fd = self.stage(b'retry')
-        self.assertEqual(self.submit(fd), 0)
+        retry_fd = self.stage(b'new'*4096)  # reopen and restage the COMPLETE file
+        self.assertNotEqual(retry_fd, fd)
+        self.assertEqual(self.submit(retry_fd), 0)
+        self.assertEqual(self.close(retry_fd), -9)
         self.assertEqual(self.finish()[0], (2, 0))
-        self.assertEqual(self.read('/OS/CACHE/GAMES.IDX'), b'retry')
+        self.assertEqual(self.read('/OS/CACHE/GAMES.IDX'), b'new'*4096)
 
     def test_saves_scope_zero_length_reset_and_writer_ownership(self):
         fd = self.stage(b'', '/sd/OS/SAVES/DICE/EMPTY.SAV')

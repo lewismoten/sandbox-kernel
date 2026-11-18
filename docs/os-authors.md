@@ -395,6 +395,14 @@ described in `docs/design.md`.)
 | 1.10 | `/dev/serial0`: a nonblocking byte stream between the OS and the host on the USB link, with a counters query (class 6). See `docs/serial.md`. |
 | 1.11 | Opt-in cooperative cache/save publication: `sbx_cache_submit` (22) consumes a staged writer, queues direct COW publication without SD I/O; `sbx_cache_status` (23) polls pending/done/error. Legacy fsync/rename stay synchronous. While pending, SD asset I/O and other mutations return EBUSY; continue frames/health and retry after completion. See `docs/cache-storage.md`. |
 
+An accepted ABI 1.11 submit consumes the old fd immediately, not only when the
+worker succeeds. After terminal ERROR (state 3), that fd cannot be resubmitted or
+fsynced: reopen the staged writer, restage the complete file, then submit again.
+The old published file remains intact on the tested pre-publication I/O failure
+path; the ERROR status is retained until the next accepted submission. A rejected
+submit does not consume the writer. This recovery rule does not extend the FAT
+whole-sector interruption model into a guarantee for arbitrary card failures.
+
 **Sound:** `/dev/audio` is drained by an HDMI backend (the 1080p60 mode at 48 kHz, 2-channel PCM; `docs/audio-device.md`). It needs HDMI signaling, so `config.txt` carries `hdmi_drive=2`; if the backend cannot start, the kernel logs why and a silent null backend drains the ring instead. **Hardware-untested:** HDMI audio output on physical sinks and the new e-ink/serial
 paths are not established by these code checks. **Not yet:** gamepads, Wi-Fi and Bluetooth (no wireless driver runs), HDMI-CEC, and the
 planned `/state` journal store. Anonymous `mmap`, free or resize of the arena, and
