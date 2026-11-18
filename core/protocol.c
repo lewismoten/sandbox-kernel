@@ -182,6 +182,11 @@ static void work(void) {
    sha256(staging,expected,image_hash);sector_index=0;phase=4;install_since=micros();return;
   }
   if(expired(install_since,120000000)&&phase<7) {fail("install-timeout");return;}
+  /* A program may submit after PUT2 admission. Pending is flow control, not
+     an SD fault: retry these phases on later passes without locking updates.
+     Waiting still consumes the original 120-second install deadline above;
+     validation and trailing-input rejection also retain their precedence. */
+  if(phase>=4&&phase<=6&&cache_commit_pending())return;
   if(phase==4) {
    uint8_t b[512];memset(b,0,512);uint32_t n=expected-sector_index*512;if(n>512)n=512;memcpy(b,staging+sector_index*512,n);
    if(!file_write(&slots[inactive],sector_index,b)) {updates_ready=false;fail("write");return;}
